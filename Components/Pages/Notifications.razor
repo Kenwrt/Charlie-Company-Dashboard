@@ -1,0 +1,305 @@
+@page "/notifications"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using System.ComponentModel.DataAnnotations
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject ILogger<Notifications> Logger
+
+<PageTitle>Notification Recipients</PageTitle>
+
+<section class="notification-shell">
+    <div class="dashboard-header">
+        <div>
+            <p class="eyebrow">Event notifications</p>
+            <h1>Notification recipients</h1>
+            <p class="dashboard-subtitle">Choose who receives quote and expense alerts from Housecall Pro webhook events.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="alert @statusClass" role="alert">@statusMessage</div>
+    }
+
+    <div class="notification-layout">
+        <section class="notification-form-panel">
+            <h2>@(editingRecipientId is null ? "Add recipient" : "Edit recipient")</h2>
+
+            <EditForm Model="formModel" OnValidSubmit="SaveAsync">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="form-grid">
+                    <div class="form-field full">
+                        <label for="displayName">Name</label>
+                        <InputText id="displayName" class="form-control" @bind-Value="formModel.DisplayName" />
+                    </div>
+
+                    <div class="form-field">
+                        <label for="emailAddress">Email address</label>
+                        <InputText id="emailAddress" class="form-control" @bind-Value="formModel.EmailAddress" />
+                    </div>
+
+                    <div class="form-field">
+                        <label for="cellPhone">Cell phone number</label>
+                        <InputText id="cellPhone" class="form-control" @bind-Value="formModel.CellPhoneNumber" />
+                    </div>
+                </div>
+
+                <div class="preference-group">
+                    <span>Channels</span>
+                    <label><InputCheckbox @bind-Value="formModel.EnableEmail" /> Email</label>
+                    <label><InputCheckbox @bind-Value="formModel.EnableSms" /> SMS</label>
+                    <label><InputCheckbox @bind-Value="formModel.EnableIMessage" /> iMessage</label>
+                </div>
+
+                <div class="preference-group">
+                    <span>Webhook events</span>
+                    <label><InputCheckbox @bind-Value="formModel.NotifyOnQuoteEvents" /> Quote events</label>
+                    <label><InputCheckbox @bind-Value="formModel.NotifyOnExpenseEvents" /> Expense events</label>
+                    <label><InputCheckbox @bind-Value="formModel.IsActive" /> Active</label>
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">Save recipient</button>
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ResetForm">Clear</button>
+                </div>
+            </EditForm>
+        </section>
+
+        <section class="recipient-list-panel">
+            <h2>Recipients</h2>
+
+            @if (recipients.Count == 0)
+            {
+                <div class="empty-state">No notification recipients have been added yet.</div>
+            }
+            else
+            {
+                <div class="recipient-list">
+                    @foreach (var recipient in recipients)
+                    {
+                        <article class="recipient-card">
+                            <div>
+                                <strong>@recipient.DisplayName</strong>
+                                <span>@(recipient.EmailAddress ?? "No email")</span>
+                                <span>@(recipient.CellPhoneNumber ?? "No cell phone")</span>
+                            </div>
+
+                            <div class="recipient-badges">
+                                @if (recipient.EnableEmail)
+                                {
+                                    <span>Email</span>
+                                }
+                                @if (recipient.EnableSms)
+                                {
+                                    <span>SMS</span>
+                                }
+                                @if (recipient.EnableIMessage)
+                                {
+                                    <span>iMessage</span>
+                                }
+                                @if (!recipient.IsActive)
+                                {
+                                    <span class="muted">Inactive</span>
+                                }
+                            </div>
+
+                            <div class="recipient-actions">
+                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => Edit(recipient)">Edit</button>
+                                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => DeleteAsync(recipient.Id)">Delete</button>
+                            </div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+</section>
+
+@code {
+    private readonly RecipientFormModel formModel = new();
+    private List<NotificationRecipient> recipients = [];
+    private int? editingRecipientId;
+    private string? statusMessage;
+    private string statusClass = "alert-success";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRecipientsAsync();
+    }
+
+    private async Task LoadRecipientsAsync()
+    {
+        try
+        {
+            recipients = await DbContext.NotificationRecipients
+                .AsNoTracking()
+                .OrderBy(recipient => recipient.DisplayName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load notification recipients.");
+            Console.Error.WriteLine(ex);
+            ShowError("Notification recipients could not be loaded. Check the logs for details.");
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            if (!formModel.EnableEmail && !formModel.EnableSms && !formModel.EnableIMessage)
+            {
+                ShowError("Select at least one notification channel.");
+                return;
+            }
+
+            if (formModel.EnableEmail && string.IsNullOrWhiteSpace(formModel.EmailAddress))
+            {
+                ShowError("Email notifications require an email address.");
+                return;
+            }
+
+            if ((formModel.EnableSms || formModel.EnableIMessage) && string.IsNullOrWhiteSpace(formModel.CellPhoneNumber))
+            {
+                ShowError("SMS or iMessage notifications require a cell phone number.");
+                return;
+            }
+
+            NotificationRecipient? recipient;
+
+            if (editingRecipientId is null)
+            {
+                recipient = new NotificationRecipient();
+                DbContext.NotificationRecipients.Add(recipient);
+            }
+            else
+            {
+                recipient = await DbContext.NotificationRecipients.FindAsync([editingRecipientId.Value]);
+
+                if (recipient is null)
+                {
+                    ShowError("The selected recipient no longer exists.");
+                    return;
+                }
+            }
+
+            recipient.DisplayName = formModel.DisplayName.Trim();
+            recipient.EmailAddress = string.IsNullOrWhiteSpace(formModel.EmailAddress) ? null : formModel.EmailAddress.Trim();
+            recipient.CellPhoneNumber = string.IsNullOrWhiteSpace(formModel.CellPhoneNumber) ? null : formModel.CellPhoneNumber.Trim();
+            recipient.EnableEmail = formModel.EnableEmail;
+            recipient.EnableSms = formModel.EnableSms;
+            recipient.EnableIMessage = formModel.EnableIMessage;
+            recipient.NotifyOnQuoteEvents = formModel.NotifyOnQuoteEvents;
+            recipient.NotifyOnExpenseEvents = formModel.NotifyOnExpenseEvents;
+            recipient.IsActive = formModel.IsActive;
+            recipient.UpdatedAt = DateTimeOffset.UtcNow;
+
+            await DbContext.SaveChangesAsync();
+            ShowSuccess("Notification recipient saved.");
+            ResetForm();
+            await LoadRecipientsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save notification recipient.");
+            Console.Error.WriteLine(ex);
+            ShowError("The recipient could not be saved. Check the logs for details.");
+        }
+    }
+
+    private void Edit(NotificationRecipient recipient)
+    {
+        editingRecipientId = recipient.Id;
+        formModel.DisplayName = recipient.DisplayName;
+        formModel.EmailAddress = recipient.EmailAddress;
+        formModel.CellPhoneNumber = recipient.CellPhoneNumber;
+        formModel.EnableEmail = recipient.EnableEmail;
+        formModel.EnableSms = recipient.EnableSms;
+        formModel.EnableIMessage = recipient.EnableIMessage;
+        formModel.NotifyOnQuoteEvents = recipient.NotifyOnQuoteEvents;
+        formModel.NotifyOnExpenseEvents = recipient.NotifyOnExpenseEvents;
+        formModel.IsActive = recipient.IsActive;
+        statusMessage = null;
+    }
+
+    private async Task DeleteAsync(int recipientId)
+    {
+        try
+        {
+            var recipient = await DbContext.NotificationRecipients.FindAsync([recipientId]);
+
+            if (recipient is not null)
+            {
+                DbContext.NotificationRecipients.Remove(recipient);
+                await DbContext.SaveChangesAsync();
+                ShowSuccess("Notification recipient deleted.");
+                ResetForm();
+                await LoadRecipientsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to delete notification recipient {RecipientId}.", recipientId);
+            Console.Error.WriteLine(ex);
+            ShowError("The recipient could not be deleted. Check the logs for details.");
+        }
+    }
+
+    private void ResetForm()
+    {
+        editingRecipientId = null;
+        formModel.DisplayName = string.Empty;
+        formModel.EmailAddress = string.Empty;
+        formModel.CellPhoneNumber = string.Empty;
+        formModel.EnableEmail = true;
+        formModel.EnableSms = false;
+        formModel.EnableIMessage = false;
+        formModel.NotifyOnQuoteEvents = true;
+        formModel.NotifyOnExpenseEvents = true;
+        formModel.IsActive = true;
+    }
+
+    private void ShowSuccess(string message)
+    {
+        statusMessage = message;
+        statusClass = "alert-success";
+    }
+
+    private void ShowError(string message)
+    {
+        statusMessage = message;
+        statusClass = "alert-danger";
+    }
+
+    private sealed class RecipientFormModel
+    {
+        [Required]
+        [StringLength(120)]
+        public string DisplayName { get; set; } = string.Empty;
+
+        [EmailAddress]
+        [StringLength(256)]
+        public string? EmailAddress { get; set; }
+
+        [Phone]
+        [StringLength(32)]
+        public string? CellPhoneNumber { get; set; }
+
+        public bool EnableEmail { get; set; } = true;
+
+        public bool EnableSms { get; set; }
+
+        public bool EnableIMessage { get; set; }
+
+        public bool NotifyOnQuoteEvents { get; set; } = true;
+
+        public bool NotifyOnExpenseEvents { get; set; } = true;
+
+        public bool IsActive { get; set; } = true;
+    }
+}

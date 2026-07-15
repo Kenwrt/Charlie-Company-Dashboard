@@ -1,0 +1,304 @@
+@page "/finance"
+@page "/entity/{EntitySlug}/finance"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@inject IFinanceDataSource FinanceDataSource
+@inject ILogger<Finance> Logger
+
+<PageTitle>@currentSummary.EntityName Finance</PageTitle>
+
+<section class="dashboard-shell finance-shell">
+    <div class="dashboard-header">
+        <div>
+            <p class="eyebrow">@(IsEntityView ? "Local finance reconstruction" : "Venture finance rollup")</p>
+            <h1>@currentSummary.EntityName</h1>
+            <p class="dashboard-subtitle">@Subtitle</p>
+        </div>
+
+        <div class="dashboard-status">
+            <span class="status-dot"></span>
+            <span>Workbook-derived model</span>
+            <small>Financial reconstruction feature set</small>
+        </div>
+    </div>
+
+    @if (IsEntityView)
+    {
+        <NavLink class="back-link" href="finance">Back to venture finance rollup</NavLink>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@errorMessage</div>
+    }
+
+    <div class="metric-grid finance-metric-grid">
+        @foreach (var metric in BuildFinanceMetrics(currentSummary))
+        {
+            <article class="metric-card @metric.AccentClass">
+                <span>@metric.Label</span>
+                <strong>@metric.Value</strong>
+                <small>@metric.Detail</small>
+            </article>
+        }
+    </div>
+
+    @if (!IsEntityView)
+    {
+        <section class="local-entity-panel">
+            <div>
+                <h2>Local finance dashboards</h2>
+                <p>Each local entity calculates independently, then rolls into the venture group view.</p>
+            </div>
+
+            <div class="local-entity-grid">
+                @foreach (var dashboard in ventureDashboard.LocalDashboards)
+                {
+                    <NavLink class="local-entity-card" href="@($"entity/{dashboard.Summary.EntitySlug}/finance")">
+                        <div>
+                            <strong>@dashboard.Summary.EntityName</strong>
+                            <span>@dashboard.Summary.ReadinessScore.ToString("P0") CCV readiness</span>
+                        </div>
+                        <dl>
+                            <div>
+                                <dt>Open AP</dt>
+                                <dd>@dashboard.Summary.OpenAccountsPayable.ToString("C0")</dd>
+                            </div>
+                            <div>
+                                <dt>Debt</dt>
+                                <dd>@dashboard.Summary.DebtOutstanding.ToString("C0")</dd>
+                            </div>
+                            <div>
+                                <dt>Reserve</dt>
+                                <dd>@dashboard.Summary.ReserveSurplusOrDeficit.ToString("C0")</dd>
+                            </div>
+                            <div>
+                                <dt>Adjusted profit</dt>
+                                <dd>@dashboard.Summary.AdjustedEconomicProfitProxy.ToString("C0")</dd>
+                            </div>
+                        </dl>
+                    </NavLink>
+                }
+            </div>
+        </section>
+    }
+
+    @if (entityDashboard is not null)
+    {
+        <section class="finance-layout">
+            <article class="finance-panel">
+                <h2>True financial position</h2>
+                <dl class="finance-definition-list">
+                    <div><dt>Known accounting profit</dt><dd>@entityDashboard.Summary.KnownAccountingProfit.ToString("C0")</dd></div>
+                    <div><dt>Unrecorded AP and debt</dt><dd>@((entityDashboard.Summary.OpenAccountsPayable + entityDashboard.Summary.DebtOutstanding).ToString("C0"))</dd></div>
+                    <div><dt>Owner benefits pending classification</dt><dd>@entityDashboard.Summary.OwnerBenefits.ToString("C0")</dd></div>
+                    <div><dt>Adjusted economic profit proxy</dt><dd>@entityDashboard.Summary.AdjustedEconomicProfitProxy.ToString("C0")</dd></div>
+                    <div><dt>Cash variance</dt><dd>@entityDashboard.Summary.CashVariance.ToString("C0")</dd></div>
+                </dl>
+            </article>
+
+            <article class="finance-panel">
+                <h2>13-week cash forecast</h2>
+                <div class="finance-table-wrap">
+                    <table class="finance-table">
+                        <thead>
+                            <tr>
+                                <th>Week</th>
+                                <th>Ending</th>
+                                <th>Collections</th>
+                                <th>Uses</th>
+                                <th>Ending cash</th>
+                                <th>Reserve</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var week in entityDashboard.EntityData.CashForecast.Take(6))
+                            {
+                                <tr>
+                                    <td>@week.WeekNumber</td>
+                                    <td>@week.WeekEnding.ToString("MMM d")</td>
+                                    <td>@week.ExpectedCollections.ToString("C0")</td>
+                                    <td>@week.TotalCashUses.ToString("C0")</td>
+                                    <td>@week.EndingCash.ToString("C0")</td>
+                                    <td>@week.ReserveSurplusOrDeficit.ToString("C0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+            <article class="finance-panel">
+                <h2>AP aging</h2>
+                <div class="finance-table-wrap">
+                    <table class="finance-table">
+                        <thead>
+                            <tr>
+                                <th>Vendor</th>
+                                <th>Tier</th>
+                                <th>Open</th>
+                                <th>Days</th>
+                                <th>Bucket</th>
+                                <th>Plan</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in entityDashboard.EntityData.AccountsPayable)
+                            {
+                                <tr>
+                                    <td>@item.Vendor</td>
+                                    <td>@item.Tier</td>
+                                    <td>@item.OpenBalance.ToString("C0")</td>
+                                    <td>@item.DaysPastDue(entityDashboard.EntityData.Assumptions.ReviewDate).ToString("N0")</td>
+                                    <td>@item.AgingBucket(entityDashboard.EntityData.Assumptions.ReviewDate)</td>
+                                    <td>@item.ProposedWeeklyPayment.ToString("C0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+            <article class="finance-panel">
+                <h2>Job profitability</h2>
+                <div class="finance-table-wrap">
+                    <table class="finance-table">
+                        <thead>
+                            <tr>
+                                <th>Job</th>
+                                <th>Customer</th>
+                                <th>Contract</th>
+                                <th>Gross profit</th>
+                                <th>Margin</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var job in entityDashboard.EntityData.JobProfitability)
+                            {
+                                <tr>
+                                    <td>@job.JobNumber</td>
+                                    <td>@job.Customer</td>
+                                    <td>@job.ContractAmount.ToString("C0")</td>
+                                    <td>@job.GrossProfit.ToString("C0")</td>
+                                    <td>@job.GrossMargin.ToString("P1")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+        </section>
+
+        <section class="activity-panel">
+            <div>
+                <h2>CCV readiness scorecard</h2>
+                <p>Workbook-style readiness checks for whether a location is ready to scale under Charlie Company Ventures.</p>
+            </div>
+
+            <div class="finance-table-wrap">
+                <table class="finance-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Test</th>
+                            <th>Current</th>
+                            <th>Threshold</th>
+                            <th>Status</th>
+                            <th>Owner</th>
+                            <th>Target</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var check in entityDashboard.ReadinessChecks)
+                        {
+                            <tr>
+                                <td>@check.Category</td>
+                                <td>@check.Test</td>
+                                <td>@check.CurrentResult</td>
+                                <td>@check.Threshold</td>
+                                <td><span class="status-pill @StatusClass(check.Status)">@check.Status</span></td>
+                                <td>@check.Owner</td>
+                                <td>@check.TargetDate.ToString("MMM d")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string? EntitySlug { get; set; }
+
+    private VentureFinanceDashboard ventureDashboard = new(
+        new FinanceSummary("Charlie Company Ventures Group", "ventures", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        []);
+    private FinanceDashboard? entityDashboard;
+    private FinanceSummary currentSummary = new("Charlie Company Ventures Group", "ventures", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    private string? errorMessage;
+
+    private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
+
+    private string Subtitle => IsEntityView
+        ? "Local reconstruction of cash, AP, debt, owner benefits, job economics, and readiness."
+        : "Temporary consolidated finance reporting based on the uploaded reconstruction workbook.";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadFinanceAsync();
+    }
+
+    private async Task LoadFinanceAsync()
+    {
+        try
+        {
+            errorMessage = null;
+            ventureDashboard = await FinanceDataSource.GetVentureFinanceDashboardAsync(CancellationToken.None);
+
+            if (IsEntityView)
+            {
+                entityDashboard = await FinanceDataSource.GetEntityFinanceDashboardAsync(EntitySlug!, CancellationToken.None);
+
+                if (entityDashboard is null)
+                {
+                    currentSummary = ventureDashboard.Rollup;
+                    errorMessage = "The selected local finance entity could not be found.";
+                    return;
+                }
+
+                currentSummary = entityDashboard.Summary;
+                return;
+            }
+
+            entityDashboard = null;
+            currentSummary = ventureDashboard.Rollup;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Finance dashboard failed to load.");
+            Console.Error.WriteLine(ex);
+            errorMessage = "The finance dashboard could not be loaded. Check the logs for details.";
+        }
+    }
+
+    private static IReadOnlyList<DashboardMetric> BuildFinanceMetrics(FinanceSummary summary) =>
+    [
+        new("Known revenue", summary.KnownRevenue.ToString("C0"), "Workbook control panel revenue", "accent-revenue"),
+        new("Open AP", summary.OpenAccountsPayable.ToString("C0"), $"{summary.MaxApDaysPastDue:N0} max days past due", "accent-expenses"),
+        new("Debt outstanding", summary.DebtOutstanding.ToString("C0"), "Debt, notes, cards, and tax liabilities", "accent-expired"),
+        new("Reserve surplus / deficit", summary.ReserveSurplusOrDeficit.ToString("C0"), "Ending cash less reserve target", "accent-quotes"),
+        new("CCV readiness", summary.ReadinessScore.ToString("P0"), "Average readiness scorecard pass rate", "accent-jobs")
+    ];
+
+    private static string StatusClass(string status) => status switch
+    {
+        "Pass" => "status-pass",
+        "Fail" => "status-fail",
+        _ => "status-muted"
+    };
+}
+

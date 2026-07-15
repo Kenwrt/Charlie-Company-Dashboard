@@ -1,0 +1,200 @@
+@page "/"
+@page "/entity/{EntitySlug}"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@implements IDisposable
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@inject IDashboardDataSource DashboardDataSource
+@inject DashboardNotificationService Notifications
+@inject ILogger<Home> Logger
+
+<PageTitle>@currentSnapshot.EntityName Dashboard</PageTitle>
+
+<section class="dashboard-shell">
+    <div class="dashboard-header">
+        <div>
+            <p class="eyebrow">@(IsEntityView ? "Local service entity" : "Venture group dashboard")</p>
+            <h1>@currentSnapshot.EntityName</h1>
+            <p class="dashboard-subtitle">@Subtitle</p>
+        </div>
+
+        <div class="dashboard-status">
+            <span class="status-dot"></span>
+            <span>@currentSnapshot.DataSource</span>
+            <small>Updated @currentSnapshot.LastUpdated.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</small>
+        </div>
+    </div>
+
+    @if (IsEntityView)
+    {
+        <NavLink class="back-link" href="">Back to venture group rollup</NavLink>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="alert alert-danger" role="alert">
+            @errorMessage
+        </div>
+    }
+
+    <div class="metric-grid">
+        @foreach (var metric in BuildMetrics(currentSnapshot))
+        {
+            <article class="metric-card @metric.AccentClass">
+                <span>@metric.Label</span>
+                <strong>@metric.Value</strong>
+                <small>@metric.Detail</small>
+            </article>
+        }
+    </div>
+
+    @if (!IsEntityView)
+    {
+        <section class="local-entity-panel">
+            <div>
+                <h2>Local service entities</h2>
+                <p>Click a local entity to view its individual dashboard.</p>
+            </div>
+
+            <div class="local-entity-grid">
+                @foreach (var entity in ventureSnapshot.LocalEntities)
+                {
+                    <NavLink class="local-entity-card" href="@($"entity/{entity.EntitySlug}")">
+                        <div>
+                            <strong>@entity.EntityName</strong>
+                            <span>@entity.CurrentJobsInProgress.ToString("N0") jobs in progress</span>
+                        </div>
+                        <dl>
+                            <div>
+                                <dt>Outstanding quotes</dt>
+                                <dd>@entity.OutstandingQuotes.ToString("N0")</dd>
+                            </div>
+                            <div>
+                                <dt>Expired quotes</dt>
+                                <dd>@entity.ExpiredQuotes.ToString("N0")</dd>
+                            </div>
+                            <div>
+                                <dt>Expenses</dt>
+                                <dd>@entity.MonthlyExpenses.ToString("C0")</dd>
+                            </div>
+                            <div>
+                                <dt>Revenue</dt>
+                                <dd>@entity.MonthlyRevenue.ToString("C0")</dd>
+                            </div>
+                        </dl>
+                    </NavLink>
+                }
+            </div>
+        </section>
+    }
+
+    <section class="activity-panel">
+        <div>
+            <h2>Event notifications</h2>
+            <p>Quote and expense webhook events will appear here as they arrive.</p>
+        </div>
+
+        @if (currentSnapshot.RecentEvents.Count == 0)
+        {
+            <div class="empty-state">No webhook or sync notifications have been received yet.</div>
+        }
+        else
+        {
+            <div class="activity-list">
+                @foreach (var item in currentSnapshot.RecentEvents.OrderByDescending(e => e.OccurredAt))
+                {
+                    <div class="activity-item">
+                        <div>
+                            <strong>@item.EventType</strong>
+                            <span>@item.Message</span>
+                        </div>
+                        <time>@item.OccurredAt.ToLocalTime().ToString("h:mm tt")</time>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+</section>
+
+@code {
+    [Parameter]
+    public string? EntitySlug { get; set; }
+
+    private VentureDashboardSnapshot ventureSnapshot = VentureDashboardSnapshot.Empty;
+    private DashboardSnapshot currentSnapshot = DashboardSnapshot.Empty;
+    private string? errorMessage;
+
+    private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
+
+    private string Subtitle => IsEntityView
+        ? "Local view of jobs, quotes, monthly expenses, and revenue."
+        : "Rolled-up view of all local service entities under Charlie Company Ventures Group.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifications.DashboardChanged += OnDashboardChangedAsync;
+        await LoadDashboardAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDashboardAsync();
+    }
+
+    private async Task OnDashboardChangedAsync()
+    {
+        await InvokeAsync(async () =>
+        {
+            await LoadDashboardAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadDashboardAsync()
+    {
+        try
+        {
+            errorMessage = null;
+
+            if (IsEntityView)
+            {
+                var entitySnapshot = await DashboardDataSource.GetEntitySnapshotAsync(EntitySlug!, CancellationToken.None);
+
+                if (entitySnapshot is null)
+                {
+                    ventureSnapshot = await DashboardDataSource.GetVentureSnapshotAsync(CancellationToken.None);
+                    currentSnapshot = ventureSnapshot.Rollup;
+                    errorMessage = "The selected local service entity could not be found.";
+                    return;
+                }
+
+                currentSnapshot = entitySnapshot;
+                return;
+            }
+
+            ventureSnapshot = await DashboardDataSource.GetVentureSnapshotAsync(CancellationToken.None);
+            currentSnapshot = ventureSnapshot.Rollup;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "The dashboard could not be refreshed. Check the console and Serilog file logs for details.";
+            Logger.LogError(ex, "Dashboard page failed to load metrics.");
+            Console.Error.WriteLine(ex);
+        }
+    }
+
+    private static IReadOnlyList<DashboardMetric> BuildMetrics(DashboardSnapshot snapshot) =>
+    [
+        new("Jobs in progress", snapshot.CurrentJobsInProgress.ToString("N0"), "Active work currently underway", "accent-jobs"),
+        new("Outstanding quotes", snapshot.OutstandingQuotes.ToString("N0"), "Quotes waiting for customer decision", "accent-quotes"),
+        new("Expired quotes", snapshot.ExpiredQuotes.ToString("N0"), "Quotes past their expiration date", "accent-expired"),
+        new("Expenses this month", snapshot.MonthlyExpenses.ToString("C0"), "Posted expenses for the current month", "accent-expenses"),
+        new("Revenue this month", snapshot.MonthlyRevenue.ToString("C0"), "Revenue recognized for the current month", "accent-revenue")
+    ];
+
+    public void Dispose()
+    {
+        Notifications.DashboardChanged -= OnDashboardChangedAsync;
+    }
+}
