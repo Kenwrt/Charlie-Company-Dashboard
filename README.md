@@ -40,6 +40,14 @@ Blazor Server dashboard for Charley Company operations metrics.
 
 ## Run Locally
 
+The application uses PostgreSQL. Store the development connection string in .NET User Secrets so the password is never committed:
+
+```powershell
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=10.168.168.9;Port=5432;Database=CharlieCompany;Username=charlie_app;Password=YOUR_PASSWORD"
+```
+
+Alternatively, set `ConnectionStrings__DefaultConnection` as an environment variable. Entity Framework applies pending migrations automatically at startup.
+
 ```powershell
 dotnet run
 ```
