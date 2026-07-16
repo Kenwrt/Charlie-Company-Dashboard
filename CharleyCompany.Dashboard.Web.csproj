@@ -17,4 +17,10 @@
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Remove="Data\app.db;DataProtectionKeys\**;Logs\**;bin\**;obj\**" />
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+    <None Remove="Data\app.db;DataProtectionKeys\**;Logs\**;bin\**;obj\**" />
+  </ItemGroup>
+
 </Project>

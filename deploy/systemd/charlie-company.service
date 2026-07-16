@@ -1,0 +1,24 @@
+[Unit]
+Description=CharlieCompany Blazor application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ken
+Group=ken
+WorkingDirectory=/opt/wrightapps/charlie-company/current
+ExecStart=/usr/bin/dotnet /opt/wrightapps/charlie-company/current/CharleyCompany.Dashboard.Web.dll
+EnvironmentFile=/opt/wrightapps/charlie-company/shared/charlie-company.env
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+SyslogIdentifier=charlie-company
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/charlie-company/dataprotection /var/log/charlie-company
+
+[Install]
+WantedBy=multi-user.target

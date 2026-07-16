@@ -13,11 +13,21 @@ using Serilog;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
-    .WriteTo.File("Logs/charley-dashboard-.log", rollingInterval: RollingInterval.Hour)
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 StaticWebAssetsLoader.UseStaticWebAssets(builder.Environment, builder.Configuration);
+
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+{
+    dataProtectionKeysPath = builder.Environment.IsProduction()
+        ? "/var/lib/charlie-company/dataprotection"
+        : Path.Combine(builder.Environment.ContentRootPath, "DataProtectionKeys");
+}
+
+var logFilePath = builder.Configuration["Logging:FilePath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "Logs", "charley-dashboard-.log");
 
 try
 {
@@ -29,7 +39,7 @@ try
         .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
         .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
         .WriteTo.Console()
-        .WriteTo.File("Logs/charley-dashboard-.log", rollingInterval: RollingInterval.Hour, retainedFileCountLimit: 168, shared: true));
+        .WriteTo.File(logFilePath, rollingInterval: RollingInterval.Hour, retainedFileCountLimit: 168, shared: true));
 
     // Add services to the container.
     builder.Services.AddRazorComponents()
@@ -39,7 +49,7 @@ try
     builder.Services.AddScoped<IdentityRedirectManager>();
     builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
     builder.Services.AddDataProtection()
-        .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "DataProtectionKeys")))
+        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath))
         .SetApplicationName("CharlieCompanyDashboard");
 
     builder.Services.AddAuthentication(options =>
@@ -103,6 +113,7 @@ try
     app.UseAntiforgery();
 
     app.MapStaticAssets();
+    app.MapHealthEndpoints();
     app.MapHousecallProWebhookEndpoints();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
