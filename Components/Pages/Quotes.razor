@@ -1,0 +1,34 @@
+@page "/quotes"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrator,LocalOperator")]
+@using System.ComponentModel.DataAnnotations
+@using System.Security.Claims
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject OperationAccessService OperationAccess
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Local Quotes</PageTitle>
+<section class="dashboard-shell"><div class="dashboard-header"><div><p class="eyebrow">Local operation workflow</p><h1>Automated quoting</h1><p class="dashboard-subtitle">Create and review operation-specific quote cases. External integrations remain disabled.</p></div></div>
+@if (message is not null) { <div class="alert alert-info">@message</div> }
+<section class="activity-panel"><h2>New quote case</h2><EditForm Model="input" OnValidSubmit="CreateAsync" FormName="quote-case"><DataAnnotationsValidator /><ValidationSummary class="text-danger" /><div class="row g-3">
+ <div class="col-md-3"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="input.LocalOperationId"><option value="0">Select location…</option>@foreach(var operation in operations){<option value="@operation.Id">@operation.Name</option>}</InputSelect></div>
+ <div class="col-md-3"><label class="form-label">Customer name</label><InputText class="form-control" @bind-Value="input.CustomerName" /></div><div class="col-md-3"><label class="form-label">Customer email</label><InputText class="form-control" @bind-Value="input.CustomerEmail" /></div><div class="col-md-3"><label class="form-label">HCP draft quote ID</label><InputText class="form-control" @bind-Value="input.HousecallProQuoteId" /></div>
+ <div class="col-md-4"><label class="form-label">HCP job ID</label><InputText class="form-control" @bind-Value="input.HousecallProJobId" /></div><div class="col-md-4"><label class="form-label">CompanyCam project ID</label><InputText class="form-control" @bind-Value="input.CompanyCamProjectId" /></div><div class="col-md-4"><label class="form-label">Requested work</label><InputTextArea class="form-control" @bind-Value="input.WorkDescription" /></div>
+ <div class="col-12"><button class="btn btn-primary">Create quote case</button></div></div></EditForm></section>
+<section class="mt-5"><h2>Quote cases</h2><div class="table-responsive"><table class="table"><thead><tr><th>Quote</th><th>Location</th><th>Customer</th><th>Status</th><th>Updated</th><th></th></tr></thead><tbody>
+@foreach(var quote in quotes){<tr><td>CCV-Q-@quote.Id.ToString("D6")<br/><small>HCP @quote.HousecallProQuoteId</small></td><td>@quote.LocalOperation.Name</td><td>@quote.CustomerName<br/><small>@quote.WorkDescription</small></td><td>@quote.Status</td><td>@quote.UpdatedAt.ToLocalTime().ToString("MMM d, h:mm tt")</td><td><a class="btn btn-sm btn-outline-primary" href="@($"quotes/{quote.Id}")">Open workspace</a></td></tr>}
+</tbody></table></div></section></section>
+
+@code {
+ private IReadOnlyList<LocalOperation> operations=[]; private List<QuoteCase> quotes=[]; private QuoteInput input=new(); private string? message;
+ protected override async Task OnInitializedAsync(){await ReloadAsync();}
+ private async Task ReloadAsync(){operations=await OperationAccess.GetAccessibleOperationsAsync();var ids=operations.Select(x=>x.Id).ToList();quotes=await DbContext.QuoteCases.AsNoTracking().Include(x=>x.LocalOperation).Where(x=>ids.Contains(x.LocalOperationId)).OrderByDescending(x=>x.UpdatedAt).ToListAsync();}
+ private async Task CreateAsync(){if(!operations.Any(x=>x.Id==input.LocalOperationId)){message="Select an assigned local operation.";return;}var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;var quote=new QuoteCase{LocalOperationId=input.LocalOperationId,CustomerName=Clean(input.CustomerName),CustomerEmail=Clean(input.CustomerEmail),HousecallProQuoteId=Clean(input.HousecallProQuoteId),HousecallProJobId=Clean(input.HousecallProJobId),CompanyCamProjectId=Clean(input.CompanyCamProjectId),WorkDescription=input.WorkDescription.Trim(),AssignedUserId=user.FindFirstValue(ClaimTypes.NameIdentifier)};quote.Versions.Add(new QuoteVersion());quote.AuditEvents.Add(new QuoteAuditEvent{PreviousStatus="",NewStatus=QuoteStatuses.Received,UserId=quote.AssignedUserId,Explanation="Quote case created manually."});quote.ProcessingJobs.Add(new QuoteProcessingJob{JobType="Housecall Pro Draft Retrieval",Status="Disabled",Message="Awaiting API configuration."});quote.ProcessingJobs.Add(new QuoteProcessingJob{JobType="CompanyCam Photo Retrieval",Status="Disabled",Message="Awaiting API configuration."});quote.ProcessingJobs.Add(new QuoteProcessingJob{JobType="Ollama Image Analysis",Status="Disabled",Message="Awaiting WrightServer endpoint configuration."});DbContext.Add(quote);await DbContext.SaveChangesAsync();message=$"Quote CCV-Q-{quote.Id:D6} created.";input=new();await ReloadAsync();}
+ private static string? Clean(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim();
+ private sealed class QuoteInput{[Range(1,int.MaxValue)]public int LocalOperationId{get;set;}public string? CustomerName{get;set;}[EmailAddress]public string? CustomerEmail{get;set;}public string? HousecallProQuoteId{get;set;}public string? HousecallProJobId{get;set;}public string? CompanyCamProjectId{get;set;}[Required,StringLength(2000)]public string WorkDescription{get;set;}="";}
+}

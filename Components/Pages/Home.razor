@@ -12,6 +12,7 @@
 @inject DashboardNotificationService Notifications
 @inject OperationAccessService OperationAccess
 @inject ILogger<Home> Logger
+@inject NavigationManager Navigation
 
 <PageTitle>@currentSnapshot.EntityName Dashboard</PageTitle>
 
@@ -32,7 +33,7 @@
 
     @if (IsEntityView)
     {
-        <NavLink class="back-link" href="">Back to venture group rollup</NavLink>
+        <NavLink class="back-link" href="@(isAdministrator ? "" : "locations")">@(isAdministrator ? "Back to venture group rollup" : "Back to my locations")</NavLink>
     }
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))
@@ -195,6 +196,7 @@
     private DashboardSnapshot currentSnapshot = DashboardSnapshot.Empty;
     private string? errorMessage;
     private ApDashboardSummary apSummary = ApDashboardSummary.Empty;
+    private bool isAdministrator;
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
 
@@ -227,6 +229,14 @@
         try
         {
             errorMessage = null;
+            isAdministrator = await OperationAccess.IsAdministratorAsync();
+
+            if (!IsEntityView && !isAdministrator)
+            {
+                var assigned = await OperationAccess.GetAccessibleOperationsAsync();
+                Navigation.NavigateTo(assigned.Count == 1 ? $"entity/{assigned[0].Slug}" : "locations");
+                return;
+            }
 
             if (IsEntityView)
             {

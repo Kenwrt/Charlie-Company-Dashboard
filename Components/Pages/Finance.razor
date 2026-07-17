@@ -7,6 +7,7 @@
 @inject IFinanceDataSource FinanceDataSource
 @inject ILogger<Finance> Logger
 @inject OperationAccessService OperationAccess
+@inject NavigationManager Navigation
 
 <PageTitle>@currentSummary.EntityName Finance</PageTitle>
 
@@ -27,7 +28,7 @@
 
     @if (IsEntityView)
     {
-        <NavLink class="back-link" href="finance">Back to venture finance rollup</NavLink>
+        <NavLink class="back-link" href="@(isAdministrator ? "finance" : "locations")">@(isAdministrator ? "Back to venture finance rollup" : "Back to my locations")</NavLink>
     }
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))
@@ -241,6 +242,7 @@
     private FinanceDashboard? entityDashboard;
     private FinanceSummary currentSummary = new("Charlie Company Ventures Group", "ventures", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     private string? errorMessage;
+    private bool isAdministrator;
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
 
@@ -258,6 +260,13 @@
         try
         {
             errorMessage = null;
+            isAdministrator = await OperationAccess.IsAdministratorAsync();
+            if (!IsEntityView && !isAdministrator)
+            {
+                var assigned = await OperationAccess.GetAccessibleOperationsAsync();
+                Navigation.NavigateTo(assigned.Count == 1 ? $"entity/{assigned[0].Slug}/finance" : "locations");
+                return;
+            }
             ventureDashboard = await FinanceDataSource.GetVentureFinanceDashboardAsync(CancellationToken.None);
             var allowedSlugs = (await OperationAccess.GetAccessibleOperationsAsync()).Select(operation => operation.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var allowedDashboards = ventureDashboard.LocalDashboards.Where(dashboard => allowedSlugs.Contains(dashboard.Summary.EntitySlug)).ToList();

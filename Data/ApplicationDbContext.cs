@@ -19,6 +19,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PriceImportRow> PriceImportRows => Set<PriceImportRow>();
     public DbSet<PriceApprovalRule> PriceApprovalRules => Set<PriceApprovalRule>();
     public DbSet<CatalogSyncJob> CatalogSyncJobs => Set<CatalogSyncJob>();
+    public DbSet<QuoteCase> QuoteCases => Set<QuoteCase>();
+    public DbSet<QuoteVersion> QuoteVersions => Set<QuoteVersion>();
+    public DbSet<QuoteLine> QuoteLines => Set<QuoteLine>();
+    public DbSet<QuotePricingRule> QuotePricingRules => Set<QuotePricingRule>();
+    public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
+    public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -108,5 +114,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         builder.Entity<PriceApprovalRule>(entity => entity.HasIndex(rule => rule.SupplyVendorId).IsUnique());
         builder.Entity<CatalogSyncJob>(entity => entity.HasOne(job => job.SupplyVendor).WithMany(vendor => vendor.CatalogSyncJobs).HasForeignKey(job => job.SupplyVendorId).OnDelete(DeleteBehavior.Restrict));
+
+        builder.Entity<QuoteCase>(entity =>
+        {
+            entity.HasIndex(quote => new { quote.LocalOperationId, quote.Status });
+            entity.HasIndex(quote => quote.HousecallProQuoteId);
+            entity.HasOne(quote => quote.LocalOperation).WithMany().HasForeignKey(quote => quote.LocalOperationId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(quote => quote.AssignedUser).WithMany().HasForeignKey(quote => quote.AssignedUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<QuoteVersion>(entity => entity.HasIndex(version => new { version.QuoteCaseId, version.VersionNumber }).IsUnique());
+        builder.Entity<QuoteLine>(entity => entity.HasOne(line => line.QuoteVersion).WithMany(version => version.Lines).HasForeignKey(line => line.QuoteVersionId).OnDelete(DeleteBehavior.Cascade));
+        builder.Entity<QuotePricingRule>(entity => entity.HasIndex(rule => rule.LocalOperationId).IsUnique());
+        builder.Entity<QuoteAuditEvent>(entity => entity.HasOne(item => item.QuoteCase).WithMany(quote => quote.AuditEvents).HasForeignKey(item => item.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
+        builder.Entity<QuoteProcessingJob>(entity => entity.HasOne(job => job.QuoteCase).WithMany(quote => quote.ProcessingJobs).HasForeignKey(job => job.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
     }
 }

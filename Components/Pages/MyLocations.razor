@@ -1,0 +1,34 @@
+@page "/locations"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@inject OperationAccessService OperationAccess
+
+<PageTitle>My Locations</PageTitle>
+<section class="dashboard-shell">
+    <div class="dashboard-header"><div><p class="eyebrow">Local operator access</p><h1>My locations</h1><p class="dashboard-subtitle">Choose an assigned location. Each location remains an independent dashboard.</p></div></div>
+    @if (locations.Count == 0)
+    {
+        <div class="alert alert-warning">No local operations are assigned to your account. Contact a CCV administrator.</div>
+    }
+    else
+    {
+        <div class="local-entity-grid">
+            @foreach (var location in locations)
+            {
+                <article class="local-entity-card">
+                    <div><strong>@location.Name</strong><span>@LocationText(location)</span></div>
+                    <div class="d-flex gap-2"><a class="btn btn-primary" href="@($"entity/{location.Slug}")">Operations dashboard</a><a class="btn btn-outline-primary" href="@($"entity/{location.Slug}/finance")">Location finance</a></div>
+                </article>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private IReadOnlyList<LocalOperation> locations = [];
+    protected override async Task OnInitializedAsync() => locations = await OperationAccess.GetAccessibleOperationsAsync();
+    private static string LocationText(LocalOperation operation) => string.Join(", ", new[] { operation.City, operation.StateOrProvince }.Where(value => !string.IsNullOrWhiteSpace(value)));
+}

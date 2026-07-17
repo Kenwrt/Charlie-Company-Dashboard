@@ -12,11 +12,15 @@
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Ventures
-            </NavLink>
-        </div>
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized><div class="nav-item px-3"><NavLink class="nav-link" href="" Match="NavLinkMatch.All"><span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> CCV Dashboard</NavLink></div></Authorized>
+        </AuthorizeView>
+        <AuthorizeView Roles="@ApplicationRoles.LocalOperator">
+            <Authorized><div class="nav-item px-3"><NavLink class="nav-link" href="locations"><span class="bi bi-building-fill" aria-hidden="true"></span> My Locations</NavLink></div></Authorized>
+        </AuthorizeView>
+        <AuthorizeView Roles="@($"{ApplicationRoles.Administrator},{ApplicationRoles.LocalOperator}")">
+            <Authorized><div class="nav-item px-3"><NavLink class="nav-link" href="quotes"><span class="bi bi-file-earmark-text" aria-hidden="true"></span> Quotes</NavLink></div></Authorized>
+        </AuthorizeView>
 
         <AuthorizeView Roles="@ApplicationRoles.Administrator">
             <Authorized>
@@ -28,11 +32,9 @@
             </Authorized>
         </AuthorizeView>
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="finance">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Finance
-            </NavLink>
-        </div>
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized><div class="nav-item px-3"><NavLink class="nav-link" href="finance"><span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> CCV Finance</NavLink></div></Authorized>
+        </AuthorizeView>
 
         <AuthorizeView Roles="@ApplicationRoles.Administrator">
             <Authorized>
