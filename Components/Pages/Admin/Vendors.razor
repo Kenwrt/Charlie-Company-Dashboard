@@ -1,0 +1,48 @@
+@page "/admin/vendors"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Supply Vendors</PageTitle>
+<h1>CCV supply vendors</h1>
+<p>Vendors are global across Charlie Company Ventures. Their invoices are assigned to individual local operations and jobs.</p>
+@if (!string.IsNullOrWhiteSpace(message)) { <div class="alert alert-info" role="status">@message</div> }
+
+<EditForm Model="input" OnValidSubmit="SaveAsync" FormName="vendor-editor"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
+ <div class="row g-3">
+  <div class="col-md-4"><label class="form-label">Vendor name</label><InputText class="form-control" @bind-Value="input.Name" /></div>
+  <div class="col-md-4"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="input.LegalName" /></div>
+  <div class="col-md-4"><label class="form-label">Account number</label><InputText class="form-control" @bind-Value="input.AccountNumber" /></div>
+  <div class="col-md-4"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="input.Email" /></div>
+  <div class="col-md-4"><label class="form-label">Phone</label><InputText class="form-control" @bind-Value="input.Phone" /></div>
+  <div class="col-md-4"><label class="form-label">Tax ID / EIN</label><InputText class="form-control" @bind-Value="input.TaxIdentificationNumber" /></div>
+  <div class="col-md-6"><label class="form-label">Address</label><InputText class="form-control" @bind-Value="input.AddressLine1" /></div>
+  <div class="col-md-6"><label class="form-label">Address line 2</label><InputText class="form-control" @bind-Value="input.AddressLine2" /></div>
+  <div class="col-md-3"><label class="form-label">City</label><InputText class="form-control" @bind-Value="input.City" /></div>
+  <div class="col-md-3"><label class="form-label">State</label><InputText class="form-control" @bind-Value="input.StateOrProvince" /></div>
+  <div class="col-md-3"><label class="form-label">Postal code</label><InputText class="form-control" @bind-Value="input.PostalCode" /></div>
+  <div class="col-md-3"><label class="form-label">Country</label><InputText class="form-control" @bind-Value="input.Country" /></div>
+  <div class="col-12 form-check ms-2"><InputCheckbox class="form-check-input" @bind-Value="input.IsActive" /><label class="form-check-label">Active</label></div>
+  <div class="col-12"><button class="btn btn-primary" type="submit">@(input.Id == 0 ? "Add vendor" : "Save vendor")</button> <button class="btn btn-secondary" type="button" @onclick="Reset">Clear</button></div>
+ </div>
+</EditForm>
+
+<section class="mt-5"><h2>Vendor directory</h2><div class="table-responsive"><table class="table"><thead><tr><th>Vendor</th><th>Contact</th><th>Location</th><th>Invoices</th><th></th></tr></thead><tbody>
+ @foreach (var vendor in vendors) { <tr><td><strong>@vendor.Name</strong><br /><small>@vendor.AccountNumber</small></td><td>@vendor.Email<br />@vendor.Phone</td><td>@vendor.City, @vendor.StateOrProvince</td><td><a href="@($"admin/vendors/{vendor.Id}/invoices")">@vendor.PayableInvoices.Count invoice(s)</a><br /><a href="@($"admin/vendors/{vendor.Id}/catalog")">@vendor.VendorProducts.Count catalog item(s)</a></td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(vendor)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(vendor)">Delete</button></td></tr> }
+ </tbody></table></div></section>
+
+@code {
+ private List<SupplyVendor> vendors = []; private VendorInput input = new(); private string? message;
+ protected override Task OnInitializedAsync() => ReloadAsync();
+ private async Task ReloadAsync() => vendors = await DbContext.SupplyVendors.AsNoTracking().AsSplitQuery().Include(x => x.PayableInvoices).Include(x => x.VendorProducts).OrderBy(x => x.Name).ToListAsync();
+ private async Task SaveAsync() { SupplyVendor vendor; if (input.Id == 0) { vendor = new SupplyVendor(); DbContext.SupplyVendors.Add(vendor); } else vendor = await DbContext.SupplyVendors.FindAsync(input.Id) ?? throw new InvalidOperationException("Vendor not found."); Map(input, vendor); vendor.UpdatedAt = DateTimeOffset.UtcNow; await DbContext.SaveChangesAsync(); message = "Vendor saved."; Reset(); await ReloadAsync(); }
+ private static void Map(VendorInput source, SupplyVendor target) { target.Name = source.Name.Trim(); target.LegalName = Clean(source.LegalName); target.AccountNumber = Clean(source.AccountNumber); target.Email = Clean(source.Email); target.Phone = Clean(source.Phone); target.AddressLine1 = Clean(source.AddressLine1); target.AddressLine2 = Clean(source.AddressLine2); target.City = Clean(source.City); target.StateOrProvince = Clean(source.StateOrProvince); target.PostalCode = Clean(source.PostalCode); target.Country = source.Country.Trim(); target.TaxIdentificationNumber = Clean(source.TaxIdentificationNumber); target.IsActive = source.IsActive; }
+ private void Edit(SupplyVendor vendor) => input = new VendorInput { Id = vendor.Id, Name = vendor.Name, LegalName = vendor.LegalName, AccountNumber = vendor.AccountNumber, Email = vendor.Email, Phone = vendor.Phone, AddressLine1 = vendor.AddressLine1, AddressLine2 = vendor.AddressLine2, City = vendor.City, StateOrProvince = vendor.StateOrProvince, PostalCode = vendor.PostalCode, Country = vendor.Country, TaxIdentificationNumber = vendor.TaxIdentificationNumber, IsActive = vendor.IsActive };
+ private async Task DeleteAsync(SupplyVendor vendor) { if (vendor.PayableInvoices.Count != 0) { message = "This vendor has invoices and cannot be deleted. Mark it inactive instead."; return; } var tracked = await DbContext.SupplyVendors.FindAsync(vendor.Id); if (tracked is not null) { DbContext.Remove(tracked); await DbContext.SaveChangesAsync(); message = "Vendor deleted."; await ReloadAsync(); } }
+ private void Reset() => input = new(); private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+ private sealed class VendorInput { public int Id { get; set; } [Required, StringLength(160)] public string Name { get; set; } = ""; public string? LegalName { get; set; } public string? AccountNumber { get; set; } [EmailAddress] public string? Email { get; set; } public string? Phone { get; set; } public string? AddressLine1 { get; set; } public string? AddressLine2 { get; set; } public string? City { get; set; } public string? StateOrProvince { get; set; } public string? PostalCode { get; set; } public string Country { get; set; } = "United States"; public string? TaxIdentificationNumber { get; set; } public bool IsActive { get; set; } = true; }
+}

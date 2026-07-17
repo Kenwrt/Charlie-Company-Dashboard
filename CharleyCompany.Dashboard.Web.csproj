@@ -18,9 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Remove="Data\app.db;DataProtectionKeys\**;Logs\**;bin\**;obj\**" />
+    <Content Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;bin\**;obj\**" />
     <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
-    <None Remove="Data\app.db;DataProtectionKeys\**;Logs\**;bin\**;obj\**" />
+    <None Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;bin\**;obj\**" />
   </ItemGroup>
 
 </Project>

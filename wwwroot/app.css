@@ -297,6 +297,55 @@ h1:focus {
     margin: 0.25rem 0 1rem;
 }
 
+.notification-panel {
+    padding: 0;
+}
+
+.notification-panel summary {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    list-style: none;
+    padding: 1rem 1.25rem;
+}
+
+.notification-panel summary::-webkit-details-marker {
+    display: none;
+}
+
+.notification-panel summary > span:first-child {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.notification-panel summary strong {
+    color: #1f2933;
+    font-size: 1.1rem;
+}
+
+.notification-panel summary small,
+.notification-panel-hint {
+    color: #64748b;
+}
+
+.notification-panel-hint::before {
+    content: "+ ";
+    font-weight: 800;
+}
+
+.notification-panel[open] .notification-panel-hint::before {
+    content: "− ";
+}
+
+.notification-panel[open] summary {
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.notification-panel-content {
+    padding: 1rem 1.25rem 1.25rem;
+}
+
 .empty-state {
     align-items: center;
     background: #f8fafc;

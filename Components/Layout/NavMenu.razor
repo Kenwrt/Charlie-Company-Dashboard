@@ -18,17 +18,46 @@
             </NavLink>
         </div>
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="notifications">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Notifications
-            </NavLink>
-        </div>
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="notifications">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Notifications
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
 
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="finance">
                 <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Finance
             </NavLink>
         </div>
+
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="admin/operations">
+                        <span class="bi bi-building-fill" aria-hidden="true"></span> Operations Admin
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="admin/operators">
+                        <span class="bi bi-people-fill-nav-menu" aria-hidden="true"></span> Operator Admin
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="admin/vendors">
+                        <span class="bi bi-truck" aria-hidden="true"></span> Vendors &amp; Payables
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="admin/catalog-automation">
+                        <span class="bi bi-arrow-repeat" aria-hidden="true"></span> Catalog Imports
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
 
         <AuthorizeView>
             <Authorized>
@@ -49,11 +78,6 @@
             </Authorized>
             <NotAuthorized>
                 <div class="nav-item px-3">
-                    <NavLink class="nav-link" href="Account/Register">
-                        <span class="bi bi-person-nav-menu" aria-hidden="true"></span> Register
-                    </NavLink>
-                </div>
-                <div class="nav-item px-3">
                     <NavLink class="nav-link" href="Account/Login">
                         <span class="bi bi-person-badge-nav-menu" aria-hidden="true"></span> Login
                     </NavLink>
@@ -62,6 +86,8 @@
         </AuthorizeView>
     </nav>
 </div>
+
+@using CharleyCompany.Dashboard.Web.Data
 
 @code {
     private string? currentUrl;

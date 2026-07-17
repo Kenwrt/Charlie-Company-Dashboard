@@ -1,0 +1,57 @@
+@page "/admin/catalog-automation"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using System.Security.Cryptography
+@using System.Text
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject IConfiguration Configuration
+@inject IWebHostEnvironment Environment
+
+<PageTitle>Catalog Imports and Automation</PageTitle>
+<h1>Catalog imports and automation</h1>
+<p>Upload CSV price lists for automatic staging and matching. PDFs are preserved securely and queued for OCR review.</p>
+@if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+
+<section class="activity-panel mb-4"><h2>Import vendor price list</h2><div class="row g-3">
+ <div class="col-md-4"><label class="form-label">Vendor</label><InputSelect class="form-select" @bind-Value="selectedVendorId"><option value="0">Select vendor…</option>@foreach (var v in vendors) { <option value="@v.Id">@v.Name</option> }</InputSelect></div>
+ <div class="col-md-5"><label class="form-label">CSV or PDF price list</label><InputFile class="form-control" OnChange="UploadAsync" accept=".csv,.pdf,text/csv,application/pdf" /></div>
+ <div class="col-md-3"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="effectiveDate" /></div>
+</div><small>CSV columns: SKU, Description, UnitPrice. Maximum file size: 20 MB.</small></section>
+
+<section class="activity-panel mb-4"><h2>Approval rules</h2><EditForm Model="ruleInput" OnValidSubmit="SaveRuleAsync" FormName="approval-rule"><DataAnnotationsValidator /><div class="row g-3">
+ <div class="col-md-3"><label class="form-label">Vendor override</label><InputSelect class="form-select" @bind-Value="ruleInput.SupplyVendorId"><option value="0">Global default</option>@foreach (var v in vendors) { <option value="@v.Id">@v.Name</option> }</InputSelect></div>
+ <div class="col-md-2"><label class="form-label">Maximum % change</label><InputNumber class="form-control" @bind-Value="ruleInput.Percent" /></div>
+ <div class="col-md-2"><label class="form-label">Maximum $ change</label><InputNumber class="form-control" @bind-Value="ruleInput.Dollars" /></div>
+ <div class="col-md-3 form-check mt-5"><InputCheckbox class="form-check-input" @bind-Value="ruleInput.TrustedApi" /><label class="form-check-label">Auto-approve trusted API changes</label></div>
+ <div class="col-md-2 mt-4"><button class="btn btn-primary">Save rule</button></div>
+</div></EditForm></section>
+
+<section class="activity-panel mb-4"><h2>Provider synchronization</h2><p>Jobs remain queued until a provider endpoint and secret reference are configured.</p><div class="row g-2"><div class="col-md-4"><InputSelect class="form-select" @bind-Value="syncVendorId"><option value="0">Select vendor…</option>@foreach (var v in vendors) { <option value="@v.Id">@v.Name</option> }</InputSelect></div><div class="col-md-3"><InputText class="form-control" @bind-Value="syncProvider" placeholder="Provider" /></div><div class="col-md-3"><button class="btn btn-outline-primary" @onclick="QueueSyncAsync">Queue catalog sync</button></div></div></section>
+
+<section class="mt-5"><h2>Import review queue</h2><div class="table-responsive"><table class="table"><thead><tr><th>Vendor / file</th><th>SKU</th><th>Description</th><th>Proposed</th><th>Match</th><th>Status</th><th></th></tr></thead><tbody>
+@foreach (var row in rows) { <tr><td>@row.PriceImportDocument.SupplyVendor.Name<br /><small>@row.PriceImportDocument.OriginalFileName</small></td><td>@row.VendorSku</td><td>@row.Description</td><td>@row.ProposedUnitPrice.ToString("C4")</td><td>@(row.VendorProduct?.Product.Name ?? "Unmatched")<br /><small>@row.MatchConfidence.ToString("P0") confidence</small></td><td>@row.ReviewStatus</td><td>@if (row.ReviewStatus == "Pending" && row.VendorProductId is not null) { <button class="btn btn-sm btn-success" @onclick="() => ApproveRowAsync(row)">Approve</button> <button class="btn btn-sm btn-outline-secondary" @onclick="() => RejectRowAsync(row)">Reject</button> }</td></tr> }
+</tbody></table></div></section>
+
+<section class="mt-5"><h2>Current vendor price comparison</h2><div class="table-responsive"><table class="table"><thead><tr><th>Product</th><th>Vendor</th><th>SKU</th><th>Current price</th><th>Effective</th></tr></thead><tbody>
+@foreach (var item in comparison) { <tr><td>@item.Product</td><td>@item.Vendor</td><td>@item.Sku</td><td>@item.Price.ToString("C4")</td><td>@item.EffectiveDate</td></tr> }
+</tbody></table></div></section>
+
+@code {
+ private List<SupplyVendor> vendors = []; private List<PriceImportRow> rows = []; private List<ComparisonRow> comparison = []; private int selectedVendorId; private DateOnly effectiveDate = DateOnly.FromDateTime(DateTime.Today); private RuleInput ruleInput = new(); private int syncVendorId; private string syncProvider = "VendorApi"; private string? message;
+ protected override Task OnInitializedAsync() => ReloadAsync();
+ private async Task ReloadAsync() { vendors = await DbContext.SupplyVendors.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); rows = await DbContext.PriceImportRows.AsNoTracking().Include(x => x.PriceImportDocument).ThenInclude(x => x.SupplyVendor).Include(x => x.VendorProduct).ThenInclude(x => x!.Product).OrderByDescending(x => x.Id).Take(100).ToListAsync(); var today = DateOnly.FromDateTime(DateTime.Today); comparison = await DbContext.VendorPrices.AsNoTracking().Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today)).OrderBy(x => x.VendorProduct.Product.Name).ThenBy(x => x.UnitPrice).Select(x => new ComparisonRow(x.VendorProduct.Product.Name, x.VendorProduct.SupplyVendor.Name, x.VendorProduct.VendorSku, x.UnitPrice, x.EffectiveDate)).ToListAsync(); }
+ private async Task UploadAsync(InputFileChangeEventArgs e) { if (!vendors.Any(x => x.Id == selectedVendorId)) { message = "Select a vendor before uploading."; return; } var file = e.File; var ext = Path.GetExtension(file.Name).ToLowerInvariant(); if (ext is not ".csv" and not ".pdf") { message = "Only CSV and PDF files are accepted."; return; } await using var input = file.OpenReadStream(20 * 1024 * 1024); using var memory = new MemoryStream(); await input.CopyToAsync(memory); var bytes = memory.ToArray(); var hash = Convert.ToHexString(SHA256.HashData(bytes)); if (await DbContext.PriceImportDocuments.AnyAsync(x => x.Sha256 == hash)) { message = "This exact document has already been imported."; return; } var root = Configuration["CatalogImports:StoragePath"] ?? Path.Combine(Environment.ContentRootPath, "CatalogImports"); Directory.CreateDirectory(root); var storedName = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}{ext}"; var path = Path.Combine(root, storedName); await File.WriteAllBytesAsync(path, bytes); var document = new PriceImportDocument { SupplyVendorId = selectedVendorId, OriginalFileName = Path.GetFileName(file.Name), StoragePath = path, Sha256 = hash, ContentType = file.ContentType, Status = ext == ".pdf" ? "Awaiting OCR Review" : "Staged" }; DbContext.PriceImportDocuments.Add(document); if (ext == ".csv") await StageCsvAsync(document, Encoding.UTF8.GetString(bytes)); await DbContext.SaveChangesAsync(); message = ext == ".pdf" ? "PDF preserved and queued for OCR review." : $"CSV staged with {document.Rows.Count} row(s)."; await ReloadAsync(); }
+ private async Task StageCsvAsync(PriceImportDocument document, string text) { var products = await DbContext.VendorProducts.Include(x => x.Product).Where(x => x.SupplyVendorId == selectedVendorId).ToListAsync(); foreach (var raw in text.Split(['\r','\n'], StringSplitOptions.RemoveEmptyEntries).Skip(1)) { var cells = raw.Split(',').Select(x => x.Trim().Trim('"')).ToArray(); if (cells.Length < 3 || !decimal.TryParse(cells[2], out var price)) continue; var sku=cells[0]; var description=cells[1]; var exact=products.FirstOrDefault(x => x.VendorSku.Equals(sku,StringComparison.OrdinalIgnoreCase)); var name=exact is null ? products.FirstOrDefault(x => Normalize(x.Product.Name)==Normalize(description)) : null; var match=exact ?? name; document.Rows.Add(new PriceImportRow { VendorSku=sku, Description=description, ProposedUnitPrice=price, EffectiveDate=effectiveDate, VendorProductId=match?.Id, MatchConfidence=exact is not null ? 1m : name is not null ? .85m : 0m }); } }
+ private async Task ApproveRowAsync(PriceImportRow row) { if (row.VendorProductId is null) return; var current=await DbContext.VendorPrices.Where(x=>x.VendorProductId==row.VendorProductId && x.ExpirationDate==null).OrderByDescending(x=>x.EffectiveDate).FirstOrDefaultAsync(); if(current is not null && current.EffectiveDate<row.EffectiveDate) current.ExpirationDate=row.EffectiveDate.AddDays(-1); DbContext.VendorPrices.Add(new VendorPrice { VendorProductId=row.VendorProductId.Value, UnitPrice=row.ProposedUnitPrice, EffectiveDate=row.EffectiveDate, SourceType="Price List", SourceReference=row.PriceImportDocument.OriginalFileName }); var tracked=await DbContext.PriceImportRows.FindAsync(row.Id); if(tracked is not null) tracked.ReviewStatus="Approved"; await DbContext.SaveChangesAsync(); message="Staged price approved and added to history."; await ReloadAsync(); }
+ private async Task RejectRowAsync(PriceImportRow row) { var tracked=await DbContext.PriceImportRows.FindAsync(row.Id); if(tracked is not null) tracked.ReviewStatus="Rejected"; await DbContext.SaveChangesAsync(); await ReloadAsync(); }
+ private async Task SaveRuleAsync() { int? vendorId=ruleInput.SupplyVendorId==0?null:ruleInput.SupplyVendorId; var rule=await DbContext.PriceApprovalRules.SingleOrDefaultAsync(x=>x.SupplyVendorId==vendorId); if(rule is null){rule=new PriceApprovalRule{SupplyVendorId=vendorId};DbContext.Add(rule);} rule.AutoApprovePercentThreshold=ruleInput.Percent;rule.AutoApproveDollarThreshold=ruleInput.Dollars;rule.AutoApproveTrustedApiChanges=ruleInput.TrustedApi;await DbContext.SaveChangesAsync();message="Approval rule saved."; }
+ private async Task QueueSyncAsync() { if(!vendors.Any(x=>x.Id==syncVendorId)||string.IsNullOrWhiteSpace(syncProvider)){message="Select a vendor and provider.";return;} DbContext.CatalogSyncJobs.Add(new CatalogSyncJob { SupplyVendorId=syncVendorId, Provider=syncProvider.Trim(), Status="Waiting for Provider Configuration", Message="Configure provider endpoint and secret reference before execution." });await DbContext.SaveChangesAsync();message="Synchronization job recorded safely; no external call was made."; }
+ private static string Normalize(string value)=>new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+ private sealed class RuleInput { public int SupplyVendorId {get;set;} [Range(0,100)] public decimal Percent {get;set;}=2; [Range(0,double.MaxValue)] public decimal Dollars {get;set;}=1; public bool TrustedApi {get;set;} }
+ private sealed record ComparisonRow(string Product,string Vendor,string Sku,decimal Price,DateOnly EffectiveDate);
+}

@@ -1,0 +1,49 @@
+@page "/admin/operators"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject UserManager<ApplicationUser> UserManager
+
+<PageTitle>Operator Administration</PageTitle>
+<h1>Local operator users</h1>
+@if (!string.IsNullOrWhiteSpace(message)) { <div class="alert alert-info" role="status">@message</div> }
+
+<section><h2>Create operator</h2><EditForm Model="createInput" OnValidSubmit="CreateAsync" FormName="create-operator" class="row g-3"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
+ <div class="col-md-5"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="createInput.Email" /></div>
+ <div class="col-md-5"><label class="form-label">Temporary password</label><InputText type="password" class="form-control" @bind-Value="createInput.Password" /></div>
+ <div class="col-md-2 align-self-end"><button class="btn btn-primary" type="submit">Create</button></div>
+</EditForm></section>
+
+<section class="mt-5"><h2>Operators</h2><table class="table"><thead><tr><th>Email</th><th>Assigned operations</th><th></th></tr></thead><tbody>
+ @foreach (var user in operators) { <tr><td>@user.Email</td><td>@AssignmentNames(user.Id)</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => SelectUserAsync(user)">Manage</button></td></tr> }
+</tbody></table></section>
+
+@if (selectedUser is not null)
+{
+ <section class="mt-4"><h2>Manage @selectedUser.Email</h2>
+  <fieldset><legend class="h6">Operation assignments</legend>@foreach (var operation in operations) { <div class="form-check"><input class="form-check-input" type="checkbox" id="assign-@operation.Id" checked="@selectedOperationIds.Contains(operation.Id)" @onchange="args => SetSelected(operation.Id, args.Value as bool? == true)" /><label class="form-check-label" for="assign-@operation.Id">@operation.Name</label></div> }</fieldset>
+  <button class="btn btn-primary mt-3" @onclick="SaveAssignmentsAsync">Save assignments</button>
+  <EditForm Model="resetInput" OnValidSubmit="ResetPasswordAsync" FormName="reset-password" class="row g-3 mt-3"><DataAnnotationsValidator /><div class="col-md-6"><label class="form-label">New temporary password</label><InputText type="password" class="form-control" @bind-Value="resetInput.Password" /></div><div class="col-md-3 align-self-end"><button class="btn btn-warning" type="submit">Reset password</button></div></EditForm>
+  <button class="btn btn-outline-danger mt-3" @onclick="DisableUserAsync">Disable login</button>
+ </section>
+}
+
+@code {
+ private List<ApplicationUser> operators = []; private List<LocalOperation> operations = []; private Dictionary<string, List<string>> assignments = []; private readonly HashSet<int> selectedOperationIds = []; private ApplicationUser? selectedUser; private CreateInput createInput = new(); private ResetInput resetInput = new(); private string? message;
+ protected override Task OnInitializedAsync() => ReloadAsync();
+ private async Task ReloadAsync() { operators = (await UserManager.GetUsersInRoleAsync(ApplicationRoles.LocalOperator)).OrderBy(x => x.Email).ToList(); operations = await DbContext.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); var memberships = await DbContext.UserLocalOperations.AsNoTracking().Include(x => x.LocalOperation).ToListAsync(); assignments = memberships.GroupBy(x => x.UserId).ToDictionary(group => group.Key, group => group.Select(x => x.LocalOperation.Name).OrderBy(x => x).ToList()); }
+ private string AssignmentNames(string userId) => assignments.TryGetValue(userId, out var names) ? string.Join(", ", names) : "None";
+ private async Task CreateAsync() { var user = new ApplicationUser { UserName = createInput.Email.Trim(), Email = createInput.Email.Trim(), EmailConfirmed = true }; var result = await UserManager.CreateAsync(user, createInput.Password); if (result.Succeeded) result = await UserManager.AddToRoleAsync(user, ApplicationRoles.LocalOperator); message = result.Succeeded ? "Operator created. Select Manage to assign operations." : string.Join("; ", result.Errors.Select(x => x.Description)); createInput = new(); await ReloadAsync(); }
+ private async Task SelectUserAsync(ApplicationUser user) { selectedUser = user; selectedOperationIds.Clear(); var ids = await DbContext.UserLocalOperations.Where(x => x.UserId == user.Id).Select(x => x.LocalOperationId).ToListAsync(); selectedOperationIds.UnionWith(ids); resetInput = new(); }
+ private async Task SaveAssignmentsAsync() { if (selectedUser is null) return; var existing = await DbContext.UserLocalOperations.Where(x => x.UserId == selectedUser.Id).ToListAsync(); DbContext.UserLocalOperations.RemoveRange(existing); DbContext.UserLocalOperations.AddRange(selectedOperationIds.Select(id => new UserLocalOperation { UserId = selectedUser.Id, LocalOperationId = id })); await DbContext.SaveChangesAsync(); message = "Assignments saved."; await ReloadAsync(); }
+ private async Task ResetPasswordAsync() { if (selectedUser is null) return; var token = await UserManager.GeneratePasswordResetTokenAsync(selectedUser); var result = await UserManager.ResetPasswordAsync(selectedUser, token, resetInput.Password); message = result.Succeeded ? "Password reset. Give the temporary password to the operator securely." : string.Join("; ", result.Errors.Select(x => x.Description)); resetInput = new(); }
+ private async Task DisableUserAsync() { if (selectedUser is null) return; await UserManager.SetLockoutEnabledAsync(selectedUser, true); var result = await UserManager.SetLockoutEndDateAsync(selectedUser, DateTimeOffset.MaxValue); message = result.Succeeded ? "Operator login disabled." : string.Join("; ", result.Errors.Select(x => x.Description)); await ReloadAsync(); }
+ private void SetSelected(int id, bool selected) { if (selected) selectedOperationIds.Add(id); else selectedOperationIds.Remove(id); }
+ private sealed class CreateInput { [Required, EmailAddress] public string Email { get; set; } = ""; [Required, MinLength(12)] public string Password { get; set; } = ""; }
+ private sealed class ResetInput { [Required, MinLength(12)] public string Password { get; set; } = ""; }
+}

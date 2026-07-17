@@ -69,6 +69,7 @@ try
             options.SignIn.RequireConfirmedAccount = true;
             options.Stores.SchemaVersion = IdentitySchemaVersions.Version3;
         })
+        .AddRoles<IdentityRole>()
         .AddEntityFrameworkStores<ApplicationDbContext>()
         .AddSignInManager()
         .AddDefaultTokenProviders();
@@ -78,6 +79,8 @@ try
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
     builder.Services.AddSingleton<DashboardNotificationService>();
     builder.Services.AddScoped<MockDashboardDataSource>();
+    builder.Services.AddScoped<OperationAccessService>();
+    builder.Services.AddScoped<OperationCatalogService>();
     builder.Services.AddScoped<IFinanceDataSource, SpreadsheetFinanceDataSource>();
     builder.Services.AddScoped<IOutboundNotificationSender, EmailNotificationSender>();
     builder.Services.AddScoped<IOutboundNotificationSender, MobileNotificationSender>();
@@ -92,6 +95,7 @@ try
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         dbContext.Database.Migrate();
+        await IdentityBootstrapService.InitializeAsync(scope.ServiceProvider, builder.Configuration);
     }
 
     // Configure the HTTP request pipeline.

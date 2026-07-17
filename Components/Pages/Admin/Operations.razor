@@ -1,0 +1,63 @@
+@page "/admin/operations"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using System.Text.RegularExpressions
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Operations Administration</PageTitle>
+<h1>Local operations</h1>
+<p>Adding an active operation automatically creates its operational and finance dashboard routes.</p>
+@if (!string.IsNullOrWhiteSpace(message)) { <div class="alert alert-info" role="status">@message</div> }
+
+<EditForm Model="input" OnValidSubmit="SaveOperationAsync" FormName="operation-editor">
+ <DataAnnotationsValidator /><ValidationSummary class="text-danger" />
+ <div class="row g-3">
+  <div class="col-md-6"><label class="form-label">Display name</label><InputText class="form-control" @bind-Value="input.Name" /></div>
+  <div class="col-md-3"><label class="form-label">Slug</label><InputText class="form-control" @bind-Value="input.Slug" disabled="@(input.Id != 0)" /></div>
+  <div class="col-md-3"><label class="form-label">Time zone</label><InputText class="form-control" @bind-Value="input.TimeZone" /></div>
+  <div class="col-md-6"><label class="form-label">Housecall Pro location ID</label><InputText class="form-control" @bind-Value="input.HousecallProLocationId" /><div class="form-text">Optional during manual creation. The Housecall Pro onboarding API can assign this later.</div></div>
+  <div class="col-md-6"><label class="form-label">Legal name</label><InputText class="form-control" @bind-Value="input.LegalName" /></div>
+  <div class="col-md-6"><label class="form-label">Address</label><InputText class="form-control" @bind-Value="input.AddressLine1" /></div>
+  <div class="col-md-6"><label class="form-label">Address line 2</label><InputText class="form-control" @bind-Value="input.AddressLine2" /></div>
+  <div class="col-md-3"><label class="form-label">City</label><InputText class="form-control" @bind-Value="input.City" /></div>
+  <div class="col-md-3"><label class="form-label">State</label><InputText class="form-control" @bind-Value="input.StateOrProvince" /></div>
+  <div class="col-md-3"><label class="form-label">Postal code</label><InputText class="form-control" @bind-Value="input.PostalCode" /></div>
+  <div class="col-md-3"><label class="form-label">Country</label><InputText class="form-control" @bind-Value="input.Country" /></div>
+  <div class="col-md-4"><label class="form-label">Tax ID / EIN</label><InputText class="form-control" @bind-Value="input.TaxIdentificationNumber" /></div>
+  <div class="col-md-4"><label class="form-label">Tax classification</label><InputText class="form-control" @bind-Value="input.TaxClassification" /></div>
+  <div class="col-md-4"><label class="form-label">Sales-tax account</label><InputText class="form-control" @bind-Value="input.SalesTaxAccountNumber" /></div>
+  <div class="col-12 form-check ms-2"><InputCheckbox class="form-check-input" @bind-Value="input.IsActive" /><label class="form-check-label">Active</label></div>
+  <div class="col-12"><button class="btn btn-primary" type="submit">@(input.Id == 0 ? "Add operation" : "Save operation")</button> <button class="btn btn-secondary" type="button" @onclick="ResetEditor">Clear</button></div>
+ </div>
+</EditForm>
+
+<section class="mt-5"><h2>Operations</h2><div class="table-responsive"><table class="table"><thead><tr><th>Name</th><th>Location</th><th>Housecall Pro</th><th>Tax classification</th><th>Status</th><th></th></tr></thead><tbody>
+ @foreach (var operation in operations) { <tr><td><strong>@operation.Name</strong><br /><small>CCV ID @operation.Id · /entity/@operation.Slug</small></td><td>@operation.City, @operation.StateOrProvince @operation.PostalCode</td><td>@(string.IsNullOrWhiteSpace(operation.HousecallProLocationId) ? "Pending API assignment" : operation.HousecallProLocationId)</td><td>@operation.TaxClassification</td><td>@(operation.IsActive ? "Active" : "Inactive")</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(operation)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateAsync(operation)">Deactivate</button></td></tr> }
+ </tbody></table></div></section>
+
+<section class="mt-5"><h2>Integration secret reference</h2><p>Save a secret-manager reference, never an API key.</p>
+ <EditForm Model="integrationInput" OnValidSubmit="SaveIntegrationAsync" FormName="integration-editor" class="row g-3"><DataAnnotationsValidator />
+  <div class="col-md-3"><InputSelect class="form-select" @bind-Value="integrationInput.LocalOperationId"><option value="0">Select operation…</option>@foreach (var operation in operations.Where(x => x.IsActive)) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+  <div class="col-md-3"><InputText class="form-control" @bind-Value="integrationInput.Provider" placeholder="Provider" /></div>
+  <div class="col-md-4"><InputText class="form-control" @bind-Value="integrationInput.SecretReference" placeholder="Secret reference" /></div>
+  <div class="col-md-2"><button class="btn btn-primary" type="submit">Save</button></div>
+ </EditForm>
+</section>
+
+@code {
+ private List<LocalOperation> operations = []; private OperationInput input = new(); private IntegrationInput integrationInput = new(); private string? message;
+ protected override Task OnInitializedAsync() => ReloadAsync();
+ private async Task ReloadAsync() => operations = await DbContext.LocalOperations.AsNoTracking().OrderBy(x => x.Name).ToListAsync();
+ private async Task SaveOperationAsync() { var slug = Regex.Replace(input.Slug.Trim().ToLowerInvariant(), "[^a-z0-9-]", "-").Trim('-'); var housecallProId = Clean(input.HousecallProLocationId); if (housecallProId is not null && await DbContext.LocalOperations.AnyAsync(x => x.HousecallProLocationId == housecallProId && x.Id != input.Id)) { message = "That Housecall Pro location ID is already assigned to another operation."; return; } LocalOperation operation; if (input.Id == 0) { if (string.IsNullOrWhiteSpace(slug) || await DbContext.LocalOperations.AnyAsync(x => x.Slug == slug)) { message = "Choose a unique slug."; return; } operation = new LocalOperation { Slug = slug }; DbContext.LocalOperations.Add(operation); } else { operation = await DbContext.LocalOperations.FindAsync(input.Id) ?? throw new InvalidOperationException("Operation not found."); } Map(input, operation); operation.UpdatedAt = DateTimeOffset.UtcNow; await DbContext.SaveChangesAsync(); message = operation.HousecallProLocationId is null ? $"Operation saved with CCV ID {operation.Id}; Housecall Pro assignment is pending." : $"Operation saved with CCV ID {operation.Id} and Housecall Pro location ID {operation.HousecallProLocationId}."; ResetEditor(); await ReloadAsync(); }
+ private static void Map(OperationInput source, LocalOperation target) { target.Name = source.Name.Trim(); target.TimeZone = source.TimeZone.Trim(); target.HousecallProLocationId = Clean(source.HousecallProLocationId); target.LegalName = Clean(source.LegalName); target.AddressLine1 = Clean(source.AddressLine1); target.AddressLine2 = Clean(source.AddressLine2); target.City = Clean(source.City); target.StateOrProvince = Clean(source.StateOrProvince); target.PostalCode = Clean(source.PostalCode); target.Country = source.Country.Trim(); target.TaxIdentificationNumber = Clean(source.TaxIdentificationNumber); target.TaxClassification = Clean(source.TaxClassification); target.SalesTaxAccountNumber = Clean(source.SalesTaxAccountNumber); target.IsActive = source.IsActive; }
+ private void Edit(LocalOperation operation) => input = new OperationInput { Id = operation.Id, Name = operation.Name, Slug = operation.Slug, TimeZone = operation.TimeZone, HousecallProLocationId = operation.HousecallProLocationId, LegalName = operation.LegalName, AddressLine1 = operation.AddressLine1, AddressLine2 = operation.AddressLine2, City = operation.City, StateOrProvince = operation.StateOrProvince, PostalCode = operation.PostalCode, Country = operation.Country, TaxIdentificationNumber = operation.TaxIdentificationNumber, TaxClassification = operation.TaxClassification, SalesTaxAccountNumber = operation.SalesTaxAccountNumber, IsActive = operation.IsActive };
+ private async Task DeactivateAsync(LocalOperation operation) { var tracked = await DbContext.LocalOperations.FindAsync(operation.Id); if (tracked is not null) { tracked.IsActive = false; tracked.UpdatedAt = DateTimeOffset.UtcNow; await DbContext.SaveChangesAsync(); await ReloadAsync(); message = "Operation deactivated."; } }
+ private async Task SaveIntegrationAsync() { if (!operations.Any(x => x.Id == integrationInput.LocalOperationId)) { message = "Select an operation."; return; } var provider = integrationInput.Provider.Trim(); var item = await DbContext.OperationIntegrations.SingleOrDefaultAsync(x => x.LocalOperationId == integrationInput.LocalOperationId && x.Provider == provider); if (item is null) DbContext.OperationIntegrations.Add(new OperationIntegration { LocalOperationId = integrationInput.LocalOperationId, Provider = provider, SecretReference = integrationInput.SecretReference.Trim() }); else item.SecretReference = integrationInput.SecretReference.Trim(); await DbContext.SaveChangesAsync(); integrationInput = new(); message = "Integration reference saved."; }
+ private void ResetEditor() => input = new(); private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+ private sealed class OperationInput { public int Id { get; set; } [Required, StringLength(120)] public string Name { get; set; } = ""; [Required, StringLength(80)] public string Slug { get; set; } = ""; [Required] public string TimeZone { get; set; } = "America/Chicago"; [StringLength(160)] public string? HousecallProLocationId { get; set; } public string? LegalName { get; set; } public string? AddressLine1 { get; set; } public string? AddressLine2 { get; set; } public string? City { get; set; } public string? StateOrProvince { get; set; } public string? PostalCode { get; set; } public string Country { get; set; } = "United States"; public string? TaxIdentificationNumber { get; set; } public string? TaxClassification { get; set; } public string? SalesTaxAccountNumber { get; set; } public bool IsActive { get; set; } = true; }
+ private sealed class IntegrationInput { [Range(1, int.MaxValue)] public int LocalOperationId { get; set; } [Required] public string Provider { get; set; } = "HousecallPro"; [Required] public string SecretReference { get; set; } = ""; }
+}

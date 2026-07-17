@@ -1,0 +1,46 @@
+@page "/admin/vendors/{VendorId:int}/catalog"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Vendor Price Catalog</PageTitle>
+@if (vendor is null) { <h1>Vendor not found</h1> }
+else {
+ <h1>@vendor.Name product catalog</h1><p><a href="admin/vendors">Back to vendors</a> · Prices are effective-dated; adding a new price preserves prior history.</p>
+ @if (message is not null) { <div class="alert alert-info">@message</div> }
+ <EditForm Model="input" OnValidSubmit="SaveItemAsync" FormName="catalog-item"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
+  <div class="row g-3">
+   <div class="col-md-4"><label class="form-label">Product name</label><InputText class="form-control" @bind-Value="input.ProductName" /></div>
+   <div class="col-md-2"><label class="form-label">Vendor SKU</label><InputText class="form-control" @bind-Value="input.VendorSku" /></div>
+   <div class="col-md-2"><label class="form-label">Category</label><InputText class="form-control" @bind-Value="input.Category" /></div>
+   <div class="col-md-2"><label class="form-label">Manufacturer</label><InputText class="form-control" @bind-Value="input.Manufacturer" /></div>
+   <div class="col-md-2"><label class="form-label">Manufacturer part #</label><InputText class="form-control" @bind-Value="input.ManufacturerPartNumber" /></div>
+   <div class="col-md-4"><label class="form-label">Vendor description</label><InputText class="form-control" @bind-Value="input.VendorDescription" /></div>
+   <div class="col-md-2"><label class="form-label">Package quantity</label><InputNumber class="form-control" @bind-Value="input.PackageQuantity" /></div>
+   <div class="col-md-2"><label class="form-label">Purchase unit</label><InputText class="form-control" @bind-Value="input.PurchaseUnit" /></div>
+   <div class="col-md-2"><label class="form-label">Initial/current price</label><InputNumber class="form-control" @bind-Value="input.UnitPrice" /></div>
+   <div class="col-md-2"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="input.EffectiveDate" /></div>
+   <div class="col-12"><button class="btn btn-primary">Add catalog item</button> <button type="button" class="btn btn-secondary" @onclick="Reset">Clear</button></div>
+  </div>
+ </EditForm>
+ <section class="mt-5"><h2>Current catalog</h2><div class="table-responsive"><table class="table"><thead><tr><th>SKU</th><th>Product</th><th>Package</th><th>Current price</th><th>Effective</th><th>Price history</th></tr></thead><tbody>
+ @foreach (var item in items) { var current = CurrentPrice(item); <tr><td>@item.VendorSku</td><td><strong>@item.Product.Name</strong><br /><small>@item.VendorDescription</small></td><td>@item.PackageQuantity.ToString("N2") @item.PurchaseUnit</td><td>@(current?.UnitPrice.ToString("C4") ?? "Not priced")</td><td>@current?.EffectiveDate</td><td><details><summary>@item.Prices.Count version(s)</summary>@foreach (var price in item.Prices.OrderByDescending(x => x.EffectiveDate)) { <div>@price.EffectiveDate: @price.UnitPrice.ToString("C4") · @price.SourceType @price.SourceReference</div> }</details><EditForm Model="priceInput" OnValidSubmit="() => AddPriceAsync(item.Id)" FormName="@($"price-{item.Id}")" class="row g-1 mt-2"><div class="col"><InputNumber class="form-control form-control-sm" @bind-Value="priceInput.UnitPrice" placeholder="New price" /></div><div class="col"><InputDate class="form-control form-control-sm" @bind-Value="priceInput.EffectiveDate" /></div><div class="col"><button class="btn btn-sm btn-outline-primary">Add price</button></div></EditForm></td></tr> }
+ </tbody></table></div></section>
+}
+
+@code {
+ [Parameter] public int VendorId { get; set; }
+ private SupplyVendor? vendor; private List<VendorProduct> items = []; private CatalogInput input = new(); private PriceInput priceInput = new(); private string? message;
+ protected override Task OnParametersSetAsync() => ReloadAsync();
+ private async Task ReloadAsync() { vendor = await DbContext.SupplyVendors.AsNoTracking().SingleOrDefaultAsync(x => x.Id == VendorId); items = await DbContext.VendorProducts.AsNoTracking().Include(x => x.Product).Include(x => x.Prices).Where(x => x.SupplyVendorId == VendorId).OrderBy(x => x.Product.Name).ToListAsync(); }
+ private async Task SaveItemAsync() { if (await DbContext.VendorProducts.AnyAsync(x => x.SupplyVendorId == VendorId && x.VendorSku == input.VendorSku.Trim())) { message = "That vendor SKU already exists."; return; } var product = new Product { Name = input.ProductName.Trim(), Category = Clean(input.Category), Manufacturer = Clean(input.Manufacturer), ManufacturerPartNumber = Clean(input.ManufacturerPartNumber), UnitOfMeasure = input.PurchaseUnit.Trim() }; var item = new VendorProduct { SupplyVendorId = VendorId, Product = product, VendorSku = input.VendorSku.Trim(), VendorDescription = Clean(input.VendorDescription), PackageQuantity = input.PackageQuantity, PurchaseUnit = input.PurchaseUnit.Trim() }; item.Prices.Add(new VendorPrice { UnitPrice = input.UnitPrice, EffectiveDate = input.EffectiveDate, SourceType = "Manual" }); DbContext.VendorProducts.Add(item); await DbContext.SaveChangesAsync(); message = "Catalog item and initial price saved."; Reset(); await ReloadAsync(); }
+ private async Task AddPriceAsync(int itemId) { var current = await DbContext.VendorPrices.Where(x => x.VendorProductId == itemId && x.ExpirationDate == null).OrderByDescending(x => x.EffectiveDate).FirstOrDefaultAsync(); if (current is not null && current.EffectiveDate < priceInput.EffectiveDate) current.ExpirationDate = priceInput.EffectiveDate.AddDays(-1); DbContext.VendorPrices.Add(new VendorPrice { VendorProductId = itemId, UnitPrice = priceInput.UnitPrice, EffectiveDate = priceInput.EffectiveDate, SourceType = "Manual" }); await DbContext.SaveChangesAsync(); message = "New price version saved; prior history was retained."; priceInput = new(); await ReloadAsync(); }
+ private static VendorPrice? CurrentPrice(VendorProduct item) { var today = DateOnly.FromDateTime(DateTime.Today); return item.Prices.Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today)).OrderByDescending(x => x.EffectiveDate).FirstOrDefault(); }
+ private void Reset() => input = new(); private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+ private sealed class CatalogInput { [Required] public string ProductName { get; set; } = ""; [Required] public string VendorSku { get; set; } = ""; public string? Category { get; set; } public string? Manufacturer { get; set; } public string? ManufacturerPartNumber { get; set; } public string? VendorDescription { get; set; } [Range(.0001, double.MaxValue)] public decimal PackageQuantity { get; set; } = 1; [Required] public string PurchaseUnit { get; set; } = "Each"; [Range(.0001, double.MaxValue)] public decimal UnitPrice { get; set; } public DateOnly EffectiveDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); }
+ private sealed class PriceInput { [Range(.0001, double.MaxValue)] public decimal UnitPrice { get; set; } public DateOnly EffectiveDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); }
+}

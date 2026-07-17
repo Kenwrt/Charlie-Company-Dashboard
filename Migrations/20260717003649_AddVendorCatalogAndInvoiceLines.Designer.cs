@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260717003649_AddVendorCatalogAndInvoiceLines")]
+    partial class AddVendorCatalogAndInvoiceLines
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -85,44 +88,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .HasDatabaseName("UserNameIndex");
 
                     b.ToTable("AspNetUsers", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CatalogSyncJob", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("Provider")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<DateTimeOffset>("RequestedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<int>("SupplyVendorId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SupplyVendorId");
-
-                    b.ToTable("CatalogSyncJobs");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.InvoiceLine", b =>
@@ -403,133 +368,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("PayableInvoices");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceApprovalRule", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("AutoApproveDollarThreshold")
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<decimal>("AutoApprovePercentThreshold")
-                        .HasColumnType("numeric(8,4)");
-
-                    b.Property<bool>("AutoApproveTrustedApiChanges")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<int?>("SupplyVendorId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SupplyVendorId")
-                        .IsUnique();
-
-                    b.ToTable("PriceApprovalRules");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportDocument", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ContentType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("OriginalFileName")
-                        .IsRequired()
-                        .HasMaxLength(260)
-                        .HasColumnType("character varying(260)");
-
-                    b.Property<string>("Sha256")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("StoragePath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("SupplyVendorId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset>("UploadedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Sha256")
-                        .IsUnique();
-
-                    b.HasIndex("SupplyVendorId");
-
-                    b.ToTable("PriceImportDocuments");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportRow", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<DateOnly>("EffectiveDate")
-                        .HasColumnType("date");
-
-                    b.Property<decimal>("MatchConfidence")
-                        .HasColumnType("numeric(5,4)");
-
-                    b.Property<int>("PriceImportDocumentId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("ProposedUnitPrice")
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<string>("ReviewStatus")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<int?>("VendorProductId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("VendorSku")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PriceImportDocumentId");
-
-                    b.HasIndex("VendorProductId");
-
-                    b.ToTable("PriceImportRows");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.Product", b =>
@@ -899,17 +737,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CatalogSyncJob", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.SupplyVendor", "SupplyVendor")
-                        .WithMany("CatalogSyncJobs")
-                        .HasForeignKey("SupplyVendorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("SupplyVendor");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.InvoiceLine", b =>
                 {
                     b.HasOne("CharleyCompany.Dashboard.Web.Data.PayableInvoice", "PayableInvoice")
@@ -957,44 +784,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("LocalOperation");
 
                     b.Navigation("SupplyVendor");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceApprovalRule", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.SupplyVendor", "SupplyVendor")
-                        .WithMany()
-                        .HasForeignKey("SupplyVendorId");
-
-                    b.Navigation("SupplyVendor");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportDocument", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.SupplyVendor", "SupplyVendor")
-                        .WithMany("PriceImportDocuments")
-                        .HasForeignKey("SupplyVendorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("SupplyVendor");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportRow", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.PriceImportDocument", "PriceImportDocument")
-                        .WithMany("Rows")
-                        .HasForeignKey("PriceImportDocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.VendorProduct", "VendorProduct")
-                        .WithMany()
-                        .HasForeignKey("VendorProductId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("PriceImportDocument");
-
-                    b.Navigation("VendorProduct");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.UserLocalOperation", b =>
@@ -1165,11 +954,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("Lines");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportDocument", b =>
-                {
-                    b.Navigation("Rows");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.Product", b =>
                 {
                     b.Navigation("VendorProducts");
@@ -1177,11 +961,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.SupplyVendor", b =>
                 {
-                    b.Navigation("CatalogSyncJobs");
-
                     b.Navigation("PayableInvoices");
-
-                    b.Navigation("PriceImportDocuments");
 
                     b.Navigation("VendorProducts");
                 });

@@ -1,6 +1,6 @@
 @page "/notifications"
 @rendermode InteractiveServer
-@attribute [Authorize]
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
 @using System.ComponentModel.DataAnnotations
 @using CharleyCompany.Dashboard.Web.Data
 @using Microsoft.EntityFrameworkCore

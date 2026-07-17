@@ -5,8 +5,12 @@
 @implements IDisposable
 @using CharleyCompany.Dashboard.Web.Models
 @using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.EntityFrameworkCore
 @inject IDashboardDataSource DashboardDataSource
+@inject ApplicationDbContext DbContext
 @inject DashboardNotificationService Notifications
+@inject OperationAccessService OperationAccess
 @inject ILogger<Home> Logger
 
 <PageTitle>@currentSnapshot.EntityName Dashboard</PageTitle>
@@ -49,6 +53,65 @@
         }
     </div>
 
+    <section class="activity-panel">
+        <div>
+            <h2>Accounts payable</h2>
+            <p>@(IsEntityView ? "Open vendor invoices assigned to this local operation and its jobs." : "Open vendor invoices across the local operations available to you.")</p>
+        </div>
+
+        <div class="metric-grid finance-metric-grid">
+            <article class="metric-card accent-expenses">
+                <span>Open AP</span>
+                <strong>@apSummary.OpenBalance.ToString("C0")</strong>
+                <small>@apSummary.OpenInvoiceCount.ToString("N0") open @(apSummary.OpenInvoiceCount == 1 ? "invoice" : "invoices")</small>
+            </article>
+            <article class="metric-card accent-expired">
+                <span>Past due</span>
+                <strong>@apSummary.PastDueBalance.ToString("C0")</strong>
+                <small>@apSummary.PastDueInvoiceCount.ToString("N0") overdue @(apSummary.PastDueInvoiceCount == 1 ? "invoice" : "invoices")</small>
+            </article>
+            <article class="metric-card accent-quotes">
+                <span>Due in 30 days</span>
+                <strong>@apSummary.DueSoonBalance.ToString("C0")</strong>
+                <small>Open balance due through @DateOnly.FromDateTime(DateTime.Today.AddDays(30)).ToString("MMM d")</small>
+            </article>
+            <article class="metric-card accent-jobs">
+                <span>Applied payments</span>
+                <strong>@apSummary.AmountPaid.ToString("C0")</strong>
+                <small>Payments recorded against open invoices</small>
+            </article>
+        </div>
+
+        @if (apSummary.Invoices.Count == 0)
+        {
+            <div class="empty-state">No payable invoices have been entered for this dashboard.</div>
+        }
+        else
+        {
+            <div class="finance-table-wrap">
+                <table class="finance-table">
+                    <thead>
+                        <tr><th>Vendor</th><th>Operation</th><th>Invoice</th><th>Job #</th><th>Due</th><th>Status</th><th>Open</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var invoice in apSummary.Invoices)
+                        {
+                            <tr>
+                                <td>@invoice.Vendor</td>
+                                <td>@invoice.Operation</td>
+                                <td>@invoice.InvoiceNumber</td>
+                                <td>@invoice.JobNumber</td>
+                                <td>@invoice.DueDate.ToString("MMM d, yyyy")</td>
+                                <td>@invoice.Status</td>
+                                <td>@invoice.OpenBalance.ToString("C0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
     @if (!IsEntityView)
     {
         <section class="local-entity-panel">
@@ -89,32 +152,39 @@
         </section>
     }
 
-    <section class="activity-panel">
-        <div>
-            <h2>Event notifications</h2>
-            <p>Quote and expense webhook events will appear here as they arrive.</p>
-        </div>
+    <details class="activity-panel notification-panel">
+        <summary>
+            <span>
+                <strong>Event notifications</strong>
+                <small>@currentSnapshot.RecentEvents.Count.ToString("N0") @(currentSnapshot.RecentEvents.Count == 1 ? "event" : "events")</small>
+            </span>
+            <span class="notification-panel-hint">Click to expand</span>
+        </summary>
 
-        @if (currentSnapshot.RecentEvents.Count == 0)
-        {
-            <div class="empty-state">No webhook or sync notifications have been received yet.</div>
-        }
-        else
-        {
-            <div class="activity-list">
-                @foreach (var item in currentSnapshot.RecentEvents.OrderByDescending(e => e.OccurredAt))
-                {
-                    <div class="activity-item">
-                        <div>
-                            <strong>@item.EventType</strong>
-                            <span>@item.Message</span>
+        <div class="notification-panel-content">
+            <p>Quote and expense webhook events will appear here as they arrive.</p>
+
+            @if (currentSnapshot.RecentEvents.Count == 0)
+            {
+                <div class="empty-state">No webhook or sync notifications have been received yet.</div>
+            }
+            else
+            {
+                <div class="activity-list">
+                    @foreach (var item in currentSnapshot.RecentEvents.OrderByDescending(e => e.OccurredAt))
+                    {
+                        <div class="activity-item">
+                            <div>
+                                <strong>@item.EventType</strong>
+                                <span>@item.Message</span>
+                            </div>
+                            <time>@item.OccurredAt.ToLocalTime().ToString("h:mm tt")</time>
                         </div>
-                        <time>@item.OccurredAt.ToLocalTime().ToString("h:mm tt")</time>
-                    </div>
-                }
-            </div>
-        }
-    </section>
+                    }
+                </div>
+            }
+        </div>
+    </details>
 </section>
 
 @code {
@@ -124,6 +194,7 @@
     private VentureDashboardSnapshot ventureSnapshot = VentureDashboardSnapshot.Empty;
     private DashboardSnapshot currentSnapshot = DashboardSnapshot.Empty;
     private string? errorMessage;
+    private ApDashboardSummary apSummary = ApDashboardSummary.Empty;
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
 
@@ -159,6 +230,11 @@
 
             if (IsEntityView)
             {
+                if (!await OperationAccess.CanAccessAsync(EntitySlug!))
+                {
+                    errorMessage = "The selected local service entity could not be found.";
+                    return;
+                }
                 var entitySnapshot = await DashboardDataSource.GetEntitySnapshotAsync(EntitySlug!, CancellationToken.None);
 
                 if (entitySnapshot is null)
@@ -170,11 +246,16 @@
                 }
 
                 currentSnapshot = entitySnapshot;
+                await LoadAccountsPayableAsync(EntitySlug);
                 return;
             }
 
             ventureSnapshot = await DashboardDataSource.GetVentureSnapshotAsync(CancellationToken.None);
+            var allowedSlugs = (await OperationAccess.GetAccessibleOperationsAsync()).Select(operation => operation.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var allowedEntities = ventureSnapshot.LocalEntities.Where(entity => allowedSlugs.Contains(entity.EntitySlug)).ToList();
+            ventureSnapshot = ventureSnapshot with { LocalEntities = allowedEntities, Rollup = BuildRollup(allowedEntities, ventureSnapshot.Rollup) };
             currentSnapshot = ventureSnapshot.Rollup;
+            await LoadAccountsPayableAsync();
         }
         catch (Exception ex)
         {
@@ -182,6 +263,53 @@
             Logger.LogError(ex, "Dashboard page failed to load metrics.");
             Console.Error.WriteLine(ex);
         }
+    }
+
+    private async Task LoadAccountsPayableAsync(string? operationSlug = null)
+    {
+        var accessibleOperations = await OperationAccess.GetAccessibleOperationsAsync();
+        var operationIds = accessibleOperations
+            .Where(operation => operationSlug is null || operation.Slug.Equals(operationSlug, StringComparison.OrdinalIgnoreCase))
+            .Select(operation => operation.Id)
+            .ToList();
+
+        if (operationIds.Count == 0)
+        {
+            apSummary = ApDashboardSummary.Empty;
+            return;
+        }
+
+        var invoices = await DbContext.PayableInvoices.AsNoTracking()
+            .Where(invoice => operationIds.Contains(invoice.LocalOperationId))
+            .Where(invoice => invoice.OriginalAmount > invoice.AmountPaid)
+            .OrderBy(invoice => invoice.DueDate)
+            .Select(invoice => new ApDashboardInvoice(
+                invoice.SupplyVendor.Name,
+                invoice.LocalOperation.Name,
+                invoice.InvoiceNumber,
+                invoice.JobNumber,
+                invoice.DueDate,
+                invoice.Status,
+                invoice.OriginalAmount - invoice.AmountPaid,
+                invoice.AmountPaid))
+            .ToListAsync();
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var dueSoon = today.AddDays(30);
+        apSummary = new(
+            invoices.Count,
+            invoices.Sum(invoice => invoice.OpenBalance),
+            invoices.Count(invoice => invoice.DueDate < today),
+            invoices.Where(invoice => invoice.DueDate < today).Sum(invoice => invoice.OpenBalance),
+            invoices.Where(invoice => invoice.DueDate >= today && invoice.DueDate <= dueSoon).Sum(invoice => invoice.OpenBalance),
+            invoices.Sum(invoice => invoice.AmountPaid),
+            invoices.Take(10).ToList());
+    }
+
+    private sealed record ApDashboardInvoice(string Vendor, string Operation, string InvoiceNumber, string JobNumber, DateOnly DueDate, string Status, decimal OpenBalance, decimal AmountPaid);
+    private sealed record ApDashboardSummary(int OpenInvoiceCount, decimal OpenBalance, int PastDueInvoiceCount, decimal PastDueBalance, decimal DueSoonBalance, decimal AmountPaid, IReadOnlyList<ApDashboardInvoice> Invoices)
+    {
+        public static ApDashboardSummary Empty { get; } = new(0, 0, 0, 0, 0, 0, []);
     }
 
     private static IReadOnlyList<DashboardMetric> BuildMetrics(DashboardSnapshot snapshot) =>
@@ -192,6 +320,15 @@
         new("Expenses this month", snapshot.MonthlyExpenses.ToString("C0"), "Posted expenses for the current month", "accent-expenses"),
         new("Revenue this month", snapshot.MonthlyRevenue.ToString("C0"), "Revenue recognized for the current month", "accent-revenue")
     ];
+
+    private static DashboardSnapshot BuildRollup(IReadOnlyList<DashboardSnapshot> entities, DashboardSnapshot template) => template with
+    {
+        CurrentJobsInProgress = entities.Sum(entity => entity.CurrentJobsInProgress),
+        OutstandingQuotes = entities.Sum(entity => entity.OutstandingQuotes),
+        ExpiredQuotes = entities.Sum(entity => entity.ExpiredQuotes),
+        MonthlyExpenses = entities.Sum(entity => entity.MonthlyExpenses),
+        MonthlyRevenue = entities.Sum(entity => entity.MonthlyRevenue)
+    };
 
     public void Dispose()
     {

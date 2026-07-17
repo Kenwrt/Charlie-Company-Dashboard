@@ -1,0 +1,36 @@
+@page "/admin/vendors/{VendorId:int}/invoices/{InvoiceId:int}/lines"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Invoice Lines</PageTitle>
+@if (invoice is null) { <h1>Invoice not found</h1> }
+else {
+ <h1>Invoice @invoice.InvoiceNumber lines</h1><p>@invoice.SupplyVendor.Name · @invoice.LocalOperation.Name · Job @invoice.JobNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices")">Back to invoices</a></p>
+ @if (message is not null) { <div class="alert alert-info">@message</div> }
+ @if (products.Count == 0) { <div class="alert alert-warning">Add products to this vendor's catalog before entering invoice lines.</div> }
+ else { <EditForm Model="input" OnValidSubmit="SaveLineAsync" FormName="invoice-line"><DataAnnotationsValidator /><ValidationSummary class="text-danger" /><div class="row g-3">
+  <div class="col-md-4"><label class="form-label">Catalog product</label><InputSelect class="form-select" @bind-Value="input.VendorProductId"><option value="0">Select product…</option>@foreach (var item in products) { <option value="@item.Id">@item.VendorSku — @item.Product.Name</option> }</InputSelect></div>
+  <div class="col-md-2"><label class="form-label">Quantity</label><InputNumber class="form-control" @bind-Value="input.Quantity" /></div><div class="col-md-2"><label class="form-label">Invoice unit price</label><InputNumber class="form-control" @bind-Value="input.UnitPrice" /></div><div class="col-md-4"><label class="form-label">Notes</label><InputText class="form-control" @bind-Value="input.Notes" /></div>
+  <div class="col-12"><button class="btn btn-primary">Add line</button></div></div></EditForm> }
+ <section class="mt-5"><h2>Line items and price review</h2><div class="table-responsive"><table class="table"><thead><tr><th>Product</th><th>Quantity</th><th>Catalog</th><th>Invoice</th><th>Total</th><th>Review</th><th></th></tr></thead><tbody>
+ @foreach (var line in lines) { var catalog = CurrentPrice(line.VendorProduct, invoice.InvoiceDate); <tr><td>@line.VendorProduct.VendorSku<br /><small>@line.VendorProduct.Product.Name</small></td><td>@line.Quantity.ToString("N4")</td><td>@(catalog?.UnitPrice.ToString("C4") ?? "Not priced")</td><td>@line.UnitPrice.ToString("C4")</td><td>@line.LineTotal.ToString("C")</td><td>@line.PriceReviewStatus</td><td>@if (line.PriceReviewStatus == "Pending") { <button class="btn btn-sm btn-success" @onclick="() => ApproveAsync(line)">Approve new price</button> <button class="btn btn-sm btn-outline-secondary" @onclick="() => RejectAsync(line)">One-time exception</button> }</td></tr> }
+ </tbody></table></div></section>
+}
+
+@code {
+ [Parameter] public int VendorId { get; set; } [Parameter] public int InvoiceId { get; set; }
+ private PayableInvoice? invoice; private List<VendorProduct> products = []; private List<InvoiceLine> lines = []; private LineInput input = new(); private string? message;
+ protected override Task OnParametersSetAsync() => ReloadAsync();
+ private async Task ReloadAsync() { invoice = await DbContext.PayableInvoices.AsNoTracking().Include(x => x.SupplyVendor).Include(x => x.LocalOperation).SingleOrDefaultAsync(x => x.Id == InvoiceId && x.SupplyVendorId == VendorId); products = await DbContext.VendorProducts.AsNoTracking().Include(x => x.Product).Include(x => x.Prices).Where(x => x.SupplyVendorId == VendorId && x.IsActive).OrderBy(x => x.Product.Name).ToListAsync(); lines = await DbContext.InvoiceLines.AsNoTracking().Include(x => x.VendorProduct).ThenInclude(x => x.Product).Include(x => x.VendorProduct).ThenInclude(x => x.Prices).Where(x => x.PayableInvoiceId == InvoiceId).OrderBy(x => x.Id).ToListAsync(); }
+ private async Task SaveLineAsync() { if (invoice is null) return; var item = products.SingleOrDefault(x => x.Id == input.VendorProductId); if (item is null) { message = "Select a catalog product."; return; } var catalog = CurrentPrice(item, invoice.InvoiceDate); var status = catalog is null || catalog.UnitPrice != input.UnitPrice ? "Pending" : "Matches Catalog"; DbContext.InvoiceLines.Add(new InvoiceLine { PayableInvoiceId = InvoiceId, VendorProductId = item.Id, Quantity = input.Quantity, UnitPrice = input.UnitPrice, LineTotal = decimal.Round(input.Quantity * input.UnitPrice, 2), PriceReviewStatus = status, Notes = Clean(input.Notes) }); await DbContext.SaveChangesAsync(); message = status == "Pending" ? "Line saved. Its price requires review." : "Line saved and matches the catalog."; input = new(); await ReloadAsync(); }
+ private async Task ApproveAsync(InvoiceLine line) { if (invoice is null) return; var current = await DbContext.VendorPrices.Where(x => x.VendorProductId == line.VendorProductId && x.ExpirationDate == null).OrderByDescending(x => x.EffectiveDate).FirstOrDefaultAsync(); if (current is not null && current.EffectiveDate < invoice.InvoiceDate) current.ExpirationDate = invoice.InvoiceDate.AddDays(-1); DbContext.VendorPrices.Add(new VendorPrice { VendorProductId = line.VendorProductId, UnitPrice = line.UnitPrice, EffectiveDate = invoice.InvoiceDate, SourceType = "Invoice", SourceReference = invoice.InvoiceNumber }); var tracked = await DbContext.InvoiceLines.FindAsync(line.Id); if (tracked is not null) tracked.PriceReviewStatus = "Approved"; await DbContext.SaveChangesAsync(); message = "Invoice price approved as a new effective-dated catalog price."; await ReloadAsync(); }
+ private async Task RejectAsync(InvoiceLine line) { var tracked = await DbContext.InvoiceLines.FindAsync(line.Id); if (tracked is not null) tracked.PriceReviewStatus = "One-time Exception"; await DbContext.SaveChangesAsync(); message = "Price retained as a one-time invoice exception."; await ReloadAsync(); }
+ private static VendorPrice? CurrentPrice(VendorProduct item, DateOnly date) => item.Prices.Where(x => x.EffectiveDate <= date && (x.ExpirationDate == null || x.ExpirationDate >= date)).OrderByDescending(x => x.EffectiveDate).FirstOrDefault();
+ private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+ private sealed class LineInput { [Range(1, int.MaxValue)] public int VendorProductId { get; set; } [Range(.0001, double.MaxValue)] public decimal Quantity { get; set; } = 1; [Range(.0001, double.MaxValue)] public decimal UnitPrice { get; set; } public string? Notes { get; set; } }
+}

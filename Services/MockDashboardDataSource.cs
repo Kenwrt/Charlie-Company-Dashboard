@@ -2,37 +2,38 @@ using CharleyCompany.Dashboard.Web.Models;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
-public sealed class MockDashboardDataSource(DashboardNotificationService notifications) : IDashboardDataSource
+public sealed class MockDashboardDataSource(DashboardNotificationService notifications, OperationCatalogService operationCatalog) : IDashboardDataSource
 {
-    public Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
+    public async Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult(BuildVentureSnapshot().Rollup);
+        return (await BuildVentureSnapshotAsync(cancellationToken)).Rollup;
     }
 
     public Task<VentureDashboardSnapshot> GetVentureSnapshotAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult(BuildVentureSnapshot());
+        return BuildVentureSnapshotAsync(cancellationToken);
     }
 
-    public Task<DashboardSnapshot?> GetEntitySnapshotAsync(string entitySlug, CancellationToken cancellationToken)
+    public async Task<DashboardSnapshot?> GetEntitySnapshotAsync(string entitySlug, CancellationToken cancellationToken)
     {
-        var snapshot = BuildVentureSnapshot()
+        var snapshot = (await BuildVentureSnapshotAsync(cancellationToken))
             .LocalEntities
             .FirstOrDefault(entity => entity.EntitySlug.Equals(entitySlug, StringComparison.OrdinalIgnoreCase));
 
-        return Task.FromResult(snapshot);
+        return snapshot;
     }
 
-    private VentureDashboardSnapshot BuildVentureSnapshot()
+    private async Task<VentureDashboardSnapshot> BuildVentureSnapshotAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.Now;
         var daySeed = DateTime.Today.Day;
-        var localEntities = new List<DashboardSnapshot>
+        var operations = await operationCatalog.GetActiveOperationsAsync(cancellationToken);
+        var localEntities = operations.Select((operation, index) =>
         {
-            CreateEntity("Charlie Company Nashville", "nashville", 18, 42, 7, 18450.75m, 97200.00m, daySeed, now),
-            CreateEntity("Charlie Company Knoxville", "knoxville", 11, 25, 4, 12180.25m, 62450.00m, daySeed + 2, now),
-            CreateEntity("Charlie Company Chattanooga", "chattanooga", 9, 19, 3, 9785.40m, 51780.00m, daySeed + 4, now)
-        };
+            var seed = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(operation.Slug));
+            return CreateEntity(operation.Name, operation.Slug, 8 + seed % 12, 15 + seed % 25, 2 + seed % 6,
+                9000m + seed % 12000, 45000m + seed % 65000, daySeed + index, now);
+        }).ToList();
 
         var rollup = new DashboardSnapshot(
             CurrentJobsInProgress: localEntities.Sum(entity => entity.CurrentJobsInProgress),

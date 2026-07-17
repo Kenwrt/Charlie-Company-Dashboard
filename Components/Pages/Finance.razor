@@ -6,6 +6,7 @@
 @using CharleyCompany.Dashboard.Web.Services
 @inject IFinanceDataSource FinanceDataSource
 @inject ILogger<Finance> Logger
+@inject OperationAccessService OperationAccess
 
 <PageTitle>@currentSummary.EntityName Finance</PageTitle>
 
@@ -258,9 +259,18 @@
         {
             errorMessage = null;
             ventureDashboard = await FinanceDataSource.GetVentureFinanceDashboardAsync(CancellationToken.None);
+            var allowedSlugs = (await OperationAccess.GetAccessibleOperationsAsync()).Select(operation => operation.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var allowedDashboards = ventureDashboard.LocalDashboards.Where(dashboard => allowedSlugs.Contains(dashboard.Summary.EntitySlug)).ToList();
+            ventureDashboard = ventureDashboard with { LocalDashboards = allowedDashboards, Rollup = BuildAuthorizedRollup(allowedDashboards, ventureDashboard.Rollup) };
 
             if (IsEntityView)
             {
+                if (!await OperationAccess.CanAccessAsync(EntitySlug!))
+                {
+                    currentSummary = ventureDashboard.Rollup;
+                    errorMessage = "The selected local finance entity could not be found.";
+                    return;
+                }
                 entityDashboard = await FinanceDataSource.GetEntityFinanceDashboardAsync(EntitySlug!, CancellationToken.None);
 
                 if (entityDashboard is null)
@@ -300,5 +310,31 @@
         "Fail" => "status-fail",
         _ => "status-muted"
     };
-}
 
+    private static FinanceSummary BuildAuthorizedRollup(IReadOnlyList<FinanceDashboard> dashboards, FinanceSummary template)
+    {
+        var summaries = dashboards.Select(dashboard => dashboard.Summary).ToList();
+        var revenue = summaries.Sum(summary => summary.KnownRevenue);
+        var openAp = summaries.Sum(summary => summary.OpenAccountsPayable);
+        var debt = summaries.Sum(summary => summary.DebtOutstanding);
+        var ownerBenefits = summaries.Sum(summary => summary.OwnerBenefits);
+        return template with
+        {
+            KnownRevenue = revenue,
+            KnownAccountingProfit = summaries.Sum(summary => summary.KnownAccountingProfit),
+            OpenAccountsPayable = openAp,
+            DebtOutstanding = debt,
+            OwnerBenefits = ownerBenefits,
+            ActualEndingCash = summaries.Sum(summary => summary.ActualEndingCash),
+            CalculatedEndingCash = summaries.Sum(summary => summary.CalculatedEndingCash),
+            CashVariance = summaries.Sum(summary => summary.CashVariance),
+            ReserveSurplusOrDeficit = summaries.Sum(summary => summary.ReserveSurplusOrDeficit),
+            AdjustedEconomicProfitProxy = summaries.Sum(summary => summary.AdjustedEconomicProfitProxy),
+            OpenApAsPercentOfRevenue = revenue == 0 ? 0 : openAp / revenue,
+            DebtAsPercentOfRevenue = revenue == 0 ? 0 : debt / revenue,
+            OwnerBenefitsAsPercentOfRevenue = revenue == 0 ? 0 : ownerBenefits / revenue,
+            MaxApDaysPastDue = summaries.Count == 0 ? 0 : summaries.Max(summary => summary.MaxApDaysPastDue),
+            ReadinessScore = summaries.Count == 0 ? 0 : summaries.Average(summary => summary.ReadinessScore)
+        };
+    }
+}

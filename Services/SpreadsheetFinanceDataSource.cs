@@ -2,11 +2,11 @@ using CharleyCompany.Dashboard.Web.Models;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
-public sealed class SpreadsheetFinanceDataSource : IFinanceDataSource
+public sealed class SpreadsheetFinanceDataSource(OperationCatalogService operationCatalog) : IFinanceDataSource
 {
-    public Task<VentureFinanceDashboard> GetVentureFinanceDashboardAsync(CancellationToken cancellationToken)
+    public async Task<VentureFinanceDashboard> GetVentureFinanceDashboardAsync(CancellationToken cancellationToken)
     {
-        var dashboards = BuildEntityData()
+        var dashboards = (await BuildEntityDataAsync(cancellationToken))
             .Select(BuildDashboard)
             .ToList();
 
@@ -29,7 +29,7 @@ public sealed class SpreadsheetFinanceDataSource : IFinanceDataSource
             MaxApDaysPastDue: dashboards.Count == 0 ? 0 : dashboards.Max(dashboard => dashboard.Summary.MaxApDaysPastDue),
             ReadinessScore: dashboards.Count == 0 ? 0 : dashboards.Average(dashboard => dashboard.Summary.ReadinessScore));
 
-        return Task.FromResult(new VentureFinanceDashboard(rollup, dashboards));
+        return new VentureFinanceDashboard(rollup, dashboards);
     }
 
     public async Task<FinanceDashboard?> GetEntityFinanceDashboardAsync(string entitySlug, CancellationToken cancellationToken)
@@ -97,12 +97,23 @@ public sealed class SpreadsheetFinanceDataSource : IFinanceDataSource
         return new FinanceDashboard(summary, data, readinessChecks);
     }
 
-    private static IReadOnlyList<FinanceEntityData> BuildEntityData() =>
-    [
-        BuildEntity("Charlie Company Nashville", "nashville", 1.00m, 0m),
-        BuildEntity("Charlie Company Knoxville", "knoxville", 0.72m, 6_500m),
-        BuildEntity("Charlie Company Chattanooga", "chattanooga", 0.58m, 9_000m)
-    ];
+    private async Task<IReadOnlyList<FinanceEntityData>> BuildEntityDataAsync(CancellationToken cancellationToken)
+    {
+        var operations = await operationCatalog.GetActiveOperationsAsync(cancellationToken);
+        return operations.Select(operation =>
+        {
+            var scale = operation.Slug.ToLowerInvariant() switch
+            {
+                "nashville" => 1.00m,
+                "knoxville" => 0.72m,
+                "chattanooga" => 0.58m,
+                _ => 0.50m
+            };
+            var adjustment = operation.Slug.Equals("knoxville", StringComparison.OrdinalIgnoreCase) ? 6_500m
+                : operation.Slug.Equals("chattanooga", StringComparison.OrdinalIgnoreCase) ? 9_000m : 0m;
+            return BuildEntity(operation.Name, operation.Slug, scale, adjustment);
+        }).ToList();
+    }
 
     private static FinanceEntityData BuildEntity(string entityName, string entitySlug, decimal scale, decimal beginningCashAdjustment)
     {
@@ -223,4 +234,3 @@ public sealed class SpreadsheetFinanceDataSource : IFinanceDataSource
 
     private static decimal Round(decimal value) => Math.Round(value, 2);
 }
-

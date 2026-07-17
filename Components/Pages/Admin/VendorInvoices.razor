@@ -1,0 +1,44 @@
+@page "/admin/vendors/{VendorId:int}/invoices"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.ComponentModel.DataAnnotations
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Vendor Payable Invoices</PageTitle>
+@if (vendor is null) { <h1>Vendor not found</h1> }
+else {
+ <h1>@vendor.Name payable invoices</h1><p><a href="admin/vendors">Back to vendors</a></p>
+ @if (!string.IsNullOrWhiteSpace(message)) { <div class="alert alert-info" role="status">@message</div> }
+ <EditForm Model="input" OnValidSubmit="SaveAsync" FormName="invoice-editor"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
+  <div class="row g-3">
+   <div class="col-md-4"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="input.LocalOperationId"><option value="0">Select operation…</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+   <div class="col-md-4"><label class="form-label">Invoice number</label><InputText class="form-control" @bind-Value="input.InvoiceNumber" /></div>
+   <div class="col-md-4"><label class="form-label">Local operation job #</label><InputText class="form-control" @bind-Value="input.JobNumber" /></div>
+   <div class="col-md-3"><label class="form-label">Invoice date</label><InputDate class="form-control" @bind-Value="input.InvoiceDate" /></div>
+   <div class="col-md-3"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="input.DueDate" /></div>
+   <div class="col-md-2"><label class="form-label">Original amount</label><InputNumber class="form-control" @bind-Value="input.OriginalAmount" /></div>
+   <div class="col-md-2"><label class="form-label">Amount paid</label><InputNumber class="form-control" @bind-Value="input.AmountPaid" /></div>
+   <div class="col-md-2"><label class="form-label">Status</label><InputSelect class="form-select" @bind-Value="input.Status"><option>Open</option><option>Partially Paid</option><option>Paid</option><option>Disputed</option><option>Void</option></InputSelect></div>
+   <div class="col-12"><label class="form-label">Notes</label><InputTextArea class="form-control" @bind-Value="input.Notes" /></div>
+   <div class="col-12"><button class="btn btn-primary" type="submit">@(input.Id == 0 ? "Add invoice" : "Save invoice")</button> <button class="btn btn-secondary" type="button" @onclick="Reset">Clear</button></div>
+  </div>
+ </EditForm>
+ <section class="mt-5"><h2>Invoices</h2><div class="table-responsive"><table class="table"><thead><tr><th>Invoice</th><th>Operation / Job</th><th>Due</th><th>Original</th><th>Paid</th><th>Open</th><th>Status</th><th></th></tr></thead><tbody>
+  @foreach (var invoice in invoices) { <tr><td>@invoice.InvoiceNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices/{invoice.Id}/lines")">@invoice.Lines.Count line(s)</a></td><td>@invoice.LocalOperation.Name<br /><small>Job @invoice.JobNumber</small></td><td>@invoice.DueDate</td><td>@invoice.OriginalAmount.ToString("C")</td><td>@invoice.AmountPaid.ToString("C")</td><td>@invoice.OpenBalance.ToString("C")</td><td>@invoice.Status</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(invoice)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(invoice)">Delete</button></td></tr> }
+ </tbody></table></div></section>
+}
+
+@code {
+ [Parameter] public int VendorId { get; set; }
+ private SupplyVendor? vendor; private List<LocalOperation> operations = []; private List<PayableInvoice> invoices = []; private InvoiceInput input = new(); private string? message;
+ protected override Task OnParametersSetAsync() => ReloadAsync();
+ private async Task ReloadAsync() { vendor = await DbContext.SupplyVendors.AsNoTracking().SingleOrDefaultAsync(x => x.Id == VendorId); operations = await DbContext.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); invoices = await DbContext.PayableInvoices.AsNoTracking().Include(x => x.LocalOperation).Include(x => x.Lines).Where(x => x.SupplyVendorId == VendorId).OrderByDescending(x => x.InvoiceDate).ToListAsync(); }
+ private async Task SaveAsync() { if (!operations.Any(x => x.Id == input.LocalOperationId)) { message = "Select a local operation."; return; } PayableInvoice invoice; if (input.Id == 0) { invoice = new PayableInvoice { SupplyVendorId = VendorId }; DbContext.PayableInvoices.Add(invoice); } else invoice = await DbContext.PayableInvoices.SingleAsync(x => x.Id == input.Id && x.SupplyVendorId == VendorId); invoice.LocalOperationId = input.LocalOperationId; invoice.InvoiceNumber = input.InvoiceNumber.Trim(); invoice.JobNumber = input.JobNumber.Trim(); invoice.InvoiceDate = input.InvoiceDate; invoice.DueDate = input.DueDate; invoice.OriginalAmount = input.OriginalAmount; invoice.AmountPaid = input.AmountPaid; invoice.Status = input.Status; invoice.Notes = string.IsNullOrWhiteSpace(input.Notes) ? null : input.Notes.Trim(); invoice.UpdatedAt = DateTimeOffset.UtcNow; await DbContext.SaveChangesAsync(); message = "Invoice saved."; Reset(); await ReloadAsync(); }
+ private void Edit(PayableInvoice invoice) => input = new InvoiceInput { Id = invoice.Id, LocalOperationId = invoice.LocalOperationId, InvoiceNumber = invoice.InvoiceNumber, JobNumber = invoice.JobNumber, InvoiceDate = invoice.InvoiceDate, DueDate = invoice.DueDate, OriginalAmount = invoice.OriginalAmount, AmountPaid = invoice.AmountPaid, Status = invoice.Status, Notes = invoice.Notes };
+ private async Task DeleteAsync(PayableInvoice invoice) { var tracked = await DbContext.PayableInvoices.FindAsync(invoice.Id); if (tracked is not null) { DbContext.Remove(tracked); await DbContext.SaveChangesAsync(); message = "Invoice deleted."; await ReloadAsync(); } }
+ private void Reset() => input = new();
+ private sealed class InvoiceInput { public int Id { get; set; } [Range(1, int.MaxValue)] public int LocalOperationId { get; set; } [Required, StringLength(100)] public string InvoiceNumber { get; set; } = ""; [Required, StringLength(100)] public string JobNumber { get; set; } = ""; public DateOnly InvoiceDate { get; set; } = DateOnly.FromDateTime(DateTime.Today); public DateOnly DueDate { get; set; } = DateOnly.FromDateTime(DateTime.Today.AddDays(30)); [Range(0.01, double.MaxValue)] public decimal OriginalAmount { get; set; } [Range(0, double.MaxValue)] public decimal AmountPaid { get; set; } public string Status { get; set; } = "Open"; public string? Notes { get; set; } }
+}

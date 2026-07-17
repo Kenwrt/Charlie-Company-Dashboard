@@ -48,6 +48,19 @@ dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=10.168.168.9
 
 Alternatively, set `ConnectionStrings__DefaultConnection` as an environment variable. Entity Framework applies pending migrations automatically at startup.
 
+## Roles And Local Operations
+
+The application uses `Administrator` and `LocalOperator` Identity roles. Configure the first administrator through environment variables or User Secrets; never commit the bootstrap password:
+
+```powershell
+dotnet user-secrets set "BootstrapAdmin:Email" "admin@example.com"
+dotnet user-secrets set "BootstrapAdmin:Password" "A-STRONG-UNIQUE-PASSWORD"
+```
+
+In production, use `BootstrapAdmin__Email` and `BootstrapAdmin__Password`. After the first administrator is created and assigned, remove the bootstrap password from the environment. Administrators manage operations, local operator accounts, many-to-many operation assignments, and integration secret references at `/admin/operations`.
+
+Creating an active operation automatically enables its `/entity/{slug}` and `/entity/{slug}/finance` dashboards. Local operators see only operations assigned to their account; administrators see the complete venture rollup.
+
 ```powershell
 dotnet run
 ```
