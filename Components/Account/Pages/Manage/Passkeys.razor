@@ -1,6 +1,7 @@
 ﻿@page "/Account/Manage/Passkeys"
 
 @using CharleyCompany.Dashboard.Web.Data
+@attribute [Authorize(Roles = "DisabledPasskeys")]
 @using Microsoft.AspNetCore.Identity
 @using System.ComponentModel.DataAnnotations
 @using System.Buffers.Text

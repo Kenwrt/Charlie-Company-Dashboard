@@ -75,7 +75,8 @@ try
         .AddSignInManager()
         .AddDefaultTokenProviders();
 
-    builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+    builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+    builder.Services.AddScoped<IEmailSender<ApplicationUser>, SmtpIdentityEmailSender>();
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
     builder.Services.AddSingleton<DashboardNotificationService>();
