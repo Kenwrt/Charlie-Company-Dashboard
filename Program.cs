@@ -10,6 +10,7 @@ using CharleyCompany.Dashboard.Web.Endpoints;
 using CharleyCompany.Dashboard.Web.Options;
 using CharleyCompany.Dashboard.Web.Services;
 using Serilog;
+using System.Threading.RateLimiting;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -81,6 +82,12 @@ try
     builder.Services.AddScoped<MockDashboardDataSource>();
     builder.Services.AddScoped<OperationAccessService>();
     builder.Services.AddScoped<OperationCatalogService>();
+    builder.Services.AddSingleton<OperationalEventBroker>();
+    builder.Services.AddScoped<OperationalEventPublisher>();
+    builder.Services.AddHostedService<OperationalEventRetentionService>();
+    builder.Services.AddHttpClient<RemoteOperationalEventForwarder>();
+    builder.Services.AddHostedService(services => services.GetRequiredService<RemoteOperationalEventForwarder>());
+    builder.Services.AddRateLimiter(options => options.AddPolicy("observability-ingestion", context => RateLimitPartition.GetTokenBucketLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new TokenBucketRateLimiterOptions { TokenLimit = 120, TokensPerPeriod = 120, ReplenishmentPeriod = TimeSpan.FromMinutes(1), AutoReplenishment = true, QueueLimit = 20 })));
     builder.Services.AddScoped<IFinanceDataSource, SpreadsheetFinanceDataSource>();
     builder.Services.AddScoped<IOutboundNotificationSender, EmailNotificationSender>();
     builder.Services.AddScoped<IOutboundNotificationSender, MobileNotificationSender>();
@@ -115,10 +122,12 @@ try
 
     app.UseSerilogRequestLogging();
     app.UseAntiforgery();
+    app.UseRateLimiter();
 
     app.MapStaticAssets();
     app.MapHealthEndpoints();
     app.MapHousecallProWebhookEndpoints();
+    app.MapObservabilityEndpoints();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
 

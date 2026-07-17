@@ -1,0 +1,25 @@
+@page "/admin/operations-console"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@implements IDisposable
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject ApplicationDbContext DbContext
+@inject OperationalEventBroker Broker
+
+<PageTitle>CCV Operations Console</PageTitle>
+<section class="dashboard-shell"><div class="dashboard-header"><div><p class="eyebrow">Distributed workflow observability</p><h1>CCV operations console</h1><p class="dashboard-subtitle">Correlated activity from CCV, local operations, and connected services.</p></div><div class="dashboard-status"><span class="status-dot"></span><span>@(paused?"Paused":"Live")</span><small>@events.Count displayed events</small></div></div>
+<div class="activity-panel"><div class="row g-2"><div class="col-md-2"><InputSelect class="form-select" @bind-Value="severity"><option value="">All severities</option><option>Information</option><option>Warning</option><option>Error</option><option>Critical</option></InputSelect></div><div class="col-md-2"><InputSelect class="form-select" @bind-Value="operationId"><option value="0">All operations</option>@foreach(var operation in operations){<option value="@operation.Id">@operation.Name</option>}</InputSelect></div><div class="col-md-2"><InputText class="form-control" @bind-Value="service" placeholder="Service or module"/></div><div class="col-md-3"><InputText class="form-control" @bind-Value="correlationId" placeholder="Correlation, quote, or job"/></div><div class="col-md-3 d-flex gap-2"><button class="btn btn-primary" @onclick="ReloadAsync">Apply</button><button class="btn btn-outline-secondary" @onclick="TogglePause">@(paused?"Resume":"Pause")</button><a class="btn btn-outline-primary" href="@ExportUrl">Export CSV</a></div></div></div>
+<section class="activity-panel"><h2>Event stream</h2>@if(events.Count==0){<div class="empty-state">No operational events match the selected filters.</div>}else{<div class="activity-list">@foreach(var item in events){<details class="activity-item"><summary class="w-100"><div><strong><span class="status-pill @SeverityClass(item.Severity)">@item.Severity</span> @item.Service · @item.Module · @item.Step</strong><span>@item.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff") · @item.Status · @item.Message</span></div><time>@(item.DurationMilliseconds is null?"":$"{item.DurationMilliseconds} ms")</time></summary><dl class="finance-definition-list mt-2"><div><dt>Correlation</dt><dd>@item.CorrelationId</dd></div><div><dt>Machine</dt><dd>@item.Machine</dd></div><div><dt>Environment</dt><dd>@item.Environment</dd></div><div><dt>Operation</dt><dd>@item.LocalOperation?.Name</dd></div><div><dt>Quote / Job</dt><dd>@item.QuoteCaseId / @item.JobNumber</dd></div><div><dt>Error code</dt><dd>@item.ErrorCode</dd></div></dl>@if(item.ExceptionSummary is not null){<pre class="alert alert-danger">@item.ExceptionSummary</pre>}</details>}</div>}</section></section>
+
+@code{
+ private List<OperationalEvent> events=[];private List<LocalOperation> operations=[];private string severity="";private int operationId;private string service="";private string correlationId="";private bool paused;
+ private string ExportUrl=>$"api/observability/export?correlationId={Uri.EscapeDataString(correlationId)}{(operationId==0?"":$"&operationId={operationId}")}";
+ protected override async Task OnInitializedAsync(){Broker.EventReceived+=OnEventAsync;operations=await DbContext.LocalOperations.AsNoTracking().OrderBy(x=>x.Name).ToListAsync();await ReloadAsync();}
+ private async Task ReloadAsync(){var query=DbContext.OperationalEvents.AsNoTracking().Include(x=>x.LocalOperation).AsQueryable();if(!string.IsNullOrWhiteSpace(severity))query=query.Where(x=>x.Severity==severity);if(operationId!=0)query=query.Where(x=>x.LocalOperationId==operationId);if(!string.IsNullOrWhiteSpace(service)){var value=service.Trim();query=query.Where(x=>x.Service.Contains(value)||x.Module.Contains(value));}if(!string.IsNullOrWhiteSpace(correlationId)){var value=correlationId.Trim();query=query.Where(x=>x.CorrelationId.Contains(value)||x.JobNumber!.Contains(value)||(x.QuoteCaseId!=null&&x.QuoteCaseId.ToString()!.Contains(value)));}events=await query.OrderByDescending(x=>x.Timestamp).Take(250).ToListAsync();}
+ private Task OnEventAsync()=>paused?Task.CompletedTask:InvokeAsync(async()=>{await ReloadAsync();StateHasChanged();});private void TogglePause()=>paused=!paused;
+ private static string SeverityClass(string value)=>value switch{"Critical" or "Error"=>"status-fail","Warning"=>"status-muted",_=>"status-pass"};
+ public void Dispose()=>Broker.EventReceived-=OnEventAsync;
+}

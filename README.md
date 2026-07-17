@@ -61,6 +61,23 @@ In production, use `BootstrapAdmin__Email` and `BootstrapAdmin__Password`. After
 
 Creating an active operation automatically enables its `/entity/{slug}` and `/entity/{slug}/finance` dashboards. Local operators see only operations assigned to their account; administrators see the complete venture rollup.
 
+## Consolidated Operations Console
+
+Administrators can monitor structured, correlated workflow events at `/admin/operations-console`. Remote services submit events to `POST /api/observability/events` using the `X-CCV-Observability-Key` header. Configure secrets outside source control:
+
+```text
+Observability__IngestionKey=<strong-random-secret>
+Observability__RetentionDays=30
+```
+
+Remote services that use the included buffered forwarder also configure:
+
+```text
+Observability__ForwardingUrl=https://<ccv-host>/api/observability/events
+```
+
+Every multi-service workflow should keep the same `correlationId` across Housecall Pro, CompanyCam, Ollama, pricing, approval, and delivery steps. The ingestion endpoint is rate limited, deduplicates `eventId`, redacts common secret patterns, and rejects unknown local-operation identifiers. CSV diagnostic export requires the Administrator role.
+
 ```powershell
 dotnet run
 ```

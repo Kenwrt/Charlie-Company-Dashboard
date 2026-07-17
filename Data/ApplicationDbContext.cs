@@ -25,6 +25,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<QuotePricingRule> QuotePricingRules => Set<QuotePricingRule>();
     public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
     public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
+    public DbSet<OperationalEvent> OperationalEvents => Set<OperationalEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -127,5 +128,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<QuotePricingRule>(entity => entity.HasIndex(rule => rule.LocalOperationId).IsUnique());
         builder.Entity<QuoteAuditEvent>(entity => entity.HasOne(item => item.QuoteCase).WithMany(quote => quote.AuditEvents).HasForeignKey(item => item.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
         builder.Entity<QuoteProcessingJob>(entity => entity.HasOne(job => job.QuoteCase).WithMany(quote => quote.ProcessingJobs).HasForeignKey(job => job.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
+        builder.Entity<OperationalEvent>(entity =>
+        {
+            entity.HasIndex(item => item.EventId).IsUnique();
+            entity.HasIndex(item => new { item.CorrelationId, item.Timestamp });
+            entity.HasIndex(item => new { item.LocalOperationId, item.Timestamp });
+            entity.HasOne(item => item.LocalOperation).WithMany().HasForeignKey(item => item.LocalOperationId).OnDelete(DeleteBehavior.SetNull);
+        });
     }
 }
