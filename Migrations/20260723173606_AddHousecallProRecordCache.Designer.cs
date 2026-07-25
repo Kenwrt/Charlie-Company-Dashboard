@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260723173606_AddHousecallProRecordCache")]
+    partial class AddHousecallProRecordCache
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -140,55 +143,18 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
-                    b.Property<string>("CreatedByName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("CustomerAddress")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("CustomerEmail")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
                     b.Property<string>("CustomerName")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
-
-                    b.Property<string>("CustomerPhone")
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<DateTimeOffset?>("EstimateDate")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("EstimateNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
-                    b.Property<DateTimeOffset?>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("ExternalId")
                         .IsRequired()
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
-
-                    b.Property<string>("InternalStatus")
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<string>("InternalStatusNote")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<DateTimeOffset?>("InternalStatusUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("InternalStatusUpdatedBy")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
 
                     b.Property<DateTimeOffset>("LastSyncedAt")
                         .HasColumnType("timestamp with time zone");
@@ -217,91 +183,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.ToTable("HousecallProEstimates");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimateCommunication", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("CommunicationType")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("Direction")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<DateTimeOffset>("EnteredAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("EnteredByName")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("EnteredByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<int>("HousecallProEstimateId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("HousecallProEstimateId", "EnteredAt");
-
-                    b.ToTable("HousecallProEstimateCommunications");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimateFollowUp", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("EnteredAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("EnteredByName")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("EnteredByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<int>("HousecallProEstimateId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("HousecallProEstimateId", "EnteredAt");
-
-                    b.ToTable("HousecallProEstimateFollowUps");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProJob", b =>
                 {
                     b.Property<int>("Id")
@@ -311,24 +192,12 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("Address")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("CreatedByName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("CustomerEmail")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<string>("CustomerName")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
-
-                    b.Property<string>("CustomerPhone")
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
 
                     b.Property<string>("ExternalId")
                         .IsRequired()
@@ -339,19 +208,11 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
-                    b.Property<decimal>("JobPrice")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
                     b.Property<DateTimeOffset>("LastSyncedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("LocalOperationId")
                         .HasColumnType("integer");
-
-                    b.Property<decimal>("OutstandingBalance")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
 
                     b.Property<DateTimeOffset?>("ScheduledEnd")
                         .HasColumnType("timestamp with time zone");
@@ -1556,28 +1417,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("LocalOperation");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimateCommunication", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", "HousecallProEstimate")
-                        .WithMany("Communications")
-                        .HasForeignKey("HousecallProEstimateId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("HousecallProEstimate");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimateFollowUp", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", "HousecallProEstimate")
-                        .WithMany("FollowUps")
-                        .HasForeignKey("HousecallProEstimateId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("HousecallProEstimate");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProJob", b =>
                 {
                     b.HasOne("CharleyCompany.Dashboard.Web.Data.LocalOperation", "LocalOperation")
@@ -1913,13 +1752,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.ApplicationUser", b =>
                 {
                     b.Navigation("LocalOperationMemberships");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
-                {
-                    b.Navigation("Communications");
-
-                    b.Navigation("FollowUps");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.LocalOperation", b =>

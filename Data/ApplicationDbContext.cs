@@ -26,6 +26,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
     public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
     public DbSet<OperationalEvent> OperationalEvents => Set<OperationalEvent>();
+    public DbSet<HousecallProJob> HousecallProJobs => Set<HousecallProJob>();
+    public DbSet<HousecallProEstimate> HousecallProEstimates => Set<HousecallProEstimate>();
+    public DbSet<HousecallProEstimateCommunication> HousecallProEstimateCommunications => Set<HousecallProEstimateCommunication>();
+    public DbSet<HousecallProEstimateFollowUp> HousecallProEstimateFollowUps => Set<HousecallProEstimateFollowUp>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -134,6 +138,32 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(item => new { item.CorrelationId, item.Timestamp });
             entity.HasIndex(item => new { item.LocalOperationId, item.Timestamp });
             entity.HasOne(item => item.LocalOperation).WithMany().HasForeignKey(item => item.LocalOperationId).OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<HousecallProJob>(entity =>
+        {
+            entity.HasIndex(item => new { item.LocalOperationId, item.ExternalId }).IsUnique();
+            entity.HasIndex(item => new { item.LocalOperationId, item.WorkStatus });
+            entity.Property(item => item.TotalAmount).HasPrecision(18, 2);
+            entity.Property(item => item.JobPrice).HasPrecision(18, 2);
+            entity.Property(item => item.OutstandingBalance).HasPrecision(18, 2);
+            entity.HasOne(item => item.LocalOperation).WithMany().HasForeignKey(item => item.LocalOperationId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProEstimate>(entity =>
+        {
+            entity.HasIndex(item => new { item.LocalOperationId, item.ExternalId }).IsUnique();
+            entity.HasIndex(item => new { item.LocalOperationId, item.Status });
+            entity.Property(item => item.TotalAmount).HasPrecision(18, 2);
+            entity.HasOne(item => item.LocalOperation).WithMany().HasForeignKey(item => item.LocalOperationId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProEstimateCommunication>(entity =>
+        {
+            entity.HasIndex(item => new { item.HousecallProEstimateId, item.EnteredAt });
+            entity.HasOne(item => item.HousecallProEstimate).WithMany(estimate => estimate.Communications).HasForeignKey(item => item.HousecallProEstimateId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProEstimateFollowUp>(entity =>
+        {
+            entity.HasIndex(item => new { item.HousecallProEstimateId, item.EnteredAt });
+            entity.HasOne(item => item.HousecallProEstimate).WithMany(estimate => estimate.FollowUps).HasForeignKey(item => item.HousecallProEstimateId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -27,7 +27,7 @@ else {
   </div>
  </EditForm>
  <section class="mt-5"><h2>Invoices</h2><div class="table-responsive"><table class="table"><thead><tr><th>Invoice</th><th>Operation / Job</th><th>Due</th><th>Original</th><th>Paid</th><th>Open</th><th>Status</th><th></th></tr></thead><tbody>
-  @foreach (var invoice in invoices) { <tr><td>@invoice.InvoiceNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices/{invoice.Id}/lines")">@invoice.Lines.Count line(s)</a></td><td>@invoice.LocalOperation.Name<br /><small>Job @invoice.JobNumber</small></td><td>@invoice.DueDate</td><td>@invoice.OriginalAmount.ToString("C")</td><td>@invoice.AmountPaid.ToString("C")</td><td>@invoice.OpenBalance.ToString("C")</td><td>@invoice.Status</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(invoice)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(invoice)">Delete</button></td></tr> }
+  @foreach (var invoice in invoices) { <tr><td>@invoice.InvoiceNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices/{invoice.Id}/lines")">@invoice.Lines.Count line(s)</a></td><td>@invoice.LocalOperation.Name<br /><small>Job @invoice.JobNumber</small></td><td>@invoice.DueDate.ToString("MM/dd/yyyy")</td><td>@invoice.OriginalAmount.ToString("C")</td><td>@invoice.AmountPaid.ToString("C")</td><td>@invoice.OpenBalance.ToString("C")</td><td>@invoice.Status</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(invoice)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(invoice)">Delete</button></td></tr> }
  </tbody></table></div></section>
 }
 

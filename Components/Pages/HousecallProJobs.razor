@@ -1,0 +1,165 @@
+@page "/hcp/jobs"
+@attribute [Authorize(Roles = $"{ApplicationRoles.Administrator},{ApplicationRoles.LocalOperator}")]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Options
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
+@inject OperationAccessService OperationAccess
+@inject HousecallProDataService HousecallPro
+
+<PageTitle>Housecall Pro Jobs</PageTitle>
+<section class="dashboard-shell">
+    <div class="dashboard-header">
+        <div>
+            <p class="eyebrow">Housecall Pro</p>
+            <h1>Jobs</h1>
+            <p class="dashboard-subtitle">Imported job summaries for your assigned local operations.</p>
+        </div>
+    </div>
+
+    <div class="row g-2 mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Local operation</label>
+            <InputSelect class="form-select" @bind-Value="operationId" @bind-Value:after="ReloadAsync">
+                <option value="0">All assigned operations</option>
+                @foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }
+            </InputSelect>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Status</label>
+            <InputSelect class="form-select" @bind-Value="status" @bind-Value:after="ReloadAsync">
+                <option value="">All statuses</option>
+                @foreach (var item in statuses) { <option value="@item">@item</option> }
+            </InputSelect>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Search</label>
+            <input class="form-control" value="@search" @oninput="OnSearchInput" placeholder="Job, customer, contact, or address" />
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-outline-primary me-2" @onclick="ReloadAsync">Search</button>
+            <button class="btn btn-primary" @onclick="SyncAsync" disabled="@syncing">@(syncing ? "Syncing…" : "Sync now")</button>
+        </div>
+    </div>
+
+    @if (message is not null) { <div class="alert alert-info">@message</div> }
+    <p class="text-muted">Showing @jobs.Count of @totalCount synchronized jobs.</p>
+    <div class="table-responsive">
+        <table class="table">
+            <thead><tr><th>Job</th><th>Operation</th><th>Customer</th><th>Created by</th><th>Contact</th><th>Home address</th><th>Status</th><th>Date</th><th>Total job price</th><th>Amount invoiced</th><th>Uncollected</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var job in jobs)
+            {
+                <tr>
+                    <td>@(job.JobNumber ?? job.ExternalId)</td>
+                    <td>@job.LocalOperation.Name</td>
+                    <td>@job.CustomerName</td>
+                    <td>@(job.CreatedByName ?? "Not provided by HCP")</td>
+                    <td>@job.CustomerEmail<br /><small>@FormatPhone(job.CustomerPhone)</small></td>
+                    <td>@job.Address</td>
+                    <td>@(job.WorkStatus ?? "Not provided")</td>
+                    <td>@(job.ScheduledStart?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not provided")</td>
+                    <td>@job.JobPrice.ToString("C")</td>
+                    <td>@job.TotalAmount.ToString("C")</td>
+                    <td>@job.OutstandingBalance.ToString("C")</td>
+                    <td><a class="btn btn-sm btn-outline-primary" href="@($"hcp/{job.LocalOperation.Slug}/jobs/{job.ExternalId}")">Details</a></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+    @if (jobs.Count == 0) { <div class="empty-state">No synchronized Housecall Pro jobs match the selected filters.</div> }
+</section>
+
+@code {
+    private List<LocalOperation> operations = [];
+    private List<HousecallProJob> jobs = [];
+    private List<string> statuses = [];
+    private int operationId;
+    private string status = "";
+    private string search = "";
+    private bool syncing;
+    private string? message;
+    private int totalCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        operations = (await OperationAccess.GetAccessibleOperationsAsync()).ToList();
+        await LoadStatusesAsync();
+        await ReloadAsync();
+    }
+
+    private async Task LoadStatusesAsync()
+    {
+        var allowed = operations.Select(x => x.Id).ToList();
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        statuses = await db.HousecallProJobs.AsNoTracking()
+            .Where(x => allowed.Contains(x.LocalOperationId) && x.WorkStatus != null)
+            .Select(x => x.WorkStatus!)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var allowed = operations.Select(x => x.Id).ToList();
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var query = db.HousecallProJobs.AsNoTracking().Include(x => x.LocalOperation)
+            .Where(x => allowed.Contains(x.LocalOperationId));
+
+        if (operationId != 0) query = query.Where(x => x.LocalOperationId == operationId);
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.WorkStatus == status);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = $"%{search.Trim()}%";
+            query = query.Where(x =>
+                EF.Functions.ILike(x.JobNumber ?? "", term) ||
+                EF.Functions.ILike(x.ExternalId, term) ||
+                EF.Functions.ILike(x.CustomerName ?? "", term) ||
+                EF.Functions.ILike(x.CreatedByName ?? "", term) ||
+                EF.Functions.ILike(x.CustomerEmail ?? "", term) ||
+                EF.Functions.ILike(x.CustomerPhone ?? "", term) ||
+                EF.Functions.ILike(x.Address ?? "", term));
+        }
+
+        totalCount = await query.CountAsync();
+        query = query.OrderBy(x => x.ScheduledStart == null)
+            .ThenByDescending(x => x.ScheduledStart)
+            .ThenByDescending(x => x.Id);
+        jobs = await query.Take(500).ToListAsync();
+    }
+
+    private async Task SyncAsync()
+    {
+        syncing = true;
+        message = null;
+        try
+        {
+            foreach (var operation in operations.Where(x => operationId == 0 || x.Id == operationId))
+            {
+                var key = Configuration.GetSection(HousecallProOptions.SectionName).Get<HousecallProOptions>()?.GetApiKey(operation.Slug);
+                if (key is not null) await HousecallPro.SyncOperationAsync(operation, key);
+            }
+            message = "Housecall Pro jobs and estimates were synchronized.";
+            await LoadStatusesAsync();
+            await ReloadAsync();
+        }
+        catch (Exception ex) { message = $"Sync failed: {ex.Message}"; }
+        finally { syncing = false; }
+    }
+
+    private static string FormatPhone(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+        if (digits.Length == 11 && digits[0] == '1') digits = digits[1..];
+        return digits.Length == 10 ? $"({digits[..3]}) {digits.Substring(3, 3)}-{digits[6..]}" : value;
+    }
+
+    private void OnSearchInput(ChangeEventArgs args) => search = args.Value?.ToString() ?? "";
+
+    [Inject] private IConfiguration Configuration { get; set; } = null!;
+}

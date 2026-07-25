@@ -23,15 +23,15 @@ Blazor Server dashboard for Charley Company operations metrics.
   - CCV readiness scorecard.
 - Dashboard cards for:
   - Current jobs in progress.
-  - Outstanding quotes.
-  - Expired quotes.
+  - Outstanding estimates.
+  - Expired estimates.
   - Expenses this month.
   - Revenue this month.
 - Housecall Pro API client shell with placeholder API key configuration.
 - Mock dashboard data until a real Housecall Pro API key is configured.
 - Housecall Pro webhook endpoint at `/api/housecallpro/webhooks`.
 - Notification recipient entry/edit screen at `/notifications`.
-- Webhook-triggered notification dispatch for quote and expense events.
+- Webhook-triggered notification dispatch for estimate and expense events.
 - SMTP email sender that logs simulated emails until SMTP is configured.
 - SMS and iMessage provider hooks that log simulated delivery until providers are configured.
 - Background sync service.
@@ -114,7 +114,7 @@ Invoke-WebRequest `
   -Uri "http://localhost:5088/api/housecallpro/webhooks" `
   -Method Post `
   -ContentType "application/json" `
-  -Body '{"event":"quote.closed","id":"demo-quote"}'
+  -Body '{"event":"estimate.completed","id":"demo-estimate"}'
 ```
 
 ## Configure Notifications

@@ -37,8 +37,8 @@ public sealed class MockDashboardDataSource(DashboardNotificationService notific
 
         var rollup = new DashboardSnapshot(
             CurrentJobsInProgress: localEntities.Sum(entity => entity.CurrentJobsInProgress),
-            OutstandingQuotes: localEntities.Sum(entity => entity.OutstandingQuotes),
-            ExpiredQuotes: localEntities.Sum(entity => entity.ExpiredQuotes),
+            OutstandingEstimates: localEntities.Sum(entity => entity.OutstandingEstimates),
+            ExpiredEstimates: localEntities.Sum(entity => entity.ExpiredEstimates),
             MonthlyExpenses: localEntities.Sum(entity => entity.MonthlyExpenses),
             MonthlyRevenue: localEntities.Sum(entity => entity.MonthlyRevenue),
             LastUpdated: now,
@@ -58,7 +58,7 @@ public sealed class MockDashboardDataSource(DashboardNotificationService notific
         string entityName,
         string entitySlug,
         int jobsBase,
-        int quotesBase,
+        int estimatesBase,
         int expiredBase,
         decimal expensesBase,
         decimal revenueBase,
@@ -67,8 +67,8 @@ public sealed class MockDashboardDataSource(DashboardNotificationService notific
     {
         return new DashboardSnapshot(
             CurrentJobsInProgress: jobsBase + seed % 6,
-            OutstandingQuotes: quotesBase + seed % 9,
-            ExpiredQuotes: expiredBase + seed % 4,
+            OutstandingEstimates: estimatesBase + seed % 9,
+            ExpiredEstimates: expiredBase + seed % 4,
             MonthlyExpenses: expensesBase + seed * 137.25m,
             MonthlyRevenue: revenueBase + seed * 945.50m,
             LastUpdated: now,

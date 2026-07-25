@@ -120,7 +120,7 @@
                             {
                                 <tr>
                                     <td>@week.WeekNumber</td>
-                                    <td>@week.WeekEnding.ToString("MMM d")</td>
+                                    <td>@week.WeekEnding.ToString("MM/dd/yyyy")</td>
                                     <td>@week.ExpectedCollections.ToString("C0")</td>
                                     <td>@week.TotalCashUses.ToString("C0")</td>
                                     <td>@week.EndingCash.ToString("C0")</td>
@@ -222,7 +222,7 @@
                                 <td>@check.Threshold</td>
                                 <td><span class="status-pill @StatusClass(check.Status)">@check.Status</span></td>
                                 <td>@check.Owner</td>
-                                <td>@check.TargetDate.ToString("MMM d")</td>
+                                <td>@check.TargetDate.ToString("MM/dd/yyyy")</td>
                             </tr>
                         }
                     </tbody>

@@ -5,7 +5,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
-public sealed class OperationAccessService(AuthenticationStateProvider authenticationStateProvider, ApplicationDbContext dbContext)
+public sealed class OperationAccessService(
+    AuthenticationStateProvider authenticationStateProvider,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory)
 {
     public async Task<bool> IsAdministratorAsync()
     {
@@ -16,6 +18,7 @@ public sealed class OperationAccessService(AuthenticationStateProvider authentic
     public async Task<IReadOnlyList<LocalOperation>> GetAccessibleOperationsAsync(CancellationToken cancellationToken = default)
     {
         var principal = (await authenticationStateProvider.GetAuthenticationStateAsync()).User;
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var query = dbContext.LocalOperations.AsNoTracking().Where(operation => operation.IsActive);
 
         if (principal.IsInRole(ApplicationRoles.Administrator))

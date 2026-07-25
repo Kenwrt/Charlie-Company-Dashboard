@@ -2,8 +2,8 @@ namespace CharleyCompany.Dashboard.Web.Models;
 
 public sealed record DashboardSnapshot(
     int CurrentJobsInProgress,
-    int OutstandingQuotes,
-    int ExpiredQuotes,
+    int OutstandingEstimates,
+    int ExpiredEstimates,
     decimal MonthlyExpenses,
     decimal MonthlyRevenue,
     DateTimeOffset LastUpdated,

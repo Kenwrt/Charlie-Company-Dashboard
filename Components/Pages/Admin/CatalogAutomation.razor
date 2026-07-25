@@ -38,7 +38,7 @@
 </tbody></table></div></section>
 
 <section class="mt-5"><h2>Current vendor price comparison</h2><div class="table-responsive"><table class="table"><thead><tr><th>Product</th><th>Vendor</th><th>SKU</th><th>Current price</th><th>Effective</th></tr></thead><tbody>
-@foreach (var item in comparison) { <tr><td>@item.Product</td><td>@item.Vendor</td><td>@item.Sku</td><td>@item.Price.ToString("C4")</td><td>@item.EffectiveDate</td></tr> }
+@foreach (var item in comparison) { <tr><td>@item.Product</td><td>@item.Vendor</td><td>@item.Sku</td><td>@item.Price.ToString("C4")</td><td>@item.EffectiveDate.ToString("MM/dd/yyyy")</td></tr> }
 </tbody></table></div></section>
 
 @code {

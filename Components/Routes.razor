@@ -1,6 +1,7 @@
 ﻿@using CharleyCompany.Dashboard.Web.Components.Account.Shared
 <Router AppAssembly="typeof(Program).Assembly" NotFoundPage="typeof(Pages.NotFound)">
     <Found Context="routeData">
+        <EnforcePasswordChange RouteData="routeData" />
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
             <NotAuthorized>
                 <RedirectToLogin />

@@ -20,7 +20,9 @@ public sealed class HousecallProSyncService(
             {
                 using var scope = services.CreateScope();
                 var dataSource = scope.ServiceProvider.GetRequiredService<IDashboardDataSource>();
+                var recordSync = scope.ServiceProvider.GetRequiredService<HousecallProDataService>();
                 await dataSource.GetSnapshotAsync(stoppingToken);
+                await recordSync.SyncAllConfiguredOperationsAsync(stoppingToken);
 
                 await notifications.PublishAsync(new DashboardEvent(
                     "Sync completed",
@@ -42,4 +44,3 @@ public sealed class HousecallProSyncService(
         }
     }
 }
-

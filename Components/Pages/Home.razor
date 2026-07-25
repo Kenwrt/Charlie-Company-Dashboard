@@ -74,7 +74,7 @@
             <article class="metric-card accent-quotes">
                 <span>Due in 30 days</span>
                 <strong>@apSummary.DueSoonBalance.ToString("C0")</strong>
-                <small>Open balance due through @DateOnly.FromDateTime(DateTime.Today.AddDays(30)).ToString("MMM d")</small>
+                <small>Open balance due through @DateOnly.FromDateTime(DateTime.Today.AddDays(30)).ToString("MM/dd/yyyy")</small>
             </article>
             <article class="metric-card accent-jobs">
                 <span>Applied payments</span>
@@ -102,7 +102,7 @@
                                 <td>@invoice.Operation</td>
                                 <td>@invoice.InvoiceNumber</td>
                                 <td>@invoice.JobNumber</td>
-                                <td>@invoice.DueDate.ToString("MMM d, yyyy")</td>
+                                <td>@invoice.DueDate.ToString("MM/dd/yyyy")</td>
                                 <td>@invoice.Status</td>
                                 <td>@invoice.OpenBalance.ToString("C0")</td>
                             </tr>
@@ -131,12 +131,12 @@
                         </div>
                         <dl>
                             <div>
-                                <dt>Outstanding quotes</dt>
-                                <dd>@entity.OutstandingQuotes.ToString("N0")</dd>
+                                <dt>Outstanding estimates</dt>
+                                <dd>@entity.OutstandingEstimates.ToString("N0")</dd>
                             </div>
                             <div>
-                                <dt>Expired quotes</dt>
-                                <dd>@entity.ExpiredQuotes.ToString("N0")</dd>
+                                <dt>Expired estimates</dt>
+                                <dd>@entity.ExpiredEstimates.ToString("N0")</dd>
                             </div>
                             <div>
                                 <dt>Expenses</dt>
@@ -163,7 +163,7 @@
         </summary>
 
         <div class="notification-panel-content">
-            <p>Quote and expense webhook events will appear here as they arrive.</p>
+            <p>Estimate and expense webhook events will appear here as they arrive.</p>
 
             @if (currentSnapshot.RecentEvents.Count == 0)
             {
@@ -201,7 +201,7 @@
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
 
     private string Subtitle => IsEntityView
-        ? "Local view of jobs, quotes, monthly expenses, and revenue."
+        ? "Local view of jobs, estimates, monthly expenses, and revenue."
         : "Rolled-up view of all local service entities under Charlie Company Ventures Group.";
 
     protected override async Task OnInitializedAsync()
@@ -325,8 +325,8 @@
     private static IReadOnlyList<DashboardMetric> BuildMetrics(DashboardSnapshot snapshot) =>
     [
         new("Jobs in progress", snapshot.CurrentJobsInProgress.ToString("N0"), "Active work currently underway", "accent-jobs"),
-        new("Outstanding quotes", snapshot.OutstandingQuotes.ToString("N0"), "Quotes waiting for customer decision", "accent-quotes"),
-        new("Expired quotes", snapshot.ExpiredQuotes.ToString("N0"), "Quotes past their expiration date", "accent-expired"),
+        new("Outstanding estimates", snapshot.OutstandingEstimates.ToString("N0"), "Estimates waiting for customer decision", "accent-quotes"),
+        new("Expired estimates", snapshot.ExpiredEstimates.ToString("N0"), "Estimates past their expiration date", "accent-expired"),
         new("Expenses this month", snapshot.MonthlyExpenses.ToString("C0"), "Posted expenses for the current month", "accent-expenses"),
         new("Revenue this month", snapshot.MonthlyRevenue.ToString("C0"), "Revenue recognized for the current month", "accent-revenue")
     ];
@@ -334,8 +334,8 @@
     private static DashboardSnapshot BuildRollup(IReadOnlyList<DashboardSnapshot> entities, DashboardSnapshot template) => template with
     {
         CurrentJobsInProgress = entities.Sum(entity => entity.CurrentJobsInProgress),
-        OutstandingQuotes = entities.Sum(entity => entity.OutstandingQuotes),
-        ExpiredQuotes = entities.Sum(entity => entity.ExpiredQuotes),
+        OutstandingEstimates = entities.Sum(entity => entity.OutstandingEstimates),
+        ExpiredEstimates = entities.Sum(entity => entity.ExpiredEstimates),
         MonthlyExpenses = entities.Sum(entity => entity.MonthlyExpenses),
         MonthlyRevenue = entities.Sum(entity => entity.MonthlyRevenue)
     };

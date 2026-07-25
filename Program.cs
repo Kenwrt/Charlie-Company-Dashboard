@@ -61,7 +61,7 @@ try
         .AddIdentityCookies();
 
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
-    builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
         options.UseNpgsql(connectionString));
     builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
@@ -80,6 +80,7 @@ try
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
     builder.Services.AddSingleton<DashboardNotificationService>();
+    builder.Services.AddMemoryCache();
     builder.Services.AddScoped<MockDashboardDataSource>();
     builder.Services.AddScoped<OperationAccessService>();
     builder.Services.AddScoped<OperationCatalogService>();
@@ -94,6 +95,7 @@ try
     builder.Services.AddScoped<IOutboundNotificationSender, MobileNotificationSender>();
     builder.Services.AddScoped<WebhookNotificationDispatcher>();
     builder.Services.AddHttpClient<HousecallProDashboardDataSource>();
+    builder.Services.AddHttpClient<HousecallProDataService>();
     builder.Services.AddScoped<IDashboardDataSource>(services => services.GetRequiredService<HousecallProDashboardDataSource>());
     builder.Services.AddHostedService<HousecallProSyncService>();
 

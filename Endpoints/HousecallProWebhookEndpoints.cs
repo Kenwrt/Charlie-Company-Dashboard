@@ -55,7 +55,7 @@ public static class HousecallProWebhookEndpoints
         if (eventType.Contains("quote", StringComparison.OrdinalIgnoreCase)
             || eventType.Contains("estimate", StringComparison.OrdinalIgnoreCase))
         {
-            return "A quote event was received and the dashboard is refreshing.";
+            return "An estimate event was received and the dashboard is refreshing.";
         }
 
         if (eventType.Contains("expense", StringComparison.OrdinalIgnoreCase))
