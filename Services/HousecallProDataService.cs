@@ -25,6 +25,14 @@ public sealed record HcpRecordDetail(
     IReadOnlyList<KeyValuePair<string, string>> Fields,
     IReadOnlyList<HcpImportedCommunication> Communications,
     string Json);
+public sealed record HcpEstimateStartRecord(
+    string ExternalId,
+    string EstimateNumber,
+    string CustomerName,
+    string? CustomerEmail,
+    string? CustomerPhone,
+    string CustomerAddress,
+    DateTimeOffset? EstimateDate);
 
 public sealed class HousecallProDataService(
     HttpClient httpClient,
@@ -156,6 +164,76 @@ public sealed class HousecallProDataService(
         });
     }
 
+    public async Task<HcpEstimateStartRecord?> FindEstimateByNumberAsync(
+        string operationSlug,
+        string estimateNumber,
+        CancellationToken cancellationToken = default)
+    {
+        estimateNumber = estimateNumber.Trim();
+        if (string.IsNullOrWhiteSpace(estimateNumber)) return null;
+
+        var apiKey = settings.GetApiKey(operationSlug);
+        if (apiKey is null) return null;
+
+        string? externalId;
+        await using (var dataScope = scopeFactory.CreateAsyncScope())
+        {
+            var db = dataScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            externalId = await db.HousecallProEstimates
+                .AsNoTracking()
+                .Where(x => x.LocalOperation.Slug == operationSlug && x.EstimateNumber == estimateNumber)
+                .Select(x => x.ExternalId)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        JsonElement estimate;
+        if (externalId is not null)
+        {
+            using var detail = await GetDocumentAsync(
+                $"{settings.EstimatesEndpoint.TrimEnd('/')}/{Uri.EscapeDataString(externalId)}",
+                apiKey,
+                cancellationToken);
+            estimate = detail.RootElement.Clone();
+        }
+        else
+        {
+            var estimates = await GetPagesAsync(
+                settings.EstimatesEndpoint,
+                "estimates",
+                apiKey,
+                cancellationToken,
+                maxPages: 2);
+            estimate = estimates.FirstOrDefault(item =>
+                string.Equals(
+                    Text(item, "estimate_number") ?? Text(item, "number"),
+                    estimateNumber,
+                    StringComparison.OrdinalIgnoreCase));
+            if (estimate.ValueKind == JsonValueKind.Undefined) return null;
+            externalId = Text(estimate, "id");
+            if (externalId is null) return null;
+        }
+
+        var customerName = CustomerName(estimate);
+        var customerAddress = CustomerAddress(estimate);
+        if (string.IsNullOrWhiteSpace(customerName) || string.IsNullOrWhiteSpace(customerAddress))
+        {
+            return null;
+        }
+
+        return new HcpEstimateStartRecord(
+            externalId,
+            Text(estimate, "estimate_number") ?? Text(estimate, "number") ?? estimateNumber,
+            customerName,
+            CustomerValue(estimate, "email"),
+            FirstNonEmpty(
+                CustomerValue(estimate, "mobile_number"),
+                CustomerValue(estimate, "phone_number"),
+                CustomerValue(estimate, "home_number"),
+                CustomerValue(estimate, "work_number")),
+            customerAddress,
+            Date(estimate, "created_at") ?? FirstOptionDate(estimate, "created_at"));
+    }
+
     public async Task<HcpJobPaymentHistory?> GetJobPaymentHistoryAsync(
         string operationSlug,
         string externalId,
@@ -245,7 +323,12 @@ public sealed class HousecallProDataService(
         return result;
     }
 
-    private async Task<List<JsonElement>> GetPagesAsync(string endpoint, string collection, string apiKey, CancellationToken cancellationToken)
+    private async Task<List<JsonElement>> GetPagesAsync(
+        string endpoint,
+        string collection,
+        string apiKey,
+        CancellationToken cancellationToken,
+        int? maxPages = null)
     {
         var result = new List<JsonElement>();
         var page = 1;
@@ -257,7 +340,7 @@ public sealed class HousecallProDataService(
                 result.AddRange(array.EnumerateArray().Select(x => x.Clone()));
             if (document.RootElement.TryGetProperty("total_pages", out var pages) && pages.TryGetInt32(out var count)) totalPages = count;
             page++;
-        } while (page <= Math.Min(totalPages, Math.Max(1, settings.RecordSyncMaxPages)));
+        } while (page <= Math.Min(totalPages, Math.Max(1, maxPages ?? settings.RecordSyncMaxPages)));
         return result;
     }
 

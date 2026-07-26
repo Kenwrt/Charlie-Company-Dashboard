@@ -4,5 +4,5 @@ public sealed record DashboardMetric(
     string Label,
     string Value,
     string Detail,
-    string AccentClass);
-
+    string AccentClass,
+    string? Href = null);

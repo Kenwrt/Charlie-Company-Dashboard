@@ -8,33 +8,503 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
 @inject OperationAccessService OperationAccess
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject OperationalEventPublisher OperationalEvents
+@inject IWebHostEnvironment Environment
+@inject IConfiguration Configuration
 
-<PageTitle>Estimate Workspace</PageTitle>
-@if(quote is null){<h1>Estimate not found</h1><p>This estimate is not available to your assigned locations.</p>}
-else{<section class="dashboard-shell"><div class="dashboard-header"><div><p class="eyebrow">@quote.LocalOperation.Name</p><h1>Estimate CCV-E-@quote.Id.ToString("D6")</h1><p class="dashboard-subtitle">@quote.CustomerName · @quote.WorkDescription</p></div><div class="dashboard-status"><span>@quote.Status</span><small>Version @version?.VersionNumber</small></div></div><p><a href="estimates">Back to estimates</a></p>
-@if(message is not null){<div class="alert alert-info">@message</div>}
-<section class="activity-panel"><h2>Integration references</h2><dl class="finance-definition-list"><div><dt>Housecall Pro estimate</dt><dd>@(quote.HousecallProQuoteId??"Not assigned")</dd></div><div><dt>Housecall Pro job</dt><dd>@(quote.HousecallProJobId??"Not assigned")</dd></div><div><dt>CompanyCam project</dt><dd>@(quote.CompanyCamProjectId??"Not assigned")</dd></div></dl>@foreach(var job in quote.ProcessingJobs){<div class="activity-item"><div><strong>@job.JobType</strong><span>@job.Message</span></div><span>@job.Status</span></div>}</section>
-@if(version is not null){<section class="activity-panel"><h2>Version @version.VersionNumber pricing</h2><div class="metric-grid"><article class="metric-card"><span>Subtotal</span><strong>@version.Subtotal.ToString("C")</strong></article><article class="metric-card"><span>Discount</span><strong>@version.DiscountAmount.ToString("C")</strong></article><article class="metric-card"><span>Tax</span><strong>@version.TaxAmount.ToString("C")</strong></article><article class="metric-card accent-revenue"><span>Customer total</span><strong>@version.Total.ToString("C")</strong></article></div>
-@if(version.Status=="Draft"){<EditForm Model="lineInput" OnValidSubmit="AddLineAsync" FormName="estimate-line"><DataAnnotationsValidator/><ValidationSummary class="text-danger"/><div class="row g-2 mt-3"><div class="col-md-3"><InputText class="form-control" @bind-Value="lineInput.Description" placeholder="Description"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.Quantity"/></div><div class="col-md-1"><InputText class="form-control" @bind-Value="lineInput.Unit"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.MaterialUnitCost" placeholder="Material"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.LaborHours" placeholder="Hours"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.LaborRate" placeholder="Rate"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.EquipmentCost" placeholder="Equipment"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.WastePercent" placeholder="Waste %"/></div><div class="col-md-1"><InputNumber class="form-control" @bind-Value="lineInput.MarkupPercent" placeholder="Markup %"/></div><div class="col-md-1"><button class="btn btn-primary">Add</button></div></div></EditForm>}
-<div class="table-responsive mt-3"><table class="table"><thead><tr><th>Description</th><th>Qty</th><th>Estimated cost</th><th>Markup</th><th>Customer price</th></tr></thead><tbody>@foreach(var line in version.Lines.OrderBy(x=>x.SortOrder)){<tr><td>@line.Description<br/><small>@line.Source</small></td><td>@line.Quantity.ToString("N2") @line.Unit</td><td>@line.EstimatedCost.ToString("C")</td><td>@line.MarkupPercent.ToString("N1")%</td><td>@line.CustomerPrice.ToString("C")</td></tr>}</tbody></table></div>
-@if(version.Status=="Draft"){<div class="d-flex gap-2"><button class="btn btn-outline-primary" @onclick="SubmitForReviewAsync">Submit for review</button><button class="btn btn-success" disabled="@(version.Lines.Count==0)" @onclick="ApproveAsync">Approve estimate</button><button class="btn btn-outline-danger" @onclick="RejectAsync">Reject</button></div>}else if(version.Status=="Approved"){<button class="btn btn-outline-primary" @onclick="CreateRevisionAsync">Create revision</button><div class="alert alert-success mt-2">Approved version is locked. Customer delivery remains disabled.</div>}
-</section>}
-<details class="activity-panel"><summary><strong>Audit history</strong></summary><div class="activity-list mt-3">@foreach(var item in quote.AuditEvents.OrderByDescending(x=>x.OccurredAt)){<div class="activity-item"><div><strong>@item.PreviousStatus → @item.NewStatus</strong><span>@item.Explanation</span></div><time>@item.OccurredAt.ToLocalTime().ToString("MMM d, h:mm tt")</time></div>}</div></details></section>}
+<PageTitle>Preliminary Estimate</PageTitle>
 
-@code{
- [Parameter]public int QuoteId{get;set;} private QuoteCase? quote;private QuoteVersion? version;private QuoteLineInput lineInput=new();private string? message;
- protected override Task OnParametersSetAsync()=>ReloadAsync();
- private async Task ReloadAsync(){var allowed=(await OperationAccess.GetAccessibleOperationsAsync()).Select(x=>x.Id).ToList();quote=await DbContext.QuoteCases.AsNoTracking().AsSplitQuery().Include(x=>x.LocalOperation).Include(x=>x.Versions).ThenInclude(x=>x.Lines).Include(x=>x.AuditEvents).Include(x=>x.ProcessingJobs).SingleOrDefaultAsync(x=>x.Id==QuoteId&&allowed.Contains(x.LocalOperationId));version=quote?.Versions.OrderByDescending(x=>x.VersionNumber).FirstOrDefault();if(quote is not null){var rule=await DbContext.QuotePricingRules.AsNoTracking().SingleOrDefaultAsync(x=>x.LocalOperationId==quote.LocalOperationId);lineInput.LaborRate=rule?.DefaultLaborRate??75;lineInput.MarkupPercent=rule?.DefaultMarkupPercent??30;lineInput.WastePercent=rule?.DefaultWastePercent??10;}}
- private async Task AddLineAsync(){if(version is null||version.Status!="Draft"||quote is null)return;var started=System.Diagnostics.Stopwatch.StartNew();var cost=(lineInput.Quantity*lineInput.MaterialUnitCost*(1+lineInput.WastePercent/100m))+(lineInput.LaborHours*lineInput.LaborRate)+lineInput.EquipmentCost;var price=decimal.Round(cost*(1+lineInput.MarkupPercent/100m),2);DbContext.QuoteLines.Add(new QuoteLine{QuoteVersionId=version.Id,SortOrder=version.Lines.Count+1,Description=lineInput.Description.Trim(),Quantity=lineInput.Quantity,Unit=lineInput.Unit.Trim(),MaterialUnitCost=lineInput.MaterialUnitCost,LaborHours=lineInput.LaborHours,LaborRate=lineInput.LaborRate,EquipmentCost=lineInput.EquipmentCost,WastePercent=lineInput.WastePercent,MarkupPercent=lineInput.MarkupPercent,CustomerPrice=price});await DbContext.SaveChangesAsync();started.Stop();await PublishEstimateEventAsync("EstimatePricingEngine","CalculateLinePrice","Completed",$"Estimate line priced successfully at {price:C}.",started.ElapsedMilliseconds);message="Estimate line added using deterministic pricing inputs.";lineInput=new();await ReloadAsync();}
- private async Task TransitionAsync(string status,string explanation){if(quote is null)return;var tracked=await DbContext.QuoteCases.FindAsync(quote.Id);if(tracked is null)return;var previous=tracked.Status;tracked.Status=status;tracked.UpdatedAt=DateTimeOffset.UtcNow;var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;DbContext.QuoteAuditEvents.Add(new QuoteAuditEvent{QuoteCaseId=tracked.Id,PreviousStatus=previous,NewStatus=status,UserId=user.FindFirstValue(ClaimTypes.NameIdentifier),Explanation=explanation});await DbContext.SaveChangesAsync();await PublishEstimateEventAsync("EstimateWorkflow","Transition","Completed",$"Estimate transitioned from {previous} to {status}: {explanation}");await ReloadAsync();}
- private Task SubmitForReviewAsync()=>TransitionAsync(QuoteStatuses.OperatorReview,"Draft submitted for operator review.");
- private Task RejectAsync()=>TransitionAsync(QuoteStatuses.Rejected,"Estimate rejected by operator.");
- private async Task ApproveAsync(){if(quote is null||version is null||version.Lines.Count==0)return;var tracked=await DbContext.QuoteVersions.FindAsync(version.Id);if(tracked is null||tracked.Status!="Draft")return;var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;tracked.Status="Approved";tracked.ApprovedByUserId=user.FindFirstValue(ClaimTypes.NameIdentifier);tracked.ApprovedAt=DateTimeOffset.UtcNow;await DbContext.SaveChangesAsync();await TransitionAsync(QuoteStatuses.Approved,"Estimate version approved. External update and customer email remain disabled.");}
- private async Task CreateRevisionAsync(){if(quote is null||version is null||version.Status!="Approved")return;var next=new QuoteVersion{QuoteCaseId=quote.Id,VersionNumber=version.VersionNumber+1,TaxRate=version.TaxRate,DiscountAmount=version.DiscountAmount,CustomerNotes=version.CustomerNotes};foreach(var line in version.Lines)next.Lines.Add(new QuoteLine{SortOrder=line.SortOrder,Description=line.Description,Quantity=line.Quantity,Unit=line.Unit,MaterialUnitCost=line.MaterialUnitCost,LaborHours=line.LaborHours,LaborRate=line.LaborRate,EquipmentCost=line.EquipmentCost,WastePercent=line.WastePercent,MarkupPercent=line.MarkupPercent,CustomerPrice=line.CustomerPrice,Source="Revision"});DbContext.Add(next);await DbContext.SaveChangesAsync();await TransitionAsync(QuoteStatuses.RevisionRequested,"A new editable estimate version was created.");}
- private Task PublishEstimateEventAsync(string module,string step,string status,string eventMessage,long? duration=null)=>quote is null?Task.CompletedTask:OperationalEvents.PublishAsync(new OperationalEventRequest("CharlieCompany.Web",module,step,status,eventMessage,CorrelationId:$"quote-{quote.Id:D6}",LocalOperationId:quote.LocalOperationId,QuoteCaseId:quote.Id,JobNumber:quote.HousecallProJobId,DurationMilliseconds:duration));
- private sealed class QuoteLineInput{[Required]public string Description{get;set;}="";[Range(.0001,double.MaxValue)]public decimal Quantity{get;set;}=1;[Required]public string Unit{get;set;}="Each";[Range(0,double.MaxValue)]public decimal MaterialUnitCost{get;set;}[Range(0,double.MaxValue)]public decimal LaborHours{get;set;}[Range(0,double.MaxValue)]public decimal LaborRate{get;set;}=75;[Range(0,double.MaxValue)]public decimal EquipmentCost{get;set;}[Range(0,100)]public decimal WastePercent{get;set;}=10;[Range(0,1000)]public decimal MarkupPercent{get;set;}=30;}
+@if (quote is null)
+{
+    <h1>Estimate not found</h1>
+    <p>This estimate is not available to your assigned locations.</p>
+}
+else
+{
+    <section class="dashboard-shell">
+        <div class="dashboard-header estimate-form-header">
+            <div>
+                <p class="eyebrow">@quote.LocalOperation.Name</p>
+                <h1>Preliminary Estimate</h1>
+                <p class="dashboard-subtitle">
+                    Housecall Pro Estimate #@(quote.HousecallProEstimateNumber ?? "Not provided")
+                </p>
+            </div>
+            <div class="dashboard-status">
+                <span>@quote.Status</span>
+                <small>Version @version?.VersionNumber</small>
+            </div>
+        </div>
+
+        <p><a href="estimates">Back to estimates</a></p>
+
+        @if (message is not null)
+        {
+            <div class="alert alert-info">@message</div>
+        }
+
+        <section class="activity-panel estimate-customer-panel">
+            <p class="eyebrow">On-site inspection</p>
+            <div class="row g-4">
+                <div class="col-md-6">
+                    <span class="form-label">Prepared for</span>
+                    <h2 class="mb-1">@quote.CustomerName</h2>
+                </div>
+                <div class="col-md-6">
+                    <span class="form-label">Project address</span>
+                    <p class="fs-5 mb-0">@(quote.CustomerAddress ?? "Address not provided")</p>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(quote.CustomerEmail))
+                {
+                    <div class="col-md-6">
+                        <span class="form-label">Customer email</span>
+                        <p class="mb-0">@quote.CustomerEmail</p>
+                    </div>
+                }
+                <div class="col-md-6">
+                    <span class="form-label">Estimate date</span>
+                    <p class="mb-0">@quote.CreatedAt.ToLocalTime().ToString("MM/dd/yyyy")</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="activity-panel">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <h2>Project Tasks</h2>
+                    <p class="dashboard-subtitle mb-0">
+                        Add every distinct part of the project. CentCom will analyze each task’s photographs and dictated scope of work separately.
+                    </p>
+                </div>
+                <div class="d-flex gap-2">
+                    <InputSelect class="form-select" @bind-Value="newTaskType">
+                        @foreach (var taskType in ProjectTaskTypes.All)
+                        {
+                            <option value="@taskType">@taskType</option>
+                        }
+                    </InputSelect>
+                    <button type="button" class="btn btn-primary text-nowrap" @onclick="AddProjectTaskAsync">Add Project Task</button>
+                </div>
+            </div>
+        </section>
+
+        @if (quote.ProjectTasks.Count == 0)
+        {
+            <section class="activity-panel">
+                <p class="mb-0">No project tasks have been added. Select a project task type above to begin.</p>
+            </section>
+        }
+
+        @foreach (var task in quote.ProjectTasks.OrderBy(x => x.SortOrder))
+        {
+            <section class="activity-panel project-task-panel" @key="task.Id">
+                <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+                    <h2>Project Task @task.SortOrder</h2>
+                    <span class="badge text-bg-light">@task.Photos.Count photo(s)</span>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-md-5">
+                        <label class="form-label">Project Task Type</label>
+                        <InputSelect class="form-select" @bind-Value="task.TaskType">
+                            @foreach (var taskType in ProjectTaskTypes.All)
+                            {
+                                <option value="@taskType">@taskType</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Scope of Work</label>
+                        <InputTextArea class="form-control estimate-notes-input"
+                                       rows="7"
+                                       @bind-Value="task.ScopeOfWork"
+                                       placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
+                        <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
+                    </div>
+                    <div class="col-12">
+                        <button type="button" class="btn btn-outline-primary" @onclick="() => SaveProjectTaskAsync(task)">Save Project Task</button>
+                    </div>
+                </div>
+
+                <div class="picture-capture-panel mt-4">
+                    <h3>@task.TaskType Picture Guide</h3>
+                    <p class="text-muted">Complete every required photograph. Use natural light, keep measurements straight, and make both the zero point and endpoint clearly readable.</p>
+                    <div class="photo-requirement-grid">
+                        @foreach (var requirement in ProjectPhotoGuidance.For(task.TaskType))
+                        {
+                            var captured = task.Photos.Where(x => x.RequirementKey == requirement.Key).OrderByDescending(x => x.CapturedAt).ToList();
+                            <article class="photo-requirement-card">
+                                <div class="d-flex justify-content-between gap-2">
+                                    <strong>@requirement.Label</strong>
+                                    <span class="badge @(captured.Count > 0 ? "text-bg-success" : "text-bg-warning")">
+                                        @(captured.Count > 0 ? "Complete" : "Required")
+                                    </span>
+                                </div>
+                                <p>@requirement.Instructions</p>
+                                <InputFile class="form-control"
+                                           OnChange="args => CapturePicturesAsync(task, requirement, args)"
+                                           accept="image/*"
+                                           capture="environment" />
+                                @foreach (var photo in captured)
+                                {
+                                    <small class="d-block mt-2">📷 @photo.OriginalFileName · @FormatFileSize(photo.FileSize)</small>
+                                }
+                            </article>
+                        }
+                    </div>
+                    @if (task.Photos.Any(x => x.RequirementKey == "additional"))
+                    {
+                        <h4 class="mt-4">Additional Photographs</h4>
+                        <div class="project-photo-list mt-3">
+                            @foreach (var photo in task.Photos.Where(x => x.RequirementKey == "additional").OrderBy(x => x.CapturedAt))
+                            {
+                                <div class="project-photo-item">
+                                    <span aria-hidden="true">📷</span>
+                                    <div>
+                                        <strong>@photo.OriginalFileName</strong>
+                                        <small>@FormatFileSize(photo.FileSize) · @photo.CapturedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</small>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    <div class="mt-3">
+                        <label class="form-label">Optional additional photographs</label>
+                        <InputFile class="form-control"
+                                   OnChange="args => CapturePicturesAsync(task, AdditionalPhotoRequirement, args)"
+                                   accept="image/*"
+                                   capture="environment"
+                                   multiple />
+                    </div>
+                </div>
+            </section>
+        }
+
+        @if (version is not null)
+        {
+            <section class="activity-panel">
+                <h2>Pricing</h2>
+                <div class="metric-grid">
+                    <article class="metric-card">
+                        <span>Subtotal</span>
+                        <strong>@version.Subtotal.ToString("C")</strong>
+                    </article>
+                    <article class="metric-card">
+                        <span>Discount</span>
+                        <strong>@version.DiscountAmount.ToString("C")</strong>
+                    </article>
+                    <article class="metric-card">
+                        <span>Tax</span>
+                        <strong>@version.TaxAmount.ToString("C")</strong>
+                    </article>
+                    <article class="metric-card accent-revenue">
+                        <span>Total Price</span>
+                        <strong>@version.Total.ToString("C")</strong>
+                    </article>
+                </div>
+
+                @if (version.Lines.Count == 0)
+                {
+                    <div class="alert alert-light border mt-3 mb-0">
+                        Material quantities and calculated pricing will appear after project-task photographs and scope notes are analyzed.
+                    </div>
+                }
+
+                @if (version.Status == "Draft")
+                {
+                    <div class="d-flex gap-2 mt-3">
+                        <button class="btn btn-outline-primary" @onclick="SubmitForReviewAsync">Submit Estimate to CentCom</button>
+                        <button class="btn btn-success" disabled="@(version.Lines.Count == 0)" @onclick="ApproveAsync">Approve estimate</button>
+                        <button class="btn btn-outline-danger" @onclick="RejectAsync">Reject</button>
+                    </div>
+                }
+                else if (version.Status == "Approved")
+                {
+                    <button class="btn btn-outline-primary mt-3" @onclick="CreateRevisionAsync">Create revision</button>
+                    <div class="alert alert-success mt-2">Approved version is locked. Customer delivery remains disabled.</div>
+                }
+            </section>
+        }
+
+        <details class="activity-panel">
+            <summary><strong>Audit history</strong></summary>
+            <div class="activity-list mt-3">
+                @foreach (var item in quote.AuditEvents.OrderByDescending(x => x.OccurredAt))
+                {
+                    <div class="activity-item">
+                        <div>
+                            <strong>@item.PreviousStatus → @item.NewStatus</strong>
+                            <span>@item.Explanation</span>
+                        </div>
+                        <time>@item.OccurredAt.ToLocalTime().ToString("MMM d, h:mm tt")</time>
+                    </div>
+                }
+            </div>
+        </details>
+    </section>
+}
+
+@code {
+    [Parameter] public int QuoteId { get; set; }
+
+    private QuoteCase? quote;
+    private QuoteVersion? version;
+    private string? message;
+    private string newTaskType = ProjectTaskTypes.All[0];
+    private static readonly ProjectPhotoRequirement AdditionalPhotoRequirement =
+        new("additional", "Additional Photo", "Additional project context.");
+
+    protected override Task OnParametersSetAsync() => ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        var allowed = (await OperationAccess.GetAccessibleOperationsAsync()).Select(x => x.Id).ToList();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        quote = await db.QuoteCases.AsNoTracking().AsSplitQuery()
+            .Include(x => x.LocalOperation)
+            .Include(x => x.Versions).ThenInclude(x => x.Lines)
+            .Include(x => x.ProjectTasks).ThenInclude(x => x.Photos)
+            .Include(x => x.AuditEvents)
+            .SingleOrDefaultAsync(x => x.Id == QuoteId && allowed.Contains(x.LocalOperationId));
+        version = quote?.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+    }
+
+    private async Task AddProjectTaskAsync()
+    {
+        if (quote is null || !ProjectTaskTypes.All.Contains(newTaskType)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var nextSortOrder = await db.QuoteProjectTasks
+            .Where(x => x.QuoteCaseId == quote.Id)
+            .Select(x => (int?)x.SortOrder)
+            .MaxAsync() ?? 0;
+        var task = new QuoteProjectTask
+        {
+            QuoteCaseId = quote.Id,
+            SortOrder = nextSortOrder + 1,
+            TaskType = newTaskType
+        };
+        db.QuoteProjectTasks.Add(task);
+        await AddAuditEventAsync(db, quote, $"Project Task {task.SortOrder} ({task.TaskType}) added.");
+        await db.SaveChangesAsync();
+        message = $"Project Task {task.SortOrder} added.";
+        await ReloadAsync();
+    }
+
+    private async Task SaveProjectTaskAsync(QuoteProjectTask task)
+    {
+        if (quote is null || !ProjectTaskTypes.All.Contains(task.TaskType)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteProjectTasks.SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
+        if (tracked is null) return;
+        tracked.TaskType = task.TaskType;
+        tracked.ScopeOfWork = task.ScopeOfWork?.Trim() ?? string.Empty;
+        tracked.UpdatedAt = DateTimeOffset.UtcNow;
+        await AddAuditEventAsync(db, quote, $"Project Task {tracked.SortOrder} scope updated.");
+        await db.SaveChangesAsync();
+        await PublishEstimateEventAsync("EstimateWorkspace", "SaveProjectTask", "Completed", $"Project Task {tracked.SortOrder} saved.");
+        message = $"Project Task {tracked.SortOrder} saved.";
+        await ReloadAsync();
+    }
+
+    private async Task CapturePicturesAsync(
+        QuoteProjectTask task,
+        ProjectPhotoRequirement requirement,
+        InputFileChangeEventArgs args)
+    {
+        if (quote is null) return;
+        var files = args.GetMultipleFiles(12);
+        if (files.Count == 0) return;
+        var root = Configuration["EstimatePictures:StoragePath"];
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            root = Path.Combine(Environment.ContentRootPath, "EstimatePictures");
+        }
+        var taskDirectory = Path.Combine(root, $"estimate-{quote.Id}", $"task-{task.Id}");
+        Directory.CreateDirectory(taskDirectory);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var validTask = await db.QuoteProjectTasks.AnyAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
+        if (!validTask) return;
+
+        var saved = 0;
+        foreach (var file in files)
+        {
+            if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) continue;
+            var extension = Path.GetExtension(file.Name).ToLowerInvariant();
+            if (extension is not ".jpg" and not ".jpeg" and not ".png" and not ".webp" and not ".heic") extension = ".jpg";
+            var storedPath = Path.Combine(taskDirectory, $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}{extension}");
+            await using var source = file.OpenReadStream(20 * 1024 * 1024);
+            await using var destination = File.Create(storedPath);
+            await source.CopyToAsync(destination);
+            db.QuoteProjectTaskPhotos.Add(new QuoteProjectTaskPhoto
+            {
+                QuoteProjectTaskId = task.Id,
+                OriginalFileName = Path.GetFileName(file.Name),
+                StoragePath = storedPath,
+                ContentType = file.ContentType,
+                FileSize = file.Size,
+                RequirementKey = requirement.Key,
+                RequirementLabel = requirement.Label
+            });
+            saved++;
+        }
+
+        if (saved > 0)
+        {
+            await AddAuditEventAsync(db, quote, $"{saved} photograph(s) added to Project Task {task.SortOrder}.");
+            await db.SaveChangesAsync();
+            await PublishEstimateEventAsync("EstimateWorkspace", "CaptureProjectTaskPictures", "Completed", $"{saved} photograph(s) stored for Project Task {task.SortOrder}.");
+        }
+        message = saved == 0 ? "No supported image files were selected." : $"{saved} photograph(s) added to Project Task {task.SortOrder}.";
+        await ReloadAsync();
+    }
+
+    private async Task AddAuditEventAsync(ApplicationDbContext db, QuoteCase currentQuote, string explanation)
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        db.QuoteAuditEvents.Add(new QuoteAuditEvent
+        {
+            QuoteCaseId = currentQuote.Id,
+            PreviousStatus = currentQuote.Status,
+            NewStatus = currentQuote.Status,
+            UserId = user.FindFirstValue(ClaimTypes.NameIdentifier),
+            Explanation = explanation
+        });
+        var trackedQuote = await db.QuoteCases.FindAsync(currentQuote.Id);
+        if (trackedQuote is not null) trackedQuote.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private async Task TransitionAsync(string status, string explanation)
+    {
+        if (quote is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteCases.FindAsync(quote.Id);
+        if (tracked is null) return;
+        var previous = tracked.Status;
+        tracked.Status = status;
+        tracked.UpdatedAt = DateTimeOffset.UtcNow;
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        db.QuoteAuditEvents.Add(new QuoteAuditEvent
+        {
+            QuoteCaseId = tracked.Id,
+            PreviousStatus = previous,
+            NewStatus = status,
+            UserId = user.FindFirstValue(ClaimTypes.NameIdentifier),
+            Explanation = explanation
+        });
+        await db.SaveChangesAsync();
+        await PublishEstimateEventAsync("EstimateWorkflow", "Transition", "Completed", $"Estimate transitioned from {previous} to {status}: {explanation}");
+        await ReloadAsync();
+    }
+
+    private async Task SubmitForReviewAsync()
+    {
+        if (quote is null) return;
+        var incomplete = quote.ProjectTasks
+            .Where(task =>
+                string.IsNullOrWhiteSpace(task.ScopeOfWork) ||
+                ProjectPhotoGuidance.For(task.TaskType).Any(requirement =>
+                    task.Photos.All(photo => photo.RequirementKey != requirement.Key)))
+            .ToList();
+        if (quote.ProjectTasks.Count == 0)
+        {
+            message = "Add at least one project task before submitting the estimate.";
+            return;
+        }
+        if (incomplete.Count > 0)
+        {
+            message = $"Complete the scope of work and every required photograph for Project Task(s): {string.Join(", ", incomplete.Select(x => x.SortOrder))}.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var existingQueuedTaskIds = await db.QuoteProcessingJobs
+            .Where(x => x.QuoteCaseId == quote.Id && x.JobType == "CentCom Task Analysis" && x.QuoteProjectTaskId != null)
+            .Select(x => x.QuoteProjectTaskId!.Value)
+            .ToListAsync();
+        foreach (var task in quote.ProjectTasks.Where(x => !existingQueuedTaskIds.Contains(x.Id)))
+        {
+            db.QuoteProcessingJobs.Add(new QuoteProcessingJob
+            {
+                QuoteCaseId = quote.Id,
+                QuoteProjectTaskId = task.Id,
+                JobType = "CentCom Task Analysis",
+                Status = "Queued",
+                Message = $"Project Task {task.SortOrder} ({task.TaskType}) queued with scope and {task.Photos.Count} photograph(s)."
+            });
+        }
+        await db.SaveChangesAsync();
+        await TransitionAsync(QuoteStatuses.ReadyForAnalysis, "All project tasks submitted to the CentCom analysis queue.");
+        message = $"{quote.ProjectTasks.Count} project task(s) queued for CentCom analysis.";
+    }
+    private Task RejectAsync() => TransitionAsync(QuoteStatuses.Rejected, "Estimate rejected by operator.");
+
+    private async Task ApproveAsync()
+    {
+        if (quote is null || version is null || version.Lines.Count == 0) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteVersions.FindAsync(version.Id);
+        if (tracked is null || tracked.Status != "Draft") return;
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        tracked.Status = "Approved";
+        tracked.ApprovedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        tracked.ApprovedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await TransitionAsync(QuoteStatuses.Approved, "Estimate version approved. External update and customer email remain disabled.");
+    }
+
+    private async Task CreateRevisionAsync()
+    {
+        if (quote is null || version is null || version.Status != "Approved") return;
+        var next = new QuoteVersion
+        {
+            QuoteCaseId = quote.Id,
+            VersionNumber = version.VersionNumber + 1,
+            TaxRate = version.TaxRate,
+            DiscountAmount = version.DiscountAmount,
+            CustomerNotes = version.CustomerNotes
+        };
+        foreach (var line in version.Lines)
+        {
+            next.Lines.Add(new QuoteLine
+            {
+                SortOrder = line.SortOrder,
+                Description = line.Description,
+                Quantity = line.Quantity,
+                Unit = line.Unit,
+                MaterialUnitCost = line.MaterialUnitCost,
+                LaborHours = line.LaborHours,
+                LaborRate = line.LaborRate,
+                EquipmentCost = line.EquipmentCost,
+                WastePercent = line.WastePercent,
+                MarkupPercent = line.MarkupPercent,
+                CustomerPrice = line.CustomerPrice,
+                Source = "Revision"
+            });
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Add(next);
+        await db.SaveChangesAsync();
+        await TransitionAsync(QuoteStatuses.RevisionRequested, "A new editable estimate version was created.");
+    }
+
+    private Task PublishEstimateEventAsync(string module, string step, string status, string eventMessage) =>
+        quote is null
+            ? Task.CompletedTask
+            : OperationalEvents.PublishAsync(new OperationalEventRequest(
+                "CharlieCompany.Web",
+                module,
+                step,
+                status,
+                eventMessage,
+                CorrelationId: $"quote-{quote.Id:D6}",
+                LocalOperationId: quote.LocalOperationId,
+                QuoteCaseId: quote.Id,
+                JobNumber: quote.HousecallProJobId));
+
+    private static string FormatFileSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:N1} MB" : $"{bytes / 1024d:N0} KB";
 }

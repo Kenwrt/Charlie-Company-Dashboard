@@ -25,7 +25,7 @@ else{
             <p class="dashboard-subtitle">@DetailSubtitle()</p>
         </div>
         @if(localEstimate is not null){<div class="dashboard-status"><span>@EffectiveStatus(localEstimate)</span><small>Estimate status</small></div>}
-        else if(localJob is not null){<div class="dashboard-status"><span>@(localJob.WorkStatus ?? "Not provided")</span><small>Job status</small></div>}
+        else if(localJob is not null){<div class="dashboard-status"><span>@EffectiveStatus(localJob)</span><small>Job status</small></div>}
     </div>
     <p><a href="@($"hcp/{(Kind.Equals("jobs",StringComparison.OrdinalIgnoreCase)?"jobs":"estimates")}")">Back to list</a></p>
     @if(detailMessage is not null){<div class="alert alert-info">@detailMessage</div>}
@@ -87,7 +87,7 @@ else{
             <h2>Job details</h2>
             <dl class="finance-definition-list">
                 <div><dt>Job number</dt><dd>@(localJob.JobNumber ?? localJob.ExternalId)</dd></div>
-                <div><dt>Status</dt><dd>@(localJob.WorkStatus ?? "Not provided")</dd></div>
+                <div><dt>Status</dt><dd>@EffectiveStatus(localJob)</dd></div>
                 <div><dt>Scheduled start</dt><dd>@FormatDateTime(localJob.ScheduledStart)</dd></div>
                 <div><dt>Scheduled end</dt><dd>@FormatDateTime(localJob.ScheduledEnd)</dd></div>
                 <div><dt>Total job price</dt><dd>@localJob.JobPrice.ToString("C")</dd></div>
@@ -120,6 +120,28 @@ else{
                 }
                 @if(paymentHistory?.Transactions.Count is null or 0){<div class="empty-state">No payments or refunds have been recorded for this job.</div>}
             </div>
+        </section>
+
+        <section class="activity-panel mb-4">
+            <h2>Follow Up Status</h2>
+            @if(localJob.FollowUps.Count>0)
+            {
+                <div class="activity-list mb-3">
+                    @foreach(var followUp in localJob.FollowUps.OrderByDescending(x=>x.EnteredAt))
+                    {
+                        <div class="activity-item"><div><strong>@followUp.Status</strong><span>@followUp.Notes</span><small>Entered by @followUp.EnteredByName</small></div><time>@followUp.EnteredAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</time></div>
+                    }
+                </div>
+            }
+            <dl class="finance-definition-list">
+                <div><dt>Last Changed in CCV</dt><dd>@FormatStatusUpdate(localJob)</dd></div>
+            </dl>
+            <div class="row g-2 mt-2">
+                <div class="col-md-3"><label class="form-label">Follow Up Status</label><InputSelect class="form-select" @bind-Value="statusInput.Status">@foreach(var item in FollowUpChoices){<option value="@item">@item</option>}</InputSelect></div>
+                <div class="col-md-6"><label class="form-label">Follow Up Note</label><InputTextArea class="form-control" @bind-Value="statusInput.Note" /></div>
+                <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary" @onclick="SaveStatusAsync">Add Follow Up</button></div>
+            </div>
+            @if(statusMessage is not null){<div class="alert alert-info mt-3">@statusMessage</div>}
         </section>
     }
     else
@@ -197,7 +219,11 @@ else{
     private async Task ReloadLocalJobAsync()
     {
         await using var db=await DbContextFactory.CreateDbContextAsync();
-        localJob=await db.HousecallProJobs.AsNoTracking().Include(x=>x.LocalOperation).SingleOrDefaultAsync(x=>x.ExternalId==ExternalId&&x.LocalOperation.Slug==OperationSlug);
+        localJob=await db.HousecallProJobs.AsNoTracking().Include(x=>x.FollowUps).Include(x=>x.LocalOperation).SingleOrDefaultAsync(x=>x.ExternalId==ExternalId&&x.LocalOperation.Slug==OperationSlug);
+        if(localJob is not null)
+        {
+            statusInput=new(){Status=localJob.InternalStatus is not null&&FollowUpChoices.Contains(localJob.InternalStatus)?localJob.InternalStatus:HousecallProEstimateStatuses.FollowUp};
+        }
     }
 
     private HcpRecordDetail? BuildCachedDetail(string detailKind)
@@ -221,11 +247,11 @@ else{
             {
                 new("ID",localJob.ExternalId),
                 new("Customer",localJob.CustomerName??"Not provided"),
-                new("Status",localJob.WorkStatus??"Not provided"),
+                new("Status",EffectiveStatus(localJob)),
                 new("Amount",localJob.TotalAmount.ToString("C")),
                 new("Updated",FormatDateTime(localJob.SourceUpdatedAt))
             };
-            var json=JsonSerializer.Serialize(new{source="CCV synchronized cache",localJob.ExternalId,localJob.JobNumber,localJob.CustomerName,localJob.WorkStatus,localJob.JobPrice,localJob.TotalAmount,localJob.OutstandingBalance,localJob.SourceUpdatedAt},new JsonSerializerOptions{WriteIndented=true});
+            var json=JsonSerializer.Serialize(new{source="CCV synchronized cache",localJob.ExternalId,localJob.JobNumber,localJob.CustomerName,Status=EffectiveStatus(localJob),localJob.WorkStatus,localJob.JobPrice,localJob.TotalAmount,localJob.OutstandingBalance,localJob.SourceUpdatedAt},new JsonSerializerOptions{WriteIndented=true});
             return new("job",localJob.ExternalId,fields,[],json);
         }
         return null;
@@ -233,26 +259,41 @@ else{
 
     private async Task SaveStatusAsync()
     {
-        if(localEstimate is null||!FollowUpChoices.Contains(statusInput.Status)||string.IsNullOrWhiteSpace(statusInput.Note)){statusMessage="Choose a follow up status and enter a follow up note.";return;}
+        if((localEstimate is null&&localJob is null)||!FollowUpChoices.Contains(statusInput.Status)||string.IsNullOrWhiteSpace(statusInput.Note)){statusMessage="Choose a follow up status and enter a follow up note.";return;}
         var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         await using var db=await DbContextFactory.CreateDbContextAsync();
-        var estimate=await db.HousecallProEstimates.FindAsync(localEstimate.Id);
-        if(estimate is null)return;
-        estimate.InternalStatus=statusInput.Status;
-        estimate.InternalStatusNote=statusInput.Note.Trim();
-        estimate.InternalStatusUpdatedBy=UserName(user);
-        estimate.InternalStatusUpdatedAt=DateTimeOffset.UtcNow;
-        db.HousecallProEstimateFollowUps.Add(new(){HousecallProEstimateId=estimate.Id,Status=statusInput.Status,Notes=statusInput.Note.Trim(),EnteredByUserId=user.FindFirstValue(ClaimTypes.NameIdentifier),EnteredByName=UserName(user)});
+        if(localEstimate is not null)
+        {
+            var estimate=await db.HousecallProEstimates.FindAsync(localEstimate.Id);
+            if(estimate is null)return;
+            estimate.InternalStatus=statusInput.Status;
+            estimate.InternalStatusNote=statusInput.Note.Trim();
+            estimate.InternalStatusUpdatedBy=UserName(user);
+            estimate.InternalStatusUpdatedAt=DateTimeOffset.UtcNow;
+            db.HousecallProEstimateFollowUps.Add(new(){HousecallProEstimateId=estimate.Id,Status=statusInput.Status,Notes=statusInput.Note.Trim(),EnteredByUserId=user.FindFirstValue(ClaimTypes.NameIdentifier),EnteredByName=UserName(user)});
+        }
+        else
+        {
+            var job=await db.HousecallProJobs.FindAsync(localJob!.Id);
+            if(job is null)return;
+            job.InternalStatus=statusInput.Status;
+            job.InternalStatusNote=statusInput.Note.Trim();
+            job.InternalStatusUpdatedBy=UserName(user);
+            job.InternalStatusUpdatedAt=DateTimeOffset.UtcNow;
+            db.HousecallProJobFollowUps.Add(new(){HousecallProJobId=job.Id,Status=statusInput.Status,Notes=statusInput.Note.Trim(),EnteredByUserId=user.FindFirstValue(ClaimTypes.NameIdentifier),EnteredByName=UserName(user)});
+        }
         await db.SaveChangesAsync();
-        statusMessage=statusInput.Status==HousecallProEstimateStatuses.FollowUpComplete?"Status saved. This estimate is now hidden from the active HCP Estimates list.":"Status saved in CCV. No change was sent to Housecall Pro.";
+        statusMessage=statusInput.Status==HousecallProEstimateStatuses.FollowUpComplete?$"Status saved. This {(localEstimate is not null?"estimate":"job")} is now hidden from the active HCP {(localEstimate is not null?"Estimates":"Jobs")} list.":"Status saved in CCV. No change was sent to Housecall Pro.";
         statusInput=new(){Status=statusInput.Status};
-        await ReloadLocalEstimateAsync();
+        if(localEstimate is not null)await ReloadLocalEstimateAsync();else await ReloadLocalJobAsync();
     }
 
     private static string UserName(ClaimsPrincipal user)=>user.Identity?.Name??user.FindFirstValue(ClaimTypes.Email)??"Unknown user";
     private static string EffectiveStatus(HousecallProEstimate estimate)=>estimate.InternalStatus??estimate.ApprovalStatus??"Not provided";
+    private static string EffectiveStatus(HousecallProJob job)=>job.InternalStatus??job.WorkStatus??"Not provided";
     private static string? Clean(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim();
     private static string FormatStatusUpdate(HousecallProEstimate estimate)=>estimate.InternalStatusUpdatedAt is null?"No Follow Up as of yet.":$"{estimate.InternalStatusUpdatedBy} · {estimate.InternalStatusUpdatedAt.Value.ToLocalTime():MM/dd/yyyy h:mm tt}";
+    private static string FormatStatusUpdate(HousecallProJob job)=>job.InternalStatusUpdatedAt is null?"No Follow Up as of yet.":$"{job.InternalStatusUpdatedBy} · {job.InternalStatusUpdatedAt.Value.ToLocalTime():MM/dd/yyyy h:mm tt}";
     private string DetailSubtitle()=>localEstimate is not null?$"HCP estimate {localEstimate.EstimateNumber??localEstimate.ExternalId} · Live technical detail cached for five minutes.":localJob is not null?$"HCP job {localJob.JobNumber??localJob.ExternalId} · Live technical detail cached for five minutes.":$"Housecall Pro {detail?.Kind} {ExternalId}";
     private static string FormatDateTime(DateTimeOffset? value)=>value?.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")??"Not provided";
     private static string FormatPhone(string? value){if(string.IsNullOrWhiteSpace(value))return "Not provided";var digits=new string(value.Where(char.IsDigit).ToArray());if(digits.Length==11&&digits[0]=='1')digits=digits[1..];return digits.Length==10?$"({digits[..3]}) {digits.Substring(3,3)}-{digits[6..]}":value;}

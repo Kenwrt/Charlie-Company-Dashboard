@@ -8,7 +8,7 @@
 @using CharleyCompany.Dashboard.Web.Data
 @using Microsoft.EntityFrameworkCore
 @inject IDashboardDataSource DashboardDataSource
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject DashboardNotificationService Notifications
 @inject OperationAccessService OperationAccess
 @inject ILogger<Home> Logger
@@ -46,13 +46,58 @@
     <div class="metric-grid">
         @foreach (var metric in BuildMetrics(currentSnapshot))
         {
-            <article class="metric-card @metric.AccentClass">
-                <span>@metric.Label</span>
-                <strong>@metric.Value</strong>
-                <small>@metric.Detail</small>
-            </article>
+            @if (metric.Href is not null)
+            {
+                <NavLink class="@($"metric-card metric-card-link {metric.AccentClass}")" href="@metric.Href">
+                    <span>@metric.Label</span>
+                    <strong>@metric.Value</strong>
+                    <small>@metric.Detail</small>
+                </NavLink>
+            }
+            else
+            {
+                <article class="metric-card @metric.AccentClass">
+                    <span>@metric.Label</span>
+                    <strong>@metric.Value</strong>
+                    <small>@metric.Detail</small>
+                </article>
+            }
         }
     </div>
+
+    <section class="activity-panel">
+        <div>
+            <h2>Accounts Receivable</h2>
+            <p>@(IsEntityView ? $"Uncollected Housecall Pro job balances for {currentSnapshot.EntityName}." : "Uncollected Housecall Pro job balances across the active local operations.")</p>
+        </div>
+
+        <div class="metric-grid finance-metric-grid">
+            <NavLink class="metric-card metric-card-link accent-revenue" href="@ExpectedReceivablesHref">
+                <span>Expected Receivables</span>
+                <strong>@receivablesSummary.ExpectedBalance.ToString("C0")</strong>
+                <small>@receivablesSummary.ExpectedJobCount.ToString("N0") jobs with an uncollected balance</small>
+            </NavLink>
+            <NavLink class="metric-card metric-card-link accent-expired" href="@OverThirtyReceivablesHref">
+                <span>Receivables older than 30 days</span>
+                <strong>@receivablesSummary.OverThirtyBalance.ToString("C0")</strong>
+                <small>@receivablesSummary.OverThirtyJobCount.ToString("N0") jobs older than 30 days</small>
+            </NavLink>
+        </div>
+
+        <h3 class="h5 mt-4">Receivables aging report</h3>
+        <p class="small text-muted">Aging uses the job’s scheduled end date, or scheduled start date when no end date is available.</p>
+        <div class="finance-table-wrap">
+            <table class="finance-table">
+                <thead><tr><th>Aging period</th><th>Jobs</th><th>Uncollected balance</th></tr></thead>
+                <tbody>
+                    @foreach (var bucket in receivablesSummary.AgingBuckets)
+                    {
+                        <tr><td>@bucket.Label</td><td>@bucket.JobCount.ToString("N0")</td><td>@bucket.Balance.ToString("C0")</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
 
     <section class="activity-panel">
         <div>
@@ -135,15 +180,7 @@
                                 <dd>@entity.OutstandingEstimates.ToString("N0")</dd>
                             </div>
                             <div>
-                                <dt>Expired estimates</dt>
-                                <dd>@entity.ExpiredEstimates.ToString("N0")</dd>
-                            </div>
-                            <div>
-                                <dt>Expenses</dt>
-                                <dd>@entity.MonthlyExpenses.ToString("C0")</dd>
-                            </div>
-                            <div>
-                                <dt>Revenue</dt>
+                                <dt>Scheduled job charges</dt>
                                 <dd>@entity.MonthlyRevenue.ToString("C0")</dd>
                             </div>
                         </dl>
@@ -196,9 +233,15 @@
     private DashboardSnapshot currentSnapshot = DashboardSnapshot.Empty;
     private string? errorMessage;
     private ApDashboardSummary apSummary = ApDashboardSummary.Empty;
+    private ReceivablesSummary receivablesSummary = ReceivablesSummary.Empty;
     private bool isAdministrator;
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
+    private string DashboardOperationSlug => IsEntityView
+        ? currentSnapshot.EntitySlug
+        : ventureSnapshot.LocalEntities.FirstOrDefault()?.EntitySlug ?? "nashville";
+    private string ExpectedReceivablesHref => $"hcp/jobs?operation={DashboardOperationSlug}&receivables=expected&allDates=true";
+    private string OverThirtyReceivablesHref => $"hcp/jobs?operation={DashboardOperationSlug}&receivables=over30&allDates=true";
 
     private string Subtitle => IsEntityView
         ? "Local view of jobs, estimates, monthly expenses, and revenue."
@@ -256,6 +299,7 @@
                 }
 
                 currentSnapshot = entitySnapshot;
+                await LoadReceivablesAsync(EntitySlug);
                 await LoadAccountsPayableAsync(EntitySlug);
                 return;
             }
@@ -265,6 +309,7 @@
             var allowedEntities = ventureSnapshot.LocalEntities.Where(entity => allowedSlugs.Contains(entity.EntitySlug)).ToList();
             ventureSnapshot = ventureSnapshot with { LocalEntities = allowedEntities, Rollup = BuildRollup(allowedEntities, ventureSnapshot.Rollup) };
             currentSnapshot = ventureSnapshot.Rollup;
+            await LoadReceivablesAsync();
             await LoadAccountsPayableAsync();
         }
         catch (Exception ex)
@@ -289,7 +334,8 @@
             return;
         }
 
-        var invoices = await DbContext.PayableInvoices.AsNoTracking()
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var invoices = await db.PayableInvoices.AsNoTracking()
             .Where(invoice => operationIds.Contains(invoice.LocalOperationId))
             .Where(invoice => invoice.OriginalAmount > invoice.AmountPaid)
             .OrderBy(invoice => invoice.DueDate)
@@ -316,20 +362,105 @@
             invoices.Take(10).ToList());
     }
 
+    private async Task LoadReceivablesAsync(string? operationSlug = null)
+    {
+        var operationIds = (await OperationAccess.GetAccessibleOperationsAsync())
+            .Where(operation => operationSlug is null || operation.Slug.Equals(operationSlug, StringComparison.OrdinalIgnoreCase))
+            .Select(operation => operation.Id)
+            .ToList();
+        if (operationIds.Count == 0)
+        {
+            receivablesSummary = ReceivablesSummary.Empty;
+            return;
+        }
+
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var receivables = await db.HousecallProJobs.AsNoTracking()
+            .Where(job => operationIds.Contains(job.LocalOperationId))
+            .Where(job =>
+                job.WorkStatus != "user canceled" &&
+                job.WorkStatus != "pro canceled" &&
+                job.WorkStatus != "pro-canceled" &&
+                job.OutstandingBalance > 0)
+            .Select(job => new
+            {
+                job.OutstandingBalance,
+                AgeDate = job.ScheduledEnd ?? job.ScheduledStart
+            })
+            .ToListAsync();
+
+        var today = DateTimeOffset.Now.Date;
+        var rows = receivables
+            .Select(item => new ReceivableRow(
+                item.OutstandingBalance,
+                item.AgeDate is null ? (int?)null : (today - item.AgeDate.Value.ToLocalTime().Date).Days))
+            .ToList();
+
+        var agingBuckets = new[]
+        {
+            BuildAgingBucket("Current to 30 days", rows.Where(row => row.AgeInDays is null or <= 30)),
+            BuildAgingBucket("31–60 days", rows.Where(row => row.AgeInDays is >= 31 and <= 60)),
+            BuildAgingBucket("61–90 days", rows.Where(row => row.AgeInDays is >= 61 and <= 90)),
+            BuildAgingBucket("91+ days", rows.Where(row => row.AgeInDays is >= 91))
+        };
+        var overThirty = rows.Where(row => row.AgeInDays is >= 31).ToList();
+        receivablesSummary = new(
+            rows.Count,
+            rows.Sum(row => row.Balance),
+            overThirty.Count,
+            overThirty.Sum(row => row.Balance),
+            agingBuckets);
+    }
+
+    private static ReceivablesAgingBucket BuildAgingBucket(string label, IEnumerable<ReceivableRow> rows)
+    {
+        var items = rows.ToList();
+        return new(label, items.Count, items.Sum(item => item.Balance));
+    }
+
     private sealed record ApDashboardInvoice(string Vendor, string Operation, string InvoiceNumber, string JobNumber, DateOnly DueDate, string Status, decimal OpenBalance, decimal AmountPaid);
     private sealed record ApDashboardSummary(int OpenInvoiceCount, decimal OpenBalance, int PastDueInvoiceCount, decimal PastDueBalance, decimal DueSoonBalance, decimal AmountPaid, IReadOnlyList<ApDashboardInvoice> Invoices)
     {
         public static ApDashboardSummary Empty { get; } = new(0, 0, 0, 0, 0, 0, []);
     }
+    private sealed record ReceivableRow(decimal Balance, int? AgeInDays);
+    private sealed record ReceivablesAgingBucket(string Label, int JobCount, decimal Balance);
+    private sealed record ReceivablesSummary(int ExpectedJobCount, decimal ExpectedBalance, int OverThirtyJobCount, decimal OverThirtyBalance, IReadOnlyList<ReceivablesAgingBucket> AgingBuckets)
+    {
+        public static ReceivablesSummary Empty { get; } = new(0, 0, 0, 0, []);
+    }
 
-    private static IReadOnlyList<DashboardMetric> BuildMetrics(DashboardSnapshot snapshot) =>
-    [
-        new("Jobs in progress", snapshot.CurrentJobsInProgress.ToString("N0"), "Active work currently underway", "accent-jobs"),
-        new("Outstanding estimates", snapshot.OutstandingEstimates.ToString("N0"), "Estimates waiting for customer decision", "accent-quotes"),
-        new("Expired estimates", snapshot.ExpiredEstimates.ToString("N0"), "Estimates past their expiration date", "accent-expired"),
-        new("Expenses this month", snapshot.MonthlyExpenses.ToString("C0"), "Posted expenses for the current month", "accent-expenses"),
-        new("Revenue this month", snapshot.MonthlyRevenue.ToString("C0"), "Revenue recognized for the current month", "accent-revenue")
-    ];
+    private IReadOnlyList<DashboardMetric> BuildMetrics(DashboardSnapshot snapshot)
+    {
+        var year = DateTime.Today.Year;
+        var operationSlug = IsEntityView
+            ? snapshot.EntitySlug
+            : ventureSnapshot.LocalEntities.FirstOrDefault()?.EntitySlug ?? "nashville";
+        var from = $"{year}-01-01";
+        var through = $"{year}-12-31";
+
+        return
+        [
+            new(
+                "Jobs in progress",
+                snapshot.CurrentJobsInProgress.ToString("N0"),
+                $"Scheduled jobs in {year}",
+                "accent-jobs",
+                $"hcp/jobs?operation={operationSlug}&status=scheduled&from={from}&through={through}"),
+            new(
+                "Outstanding estimates",
+                snapshot.OutstandingEstimates.ToString("N0"),
+                $"Estimates awaiting a customer decision in {year}",
+                "accent-quotes",
+                $"hcp/estimates?operation={operationSlug}&status=Outstanding&from={from}&through={through}"),
+            new(
+                "Revenue this month",
+                snapshot.MonthlyRevenue.ToString("C0"),
+                "Outstanding charges for scheduled jobs",
+                "accent-revenue",
+                $"hcp/jobs?operation={operationSlug}&status=scheduled&from={from}&through={through}")
+        ];
+    }
 
     private static DashboardSnapshot BuildRollup(IReadOnlyList<DashboardSnapshot> entities, DashboardSnapshot template) => template with
     {

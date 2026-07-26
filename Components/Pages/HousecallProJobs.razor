@@ -5,6 +5,7 @@
 @using CharleyCompany.Dashboard.Web.Options
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 @inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject OperationAccessService OperationAccess
 @inject HousecallProDataService HousecallPro
@@ -16,6 +17,9 @@
             <p class="eyebrow">Housecall Pro</p>
             <h1>Jobs</h1>
             <p class="dashboard-subtitle">Imported job summaries for your assigned local operations.</p>
+        </div>
+        <div class="dashboard-header-action">
+            <input class="form-control" value="@search" @oninput="OnSearchInputAsync" placeholder="Search" aria-label="Search jobs" />
         </div>
     </div>
 
@@ -34,32 +38,42 @@
                 @foreach (var item in statuses) { <option value="@item">@item</option> }
             </InputSelect>
         </div>
-        <div class="col-md-4">
-            <label class="form-label">Search</label>
-            <input class="form-control" value="@search" @oninput="OnSearchInput" placeholder="Job, customer, contact, or address" />
+        <div class="col-md-2">
+            <label class="form-label">From date</label>
+            <InputDate class="form-control" @bind-Value="fromDate" />
         </div>
-        <div class="col-md-3 d-flex align-items-end">
-            <button class="btn btn-outline-primary me-2" @onclick="ReloadAsync">Search</button>
+        <div class="col-md-2">
+            <label class="form-label">Through date</label>
+            <InputDate class="form-control" @bind-Value="throughDate" />
+        </div>
+        <div class="col-md-3 d-flex align-items-end justify-content-end">
             <button class="btn btn-primary" @onclick="SyncAsync" disabled="@syncing">@(syncing ? "Syncing…" : "Sync now")</button>
         </div>
     </div>
+
+    @if (ReceivablesFilter == "expected")
+    {
+        <div class="alert alert-info">Showing all jobs with an uncollected balance.</div>
+    }
+    else if (ReceivablesFilter == "over30")
+    {
+        <div class="alert alert-info">Showing jobs with an uncollected balance that are older than 30 days.</div>
+    }
 
     @if (message is not null) { <div class="alert alert-info">@message</div> }
     <p class="text-muted">Showing @jobs.Count of @totalCount synchronized jobs.</p>
     <div class="table-responsive">
         <table class="table">
-            <thead><tr><th>Job</th><th>Operation</th><th>Customer</th><th>Created by</th><th>Contact</th><th>Home address</th><th>Status</th><th>Date</th><th>Total job price</th><th>Amount invoiced</th><th>Uncollected</th><th></th></tr></thead>
+            <thead><tr><th>Job</th><th>Operation</th><th>Customer</th><th>Home address</th><th>Status</th><th>Date</th><th>Total job price</th><th>Amount invoiced</th><th>Uncollected</th><th></th></tr></thead>
             <tbody>
             @foreach (var job in jobs)
             {
                 <tr>
                     <td>@(job.JobNumber ?? job.ExternalId)</td>
-                    <td>@job.LocalOperation.Name</td>
-                    <td>@job.CustomerName</td>
-                    <td>@(job.CreatedByName ?? "Not provided by HCP")</td>
-                    <td>@job.CustomerEmail<br /><small>@FormatPhone(job.CustomerPhone)</small></td>
+                    <td>@FormatOperationName(job.LocalOperation.Name)</td>
+                    <td>@job.CustomerName<small class="d-block text-muted">@job.CustomerEmail<br />@FormatPhone(job.CustomerPhone)</small></td>
                     <td>@job.Address</td>
-                    <td>@(job.WorkStatus ?? "Not provided")</td>
+                    <td>@EffectiveStatus(job)</td>
                     <td>@(job.ScheduledStart?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not provided")</td>
                     <td>@job.JobPrice.ToString("C")</td>
                     <td>@job.TotalAmount.ToString("C")</td>
@@ -68,25 +82,60 @@
                 </tr>
             }
             </tbody>
+            <tfoot>
+                <tr class="table-light fw-bold">
+                    <td colspan="6">Filtered totals (@totalCount @(totalCount == 1 ? "job" : "jobs"))</td>
+                    <td>@totalJobPrice.ToString("C")</td>
+                    <td>@totalAmountInvoiced.ToString("C")</td>
+                    <td>@totalUncollected.ToString("C")</td>
+                    <td></td>
+                </tr>
+            </tfoot>
         </table>
     </div>
     @if (jobs.Count == 0) { <div class="empty-state">No synchronized Housecall Pro jobs match the selected filters.</div> }
 </section>
 
 @code {
+    [SupplyParameterFromQuery(Name = "operation")] public string? OperationFilter { get; set; }
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusFilter { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public DateTime? FromFilter { get; set; }
+    [SupplyParameterFromQuery(Name = "through")] public DateTime? ThroughFilter { get; set; }
+    [SupplyParameterFromQuery(Name = "receivables")] public string? ReceivablesFilter { get; set; }
+    [SupplyParameterFromQuery(Name = "allDates")] public bool AllDates { get; set; }
+
     private List<LocalOperation> operations = [];
     private List<HousecallProJob> jobs = [];
     private List<string> statuses = [];
     private int operationId;
     private string status = "";
     private string search = "";
+    private DateTime? fromDate = new(DateTime.Today.Year, 1, 1);
+    private DateTime? throughDate = new(DateTime.Today.Year, 12, 31);
     private bool syncing;
     private string? message;
     private int totalCount;
+    private decimal totalJobPrice;
+    private decimal totalAmountInvoiced;
+    private decimal totalUncollected;
+    private CancellationTokenSource? searchDebounce;
 
     protected override async Task OnInitializedAsync()
     {
         operations = (await OperationAccess.GetAccessibleOperationsAsync()).ToList();
+        operationId = operations.FirstOrDefault(operation =>
+            operation.Slug.Equals(OperationFilter, StringComparison.OrdinalIgnoreCase))?.Id ?? 0;
+        if (!string.IsNullOrWhiteSpace(StatusFilter)) status = StatusFilter;
+        if (AllDates)
+        {
+            fromDate = null;
+            throughDate = null;
+        }
+        else
+        {
+            if (FromFilter is not null) fromDate = FromFilter.Value.Date;
+            if (ThroughFilter is not null) throughDate = ThroughFilter.Value.Date;
+        }
         await LoadStatusesAsync();
         await ReloadAsync();
     }
@@ -95,12 +144,16 @@
     {
         var allowed = operations.Select(x => x.Id).ToList();
         await using var db = await DbContextFactory.CreateDbContextAsync();
-        statuses = await db.HousecallProJobs.AsNoTracking()
+        var sourceStatuses = await db.HousecallProJobs.AsNoTracking()
             .Where(x => allowed.Contains(x.LocalOperationId) && x.WorkStatus != null)
             .Select(x => x.WorkStatus!)
             .Distinct()
-            .OrderBy(x => x)
             .ToListAsync();
+        statuses = sourceStatuses
+            .Concat(HousecallProEstimateStatuses.All.Where(x => x != HousecallProEstimateStatuses.New))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x)
+            .ToList();
     }
 
     private async Task ReloadAsync()
@@ -108,10 +161,38 @@
         var allowed = operations.Select(x => x.Id).ToList();
         await using var db = await DbContextFactory.CreateDbContextAsync();
         var query = db.HousecallProJobs.AsNoTracking().Include(x => x.LocalOperation)
-            .Where(x => allowed.Contains(x.LocalOperationId));
+            .Where(x => allowed.Contains(x.LocalOperationId) && x.InternalStatus != HousecallProEstimateStatuses.FollowUpComplete);
 
         if (operationId != 0) query = query.Where(x => x.LocalOperationId == operationId);
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.WorkStatus == status);
+        var explicitlySelectedCanceledStatus =
+            status.Equals("user canceled", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("pro canceled", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("pro-canceled", StringComparison.OrdinalIgnoreCase);
+        if (!explicitlySelectedCanceledStatus)
+            query = query.Where(x =>
+                x.WorkStatus != "user canceled" &&
+                x.WorkStatus != "pro canceled" &&
+                x.WorkStatus != "pro-canceled");
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.InternalStatus == status || (x.InternalStatus == null && x.WorkStatus == status));
+        if (ReceivablesFilter is "expected" or "over30")
+        {
+            query = query.Where(x => x.OutstandingBalance > 0);
+        }
+        if (ReceivablesFilter == "over30")
+        {
+            var cutoff = ToUtcBoundary(DateTime.Today.AddDays(-30));
+            query = query.Where(x => (x.ScheduledEnd ?? x.ScheduledStart) < cutoff);
+        }
+        if (fromDate is not null)
+        {
+            var from = ToUtcBoundary(fromDate.Value);
+            query = query.Where(x => x.ScheduledStart >= from);
+        }
+        if (throughDate is not null)
+        {
+            var throughExclusive = ToUtcBoundary(throughDate.Value.AddDays(1));
+            query = query.Where(x => x.ScheduledStart < throughExclusive);
+        }
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = $"%{search.Trim()}%";
@@ -126,6 +207,17 @@
         }
 
         totalCount = await query.CountAsync();
+        var totals = await query.GroupBy(_ => 1)
+            .Select(group => new
+            {
+                JobPrice = group.Sum(x => x.JobPrice),
+                AmountInvoiced = group.Sum(x => x.TotalAmount),
+                Uncollected = group.Sum(x => x.OutstandingBalance)
+            })
+            .SingleOrDefaultAsync();
+        totalJobPrice = totals?.JobPrice ?? 0;
+        totalAmountInvoiced = totals?.AmountInvoiced ?? 0;
+        totalUncollected = totals?.Uncollected ?? 0;
         query = query.OrderBy(x => x.ScheduledStart == null)
             .ThenByDescending(x => x.ScheduledStart)
             .ThenByDescending(x => x.Id);
@@ -159,7 +251,35 @@
         return digits.Length == 10 ? $"({digits[..3]}) {digits.Substring(3, 3)}-{digits[6..]}" : value;
     }
 
-    private void OnSearchInput(ChangeEventArgs args) => search = args.Value?.ToString() ?? "";
+    private static string FormatOperationName(string value) =>
+        value.Replace("Charlie Company", "C.C.", StringComparison.OrdinalIgnoreCase);
+
+    private async Task OnSearchInputAsync(ChangeEventArgs args)
+    {
+        search = args.Value?.ToString() ?? "";
+        searchDebounce?.Cancel();
+        searchDebounce?.Dispose();
+        searchDebounce = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(250, searchDebounce.Token);
+            await ReloadAsync();
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public void Dispose()
+    {
+        searchDebounce?.Cancel();
+        searchDebounce?.Dispose();
+    }
+
+    private static DateTimeOffset ToUtcBoundary(DateTime value)
+    {
+        var date = DateTime.SpecifyKind(value.Date, DateTimeKind.Unspecified);
+        return new DateTimeOffset(date, TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();
+    }
+    private static string EffectiveStatus(HousecallProJob job) => job.InternalStatus ?? job.WorkStatus ?? "Not provided";
 
     [Inject] private IConfiguration Configuration { get; set; } = null!;
 }

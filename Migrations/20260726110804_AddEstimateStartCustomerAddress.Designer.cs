@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260726110804_AddEstimateStartCustomerAddress")]
+    partial class AddEstimateStartCustomerAddress
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -126,68 +129,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("SupplyVendorId");
 
                     b.ToTable("CatalogSyncJobs");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatMessage", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CentComChatSessionId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasMaxLength(12000)
-                        .HasColumnType("character varying(12000)");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CentComChatSessionId", "CreatedAt");
-
-                    b.ToTable("CentComChatMessages");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatSession", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedByUserId", "UpdatedAt");
-
-                    b.ToTable("CentComChatSessions");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
@@ -1275,9 +1216,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<int>("QuoteCaseId")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("QuoteProjectTaskId")
-                        .HasColumnType("integer");
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -1287,96 +1225,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("QuoteCaseId");
 
-                    b.HasIndex("QuoteProjectTaskId");
-
                     b.ToTable("QuoteProcessingJobs");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTask", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("QuoteCaseId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ScopeOfWork")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TaskType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("QuoteCaseId", "SortOrder")
-                        .IsUnique();
-
-                    b.ToTable("QuoteProjectTasks");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTaskPhoto", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CapturedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ContentType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<long>("FileSize")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("OriginalFileName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<int>("QuoteProjectTaskId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("RequirementKey")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<string>("RequirementLabel")
-                        .IsRequired()
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)");
-
-                    b.Property<string>("StoragePath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("QuoteProjectTaskId", "CapturedAt");
-
-                    b.ToTable("QuoteProjectTaskPhotos");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteVersion", b =>
@@ -1764,28 +1613,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("SupplyVendor");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatMessage", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.CentComChatSession", "CentComChatSession")
-                        .WithMany("Messages")
-                        .HasForeignKey("CentComChatSessionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CentComChatSession");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatSession", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.ApplicationUser", "CreatedByUser")
-                        .WithMany()
-                        .HasForeignKey("CreatedByUserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CreatedByUser");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
                 {
                     b.HasOne("CharleyCompany.Dashboard.Web.Data.LocalOperation", "LocalOperation")
@@ -1997,36 +1824,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteProjectTask", "QuoteProjectTask")
-                        .WithMany()
-                        .HasForeignKey("QuoteProjectTaskId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
                     b.Navigation("QuoteCase");
-
-                    b.Navigation("QuoteProjectTask");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTask", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteCase", "QuoteCase")
-                        .WithMany("ProjectTasks")
-                        .HasForeignKey("QuoteCaseId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("QuoteCase");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTaskPhoto", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteProjectTask", "QuoteProjectTask")
-                        .WithMany("Photos")
-                        .HasForeignKey("QuoteProjectTaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("QuoteProjectTask");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteVersion", b =>
@@ -2196,11 +1994,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("LocalOperationMemberships");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatSession", b =>
-                {
-                    b.Navigation("Messages");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
                 {
                     b.Navigation("Communications");
@@ -2241,14 +2034,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.Navigation("ProcessingJobs");
 
-                    b.Navigation("ProjectTasks");
-
                     b.Navigation("Versions");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTask", b =>
-                {
-                    b.Navigation("Photos");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteVersion", b =>

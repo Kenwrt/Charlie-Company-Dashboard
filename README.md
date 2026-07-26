@@ -76,7 +76,7 @@ Remote services that use the included buffered forwarder also configure:
 Observability__ForwardingUrl=https://<ccv-host>/api/observability/events
 ```
 
-Every multi-service workflow should keep the same `correlationId` across Housecall Pro, CompanyCam, Ollama, pricing, approval, and delivery steps. The ingestion endpoint is rate limited, deduplicates `eventId`, redacts common secret patterns, and rejects unknown local-operation identifiers. CSV diagnostic export requires the Administrator role.
+Every multi-service workflow should keep the same `correlationId` across Housecall Pro, CompanyCam, CentCom, pricing, approval, and delivery steps. The ingestion endpoint is rate limited, deduplicates `eventId`, redacts common secret patterns, and rejects unknown local-operation identifiers. CSV diagnostic export requires the Administrator role.
 
 ```powershell
 dotnet run

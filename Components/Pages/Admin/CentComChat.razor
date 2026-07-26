@@ -1,0 +1,196 @@
+@page "/admin/centcom-chat"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrator")]
+@using System.ComponentModel.DataAnnotations
+@using System.Security.Claims
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject CentComChatClient CentCom
+
+<PageTitle>CentCom Chat</PageTitle>
+
+<section class="dashboard-shell">
+    <div class="dashboard-header">
+        <div>
+            <p class="eyebrow">Administrator workspace</p>
+            <h1>CentCom Chat</h1>
+            <p class="dashboard-subtitle">Persistent administrator conversations for testing prompts, task-type guidance, materials, quantities, and estimate analysis.</p>
+        </div>
+        <div class="dashboard-status">
+            <span>@(CentCom.IsConfigured ? "Connected" : "Configuration required")</span>
+            <small>Administrator access only</small>
+        </div>
+    </div>
+
+    @if (message is not null)
+    {
+        <div class="alert @(CentCom.IsConfigured ? "alert-info" : "alert-warning")">@message</div>
+    }
+
+    <div class="centcom-chat-layout">
+        <aside class="centcom-session-panel">
+            <button class="btn btn-primary w-100 mb-3" @onclick="CreateSessionAsync">New Chat</button>
+            @foreach (var session in sessions)
+            {
+                <button class="centcom-session-button @(session.Id == selectedSessionId ? "active" : null)"
+                        @onclick="() => SelectSessionAsync(session.Id)">
+                    <strong>@session.Title</strong>
+                    <small>@session.UpdatedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</small>
+                </button>
+            }
+        </aside>
+
+        <section class="centcom-conversation-panel">
+            @if (selectedSession is null)
+            {
+                <div class="centcom-empty-state">
+                    <h2>Start a CentCom conversation</h2>
+                    <p>Create a chat session to test project-task prompts and analysis behavior.</p>
+                </div>
+            }
+            else
+            {
+                <div class="centcom-conversation-header">
+                    <h2>@selectedSession.Title</h2>
+                </div>
+                <div class="centcom-message-list">
+                    @foreach (var chatMessage in selectedSession.Messages.OrderBy(x => x.CreatedAt))
+                    {
+                        <article class="centcom-message @chatMessage.Role">
+                            <strong>@(chatMessage.Role == "assistant" ? "CentCom" : "You")</strong>
+                            <p>@chatMessage.Content</p>
+                            <time>@chatMessage.CreatedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</time>
+                        </article>
+                    }
+                </div>
+                <EditForm Model="input" OnValidSubmit="SendAsync" FormName="centcom-chat-message" class="centcom-composer">
+                    <DataAnnotationsValidator />
+                    <InputTextArea class="form-control" rows="4" @bind-Value="input.Content" placeholder="Message CentCom…" />
+                    <button class="btn btn-primary" disabled="@sending">@(sending ? "Sending…" : "Send")</button>
+                </EditForm>
+            }
+        </section>
+    </div>
+</section>
+
+@code {
+    private List<CentComChatSession> sessions = [];
+    private CentComChatSession? selectedSession;
+    private int? selectedSessionId;
+    private ChatInput input = new();
+    private string? message;
+    private bool sending;
+    private string userId = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        userId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        sessions = await db.CentComChatSessions.AsNoTracking()
+            .Where(x => x.CreatedByUserId == userId)
+            .OrderByDescending(x => x.UpdatedAt)
+            .ToListAsync();
+        if (selectedSessionId is not null)
+        {
+            selectedSession = await db.CentComChatSessions.AsNoTracking()
+                .Include(x => x.Messages)
+                .SingleOrDefaultAsync(x => x.Id == selectedSessionId && x.CreatedByUserId == userId);
+        }
+    }
+
+    private async Task CreateSessionAsync()
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var session = new CentComChatSession { CreatedByUserId = userId };
+        db.CentComChatSessions.Add(session);
+        await db.SaveChangesAsync();
+        selectedSessionId = session.Id;
+        input = new();
+        await ReloadAsync();
+    }
+
+    private async Task SelectSessionAsync(int sessionId)
+    {
+        selectedSessionId = sessionId;
+        input = new();
+        message = null;
+        await ReloadAsync();
+    }
+
+    private async Task SendAsync()
+    {
+        if (selectedSession is null || sending || string.IsNullOrWhiteSpace(input.Content)) return;
+        sending = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var session = await db.CentComChatSessions
+                .Include(x => x.Messages)
+                .SingleOrDefaultAsync(x => x.Id == selectedSession.Id && x.CreatedByUserId == userId);
+            if (session is null) return;
+
+            var userMessage = new CentComChatMessage
+            {
+                CentComChatSessionId = session.Id,
+                Role = "user",
+                Content = input.Content.Trim()
+            };
+            session.Messages.Add(userMessage);
+            if (session.Messages.Count == 1)
+            {
+                session.Title = userMessage.Content.Length > 60
+                    ? userMessage.Content[..60] + "…"
+                    : userMessage.Content;
+            }
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+            input = new();
+
+            if (!CentCom.IsConfigured)
+            {
+                message = "Your message was saved. Configure CentCom__BaseUrl and CentCom__Model to receive responses.";
+                await ReloadAsync();
+                return;
+            }
+
+            var reply = await CentCom.CompleteAsync(session.Messages);
+            db.CentComChatMessages.Add(new CentComChatMessage
+            {
+                CentComChatSessionId = session.Id,
+                Role = "assistant",
+                Content = reply
+            });
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+            message = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            message = $"CentCom could not complete the response: {ex.Message}";
+            await ReloadAsync();
+        }
+        finally
+        {
+            sending = false;
+        }
+    }
+
+    private sealed class ChatInput
+    {
+        [Required, StringLength(12000)]
+        public string Content { get; set; } = string.Empty;
+    }
+}

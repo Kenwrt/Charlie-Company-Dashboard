@@ -4,34 +4,49 @@
 @using CharleyCompany.Dashboard.Web.Services
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
-@inject ApplicationDbContext DbContext
+@implements IDisposable
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject OperationAccessService OperationAccess
 
 <PageTitle>Housecall Pro Estimates</PageTitle>
 <section class="dashboard-shell">
-    <div class="dashboard-header"><div><p class="eyebrow">Housecall Pro</p><h1>Estimates</h1><p class="dashboard-subtitle">Imported estimate summaries. These remain separate from CCV estimate cases.</p></div></div>
+    <div class="dashboard-header"><div><p class="eyebrow">Housecall Pro</p><h1>Estimates</h1><p class="dashboard-subtitle">Imported estimate summaries. These remain separate from CCV estimate cases.</p></div><div class="dashboard-header-action"><input class="form-control" value="@search" @oninput="OnSearchInputAsync" placeholder="Search" aria-label="Search estimates" /></div></div>
     <div class="row g-2 mb-3">
-        <div class="col-md-4"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="operationId" @bind-Value:after="ReloadAsync"><option value="0">All assigned operations</option>@foreach(var operation in operations){<option value="@operation.Id">@operation.Name</option>}</InputSelect></div>
-        <div class="col-md-3"><label class="form-label">Status</label><InputSelect class="form-select" @bind-Value="status" @bind-Value:after="ReloadAsync"><option value="">All statuses</option>@foreach(var item in statuses){<option value="@item">@item</option>}</InputSelect></div>
-        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary" @onclick="ReloadAsync">Refresh</button></div>
-        <div class="col-md-3 d-flex align-items-end justify-content-end"><a class="btn btn-primary" href="estimates">Open CCV Estimate Cases</a></div>
+        <div class="col-md-3"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="operationId" @bind-Value:after="ReloadAsync"><option value="0">All assigned operations</option>@foreach(var operation in operations){<option value="@operation.Id">@operation.Name</option>}</InputSelect></div>
+        <div class="col-md-2"><label class="form-label">Status</label><InputSelect class="form-select" @bind-Value="status" @bind-Value:after="ReloadAsync"><option value="">All statuses</option>@foreach(var item in statuses){<option value="@item">@item</option>}</InputSelect></div>
+        <div class="col-md-2"><label class="form-label">From date</label><InputDate class="form-control" @bind-Value="fromDate" /></div>
+        <div class="col-md-2"><label class="form-label">Through date</label><InputDate class="form-control" @bind-Value="throughDate" /></div>
     </div>
     <p class="text-muted">Showing @estimates.Count of @totalCount synchronized estimates.</p>
-    <div class="table-responsive"><table class="table"><thead><tr><th>Estimate</th><th>Operation</th><th>Customer</th><th>Created by</th><th>Contact</th><th>Home address</th><th>Status</th><th>Date</th><th>Amount</th><th></th></tr></thead><tbody>
-    @foreach(var estimate in estimates){<tr><td>@(estimate.EstimateNumber ?? estimate.ExternalId)</td><td>@estimate.LocalOperation.Name</td><td>@estimate.CustomerName</td><td>@(estimate.CreatedByName ?? "Not provided by HCP")</td><td>@estimate.CustomerEmail<br/><small>@FormatPhone(estimate.CustomerPhone)</small></td><td>@estimate.CustomerAddress</td><td>@EffectiveStatus(estimate)</td><td>@(estimate.EstimateDate?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not provided")</td><td>@estimate.TotalAmount.ToString("C")</td><td><a class="btn btn-sm btn-outline-primary" href="@($"hcp/{estimate.LocalOperation.Slug}/estimates/{estimate.ExternalId}")">Details</a></td></tr>}
+    <div class="table-responsive"><table class="table"><thead><tr><th>Estimate</th><th>Operation</th><th>Customer</th><th>Home address</th><th>Status</th><th>Date</th><th></th></tr></thead><tbody>
+    @foreach(var estimate in estimates){<tr><td>@(estimate.EstimateNumber ?? estimate.ExternalId)</td><td>@FormatOperationName(estimate.LocalOperation.Name)</td><td>@estimate.CustomerName<small class="d-block text-muted">@estimate.CustomerEmail<br/>@FormatPhone(estimate.CustomerPhone)</small></td><td>@estimate.CustomerAddress</td><td>@EffectiveStatus(estimate)</td><td>@(estimate.EstimateDate?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not provided")</td><td><a class="btn btn-sm btn-outline-primary" href="@($"hcp/{estimate.LocalOperation.Slug}/estimates/{estimate.ExternalId}")">Details</a></td></tr>}
     </tbody></table></div>
     @if(estimates.Count==0){<div class="empty-state">No synchronized Housecall Pro estimates are available yet. Run Sync now from Housecall Pro Jobs.</div>}
 </section>
 
 @code {
+    [SupplyParameterFromQuery(Name="operation")] public string? OperationFilter {get;set;}
+    [SupplyParameterFromQuery(Name="status")] public string? StatusFilter {get;set;}
+    [SupplyParameterFromQuery(Name="from")] public DateTime? FromFilter {get;set;}
+    [SupplyParameterFromQuery(Name="through")] public DateTime? ThroughFilter {get;set;}
+
+    private const string OutstandingFilter="Outstanding";
     private List<LocalOperation> operations=[];
     private List<HousecallProEstimate> estimates=[];
     private List<string> statuses=[];
     private int operationId;
     private string status="";
+    private string search="";
+    private DateTime? fromDate=new(DateTime.Today.Year,1,1);
+    private DateTime? throughDate=new(DateTime.Today.Year,12,31);
     private int totalCount;
-    protected override async Task OnInitializedAsync(){operations=(await OperationAccess.GetAccessibleOperationsAsync()).ToList();var allowed=operations.Select(x=>x.Id).ToList();var sourceStatuses=await DbContext.HousecallProEstimates.AsNoTracking().Where(x=>allowed.Contains(x.LocalOperationId)&&x.ApprovalStatus!=null).Select(x=>x.ApprovalStatus!).Distinct().ToListAsync();statuses=sourceStatuses.Concat(HousecallProEstimateStatuses.All.Where(x=>x!=HousecallProEstimateStatuses.New)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToList();await ReloadAsync();}
-    private async Task ReloadAsync(){var allowed=operations.Select(x=>x.Id).ToList();var query=DbContext.HousecallProEstimates.AsNoTracking().Include(x=>x.LocalOperation).Where(x=>allowed.Contains(x.LocalOperationId)&&x.InternalStatus!=HousecallProEstimateStatuses.FollowUpComplete);if(operationId!=0)query=query.Where(x=>x.LocalOperationId==operationId);if(!string.IsNullOrWhiteSpace(status))query=query.Where(x=>x.InternalStatus==status||(x.InternalStatus==null&&x.ApprovalStatus==status));totalCount=await query.CountAsync();estimates=await query.OrderBy(x=>x.EstimateDate==null).ThenBy(x=>x.EstimateDate).ThenBy(x=>x.Id).Take(500).ToListAsync();}
+    private CancellationTokenSource? searchDebounce;
+    protected override async Task OnInitializedAsync(){operations=(await OperationAccess.GetAccessibleOperationsAsync()).ToList();operationId=operations.FirstOrDefault(operation=>operation.Slug.Equals(OperationFilter,StringComparison.OrdinalIgnoreCase))?.Id??0;if(!string.IsNullOrWhiteSpace(StatusFilter))status=StatusFilter;if(FromFilter is not null)fromDate=FromFilter.Value.Date;if(ThroughFilter is not null)throughDate=ThroughFilter.Value.Date;var allowed=operations.Select(x=>x.Id).ToList();await using var db=await DbContextFactory.CreateDbContextAsync();var sourceStatuses=await db.HousecallProEstimates.AsNoTracking().Where(x=>allowed.Contains(x.LocalOperationId)&&x.ApprovalStatus!=null).Select(x=>x.ApprovalStatus!).Distinct().ToListAsync();statuses=sourceStatuses.Concat(HousecallProEstimateStatuses.All.Where(x=>x!=HousecallProEstimateStatuses.New)).Append(OutstandingFilter).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x).ToList();await ReloadAsync();}
+    private async Task ReloadAsync(){var allowed=operations.Select(x=>x.Id).ToList();await using var db=await DbContextFactory.CreateDbContextAsync();var query=db.HousecallProEstimates.AsNoTracking().Include(x=>x.LocalOperation).Where(x=>allowed.Contains(x.LocalOperationId)&&x.InternalStatus!=HousecallProEstimateStatuses.FollowUpComplete);if(operationId!=0)query=query.Where(x=>x.LocalOperationId==operationId);if(status==OutstandingFilter){var closedStatuses=new[]{"canceled","deleted","created job from estimate","complete rated","complete unrated"};query=query.Where(x=>(x.ApprovalStatus==null||x.ApprovalStatus=="")&&(x.Status==null||!closedStatuses.Contains(x.Status)));}else if(!string.IsNullOrWhiteSpace(status))query=query.Where(x=>x.InternalStatus==status||(x.InternalStatus==null&&x.ApprovalStatus==status));if(fromDate is not null){var from=ToUtcBoundary(fromDate.Value);query=query.Where(x=>x.EstimateDate>=from);}if(throughDate is not null){var throughExclusive=ToUtcBoundary(throughDate.Value.AddDays(1));query=query.Where(x=>x.EstimateDate<throughExclusive);}if(!string.IsNullOrWhiteSpace(search)){var term=$"%{search.Trim()}%";query=query.Where(x=>EF.Functions.ILike(x.EstimateNumber??"",term)||EF.Functions.ILike(x.ExternalId,term)||EF.Functions.ILike(x.CustomerName??"",term)||EF.Functions.ILike(x.CreatedByName??"",term)||EF.Functions.ILike(x.CustomerEmail??"",term)||EF.Functions.ILike(x.CustomerPhone??"",term)||EF.Functions.ILike(x.CustomerAddress??"",term));}totalCount=await query.CountAsync();estimates=await query.OrderBy(x=>x.EstimateDate==null).ThenByDescending(x=>x.EstimateDate).ThenByDescending(x=>x.Id).Take(500).ToListAsync();}
+    private async Task OnSearchInputAsync(ChangeEventArgs args){search=args.Value?.ToString()??"";searchDebounce?.Cancel();searchDebounce?.Dispose();searchDebounce=new CancellationTokenSource();try{await Task.Delay(250,searchDebounce.Token);await ReloadAsync();}catch(OperationCanceledException){}}
+    public void Dispose(){searchDebounce?.Cancel();searchDebounce?.Dispose();}
+    private static DateTimeOffset ToUtcBoundary(DateTime value){var date=DateTime.SpecifyKind(value.Date,DateTimeKind.Unspecified);return new DateTimeOffset(date,TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();}
     private static string EffectiveStatus(HousecallProEstimate estimate)=>estimate.InternalStatus??estimate.ApprovalStatus??"Not provided";
+    private static string FormatOperationName(string value)=>value.Replace("Charlie Company","C.C.",StringComparison.OrdinalIgnoreCase);
     private static string FormatPhone(string? value){if(string.IsNullOrWhiteSpace(value))return "";var digits=new string(value.Where(char.IsDigit).ToArray());if(digits.Length==11&&digits[0]=='1')digits=digits[1..];return digits.Length==10?$"({digits[..3]}) {digits.Substring(3,3)}-{digits[6..]}":value;}
 }

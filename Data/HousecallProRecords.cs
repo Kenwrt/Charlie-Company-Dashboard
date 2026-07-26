@@ -14,6 +14,10 @@ public sealed class HousecallProJob
     [StringLength(256)] public string? CustomerEmail { get; set; }
     [StringLength(40)] public string? CustomerPhone { get; set; }
     [StringLength(80)] public string? WorkStatus { get; set; }
+    [StringLength(80)] public string? InternalStatus { get; set; }
+    [StringLength(450)] public string? InternalStatusNote { get; set; }
+    [StringLength(450)] public string? InternalStatusUpdatedBy { get; set; }
+    public DateTimeOffset? InternalStatusUpdatedAt { get; set; }
     [StringLength(400)] public string? Address { get; set; }
     public DateTimeOffset? ScheduledStart { get; set; }
     public DateTimeOffset? ScheduledEnd { get; set; }
@@ -22,6 +26,7 @@ public sealed class HousecallProJob
     public decimal OutstandingBalance { get; set; }
     public DateTimeOffset? SourceUpdatedAt { get; set; }
     public DateTimeOffset LastSyncedAt { get; set; } = DateTimeOffset.UtcNow;
+    public ICollection<HousecallProJobFollowUp> FollowUps { get; set; } = [];
 }
 
 public sealed class HousecallProEstimate
@@ -78,6 +83,18 @@ public sealed class HousecallProEstimateFollowUp
     public int Id { get; set; }
     public int HousecallProEstimateId { get; set; }
     public HousecallProEstimate HousecallProEstimate { get; set; } = null!;
+    [Required, StringLength(80)] public string Status { get; set; } = HousecallProEstimateStatuses.FollowUp;
+    [Required, StringLength(2000)] public string Notes { get; set; } = string.Empty;
+    [StringLength(450)] public string? EnteredByUserId { get; set; }
+    [Required, StringLength(450)] public string EnteredByName { get; set; } = string.Empty;
+    public DateTimeOffset EnteredAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class HousecallProJobFollowUp
+{
+    public int Id { get; set; }
+    public int HousecallProJobId { get; set; }
+    public HousecallProJob HousecallProJob { get; set; } = null!;
     [Required, StringLength(80)] public string Status { get; set; } = HousecallProEstimateStatuses.FollowUp;
     [Required, StringLength(2000)] public string Notes { get; set; } = string.Empty;
     [StringLength(450)] public string? EnteredByUserId { get; set; }

@@ -22,6 +22,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<QuoteCase> QuoteCases => Set<QuoteCase>();
     public DbSet<QuoteVersion> QuoteVersions => Set<QuoteVersion>();
     public DbSet<QuoteLine> QuoteLines => Set<QuoteLine>();
+    public DbSet<QuoteProjectTask> QuoteProjectTasks => Set<QuoteProjectTask>();
+    public DbSet<QuoteProjectTaskPhoto> QuoteProjectTaskPhotos => Set<QuoteProjectTaskPhoto>();
     public DbSet<QuotePricingRule> QuotePricingRules => Set<QuotePricingRule>();
     public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
     public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
@@ -30,6 +32,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<HousecallProEstimate> HousecallProEstimates => Set<HousecallProEstimate>();
     public DbSet<HousecallProEstimateCommunication> HousecallProEstimateCommunications => Set<HousecallProEstimateCommunication>();
     public DbSet<HousecallProEstimateFollowUp> HousecallProEstimateFollowUps => Set<HousecallProEstimateFollowUp>();
+    public DbSet<HousecallProJobFollowUp> HousecallProJobFollowUps => Set<HousecallProJobFollowUp>();
+    public DbSet<CentComChatSession> CentComChatSessions => Set<CentComChatSession>();
+    public DbSet<CentComChatMessage> CentComChatMessages => Set<CentComChatMessage>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -129,9 +134,33 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         });
         builder.Entity<QuoteVersion>(entity => entity.HasIndex(version => new { version.QuoteCaseId, version.VersionNumber }).IsUnique());
         builder.Entity<QuoteLine>(entity => entity.HasOne(line => line.QuoteVersion).WithMany(version => version.Lines).HasForeignKey(line => line.QuoteVersionId).OnDelete(DeleteBehavior.Cascade));
+        builder.Entity<QuoteProjectTask>(entity =>
+        {
+            entity.HasIndex(task => new { task.QuoteCaseId, task.SortOrder }).IsUnique();
+            entity.HasOne(task => task.QuoteCase).WithMany(quote => quote.ProjectTasks).HasForeignKey(task => task.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<QuoteProjectTaskPhoto>(entity =>
+        {
+            entity.HasIndex(photo => new { photo.QuoteProjectTaskId, photo.CapturedAt });
+            entity.HasOne(photo => photo.QuoteProjectTask).WithMany(task => task.Photos).HasForeignKey(photo => photo.QuoteProjectTaskId).OnDelete(DeleteBehavior.Cascade);
+        });
         builder.Entity<QuotePricingRule>(entity => entity.HasIndex(rule => rule.LocalOperationId).IsUnique());
         builder.Entity<QuoteAuditEvent>(entity => entity.HasOne(item => item.QuoteCase).WithMany(quote => quote.AuditEvents).HasForeignKey(item => item.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
-        builder.Entity<QuoteProcessingJob>(entity => entity.HasOne(job => job.QuoteCase).WithMany(quote => quote.ProcessingJobs).HasForeignKey(job => job.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
+        builder.Entity<QuoteProcessingJob>(entity =>
+        {
+            entity.HasOne(job => job.QuoteCase).WithMany(quote => quote.ProcessingJobs).HasForeignKey(job => job.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(job => job.QuoteProjectTask).WithMany().HasForeignKey(job => job.QuoteProjectTaskId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<CentComChatSession>(entity =>
+        {
+            entity.HasIndex(session => new { session.CreatedByUserId, session.UpdatedAt });
+            entity.HasOne(session => session.CreatedByUser).WithMany().HasForeignKey(session => session.CreatedByUserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<CentComChatMessage>(entity =>
+        {
+            entity.HasIndex(message => new { message.CentComChatSessionId, message.CreatedAt });
+            entity.HasOne(message => message.CentComChatSession).WithMany(session => session.Messages).HasForeignKey(message => message.CentComChatSessionId).OnDelete(DeleteBehavior.Cascade);
+        });
         builder.Entity<OperationalEvent>(entity =>
         {
             entity.HasIndex(item => item.EventId).IsUnique();
@@ -143,6 +172,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.HasIndex(item => new { item.LocalOperationId, item.ExternalId }).IsUnique();
             entity.HasIndex(item => new { item.LocalOperationId, item.WorkStatus });
+            entity.HasIndex(item => new { item.LocalOperationId, item.InternalStatus });
             entity.Property(item => item.TotalAmount).HasPrecision(18, 2);
             entity.Property(item => item.JobPrice).HasPrecision(18, 2);
             entity.Property(item => item.OutstandingBalance).HasPrecision(18, 2);
@@ -164,6 +194,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.HasIndex(item => new { item.HousecallProEstimateId, item.EnteredAt });
             entity.HasOne(item => item.HousecallProEstimate).WithMany(estimate => estimate.FollowUps).HasForeignKey(item => item.HousecallProEstimateId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProJobFollowUp>(entity =>
+        {
+            entity.HasIndex(item => new { item.HousecallProJobId, item.EnteredAt });
+            entity.HasOne(item => item.HousecallProJob).WithMany(job => job.FollowUps).HasForeignKey(item => item.HousecallProJobId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

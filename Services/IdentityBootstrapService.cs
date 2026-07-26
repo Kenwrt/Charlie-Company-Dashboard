@@ -23,9 +23,7 @@ public static class IdentityBootstrapService
 
         var seededOperations = new[]
         {
-            new LocalOperation { Name = "Charlie Company Nashville", Slug = "nashville" },
-            new LocalOperation { Name = "Charlie Company Knoxville", Slug = "knoxville" },
-            new LocalOperation { Name = "Charlie Company Chattanooga", Slug = "chattanooga" }
+            new LocalOperation { Name = "Charlie Company Nashville", Slug = "nashville" }
         };
 
         foreach (var operation in seededOperations)
@@ -35,6 +33,12 @@ public static class IdentityBootstrapService
                 dbContext.LocalOperations.Add(operation);
             }
         }
+
+        await dbContext.LocalOperations
+            .Where(operation => operation.Slug == "knoxville" || operation.Slug == "chattanooga")
+            .ExecuteUpdateAsync(updates => updates
+                .SetProperty(operation => operation.IsActive, false)
+                .SetProperty(operation => operation.UpdatedAt, DateTimeOffset.UtcNow));
 
         await dbContext.SaveChangesAsync();
 
