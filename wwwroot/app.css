@@ -852,3 +852,12 @@ h1:focus {
         grid-template-columns: 1fr;
     }
 }
+.powered-by-centcom {
+    color: #64748b;
+    display: inline-block;
+    font-size: .38em;
+    font-weight: 600;
+    letter-spacing: .01em;
+    margin-left: .65rem;
+    vertical-align: middle;
+}
