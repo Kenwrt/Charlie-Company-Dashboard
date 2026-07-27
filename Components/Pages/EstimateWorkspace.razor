@@ -14,6 +14,7 @@
 @inject OperationalEventPublisher OperationalEvents
 @inject IWebHostEnvironment Environment
 @inject IConfiguration Configuration
+@inject IJSRuntime JS
 
 <PageTitle>Preliminary Estimate</PageTitle>
 
@@ -81,12 +82,18 @@ else
                 </div>
                 <div class="d-flex gap-2">
                     <InputSelect class="form-select" @bind-Value="newTaskType">
+                        <option value="">Select task type</option>
                         @foreach (var taskType in ProjectTaskTypes.All)
                         {
                             <option value="@taskType">@taskType</option>
                         }
                     </InputSelect>
-                    <button type="button" class="btn btn-primary text-nowrap" @onclick="AddProjectTaskAsync">Add Project Task</button>
+                    <button type="button"
+                            class="btn btn-primary text-nowrap"
+                            disabled="@string.IsNullOrWhiteSpace(newTaskType)"
+                            @onclick="AddProjectTaskAsync">
+                        Add Project Task
+                    </button>
                 </div>
             </div>
         </section>
@@ -98,24 +105,30 @@ else
             </section>
         }
 
-        @foreach (var task in quote.ProjectTasks.OrderBy(x => x.SortOrder))
+        @{
+            var orderedTasks = quote.ProjectTasks.OrderBy(x => x.SortOrder).ToList();
+        }
+        @for (var taskIndex = 0; taskIndex < orderedTasks.Count; taskIndex++)
         {
+            var task = orderedTasks[taskIndex];
+            var taskNumber = taskIndex + 1;
             <section class="activity-panel project-task-panel" @key="task.Id">
                 <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
-                    <h2>Project Task @task.SortOrder</h2>
-                    <span class="badge text-bg-light">@task.Photos.Count photo(s)</span>
+                    <div>
+                        <h2 class="mb-1">Project Task @taskNumber</h2>
+                        <span class="badge text-bg-primary">@task.TaskType</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge text-bg-light">@task.Photos.Count photo(s)</span>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-danger"
+                                @onclick="() => DeleteProjectTaskAsync(task)">
+                            Delete Task
+                        </button>
+                    </div>
                 </div>
 
                 <div class="row g-4">
-                    <div class="col-md-5">
-                        <label class="form-label">Project Task Type</label>
-                        <InputSelect class="form-select" @bind-Value="task.TaskType">
-                            @foreach (var taskType in ProjectTaskTypes.All)
-                            {
-                                <option value="@taskType">@taskType</option>
-                            }
-                        </InputSelect>
-                    </div>
                     <div class="col-12">
                         <label class="form-label">Scope of Work</label>
                         <InputTextArea class="form-control estimate-notes-input"
@@ -253,7 +266,7 @@ else
     private QuoteCase? quote;
     private QuoteVersion? version;
     private string? message;
-    private string newTaskType = ProjectTaskTypes.All[0];
+    private string newTaskType = string.Empty;
     private static readonly ProjectPhotoRequirement AdditionalPhotoRequirement =
         new("additional", "Additional Photo", "Additional project context.");
 
@@ -290,6 +303,68 @@ else
         await AddAuditEventAsync(db, quote, $"Project Task {task.SortOrder} ({task.TaskType}) added.");
         await db.SaveChangesAsync();
         message = $"Project Task {task.SortOrder} added.";
+        newTaskType = string.Empty;
+        await ReloadAsync();
+    }
+
+    private async Task DeleteProjectTaskAsync(QuoteProjectTask task)
+    {
+        if (quote is null) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Do you really want to delete this task?");
+        if (!confirmed) return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var tracked = await db.QuoteProjectTasks
+            .Include(x => x.Photos)
+            .SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
+        if (tracked is null) return;
+
+        var storedPaths = tracked.Photos
+            .Select(x => x.StoragePath)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+        var deletedTaskNumber = tracked.SortOrder;
+        var deletedTaskType = tracked.TaskType;
+        db.QuoteProjectTasks.Remove(tracked);
+        await db.SaveChangesAsync();
+
+        var remainingTasks = await db.QuoteProjectTasks
+            .Where(x => x.QuoteCaseId == quote.Id)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+        for (var index = 0; index < remainingTasks.Count; index++)
+        {
+            remainingTasks[index].SortOrder = -(index + 1);
+        }
+        await db.SaveChangesAsync();
+        for (var index = 0; index < remainingTasks.Count; index++)
+        {
+            remainingTasks[index].SortOrder = index + 1;
+        }
+
+        await AddAuditEventAsync(db, quote, $"Project Task {deletedTaskNumber} ({deletedTaskType}) deleted.");
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        foreach (var storedPath in storedPaths)
+        {
+            try
+            {
+                if (File.Exists(storedPath)) File.Delete(storedPath);
+            }
+            catch (IOException)
+            {
+                // The database record is authoritative; orphaned files can be cleaned up later.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // The database record is authoritative; orphaned files can be cleaned up later.
+            }
+        }
+
+        await PublishEstimateEventAsync("EstimateWorkspace", "DeleteProjectTask", "Completed", $"Project Task {deletedTaskNumber} deleted.");
+        message = $"Project Task {deletedTaskNumber} deleted.";
         await ReloadAsync();
     }
 
@@ -299,7 +374,6 @@ else
         await using var db = await DbFactory.CreateDbContextAsync();
         var tracked = await db.QuoteProjectTasks.SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (tracked is null) return;
-        tracked.TaskType = task.TaskType;
         tracked.ScopeOfWork = task.ScopeOfWork?.Trim() ?? string.Empty;
         tracked.UpdatedAt = DateTimeOffset.UtcNow;
         await AddAuditEventAsync(db, quote, $"Project Task {tracked.SortOrder} scope updated.");

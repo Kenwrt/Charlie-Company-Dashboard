@@ -852,11 +852,11 @@ h1:focus {
         grid-template-columns: 1fr;
     }
 }
-.powered-by-centcom {
+.dashboard-header h1 .powered-by-centcom {
     color: #64748b;
     display: inline-block;
-    font-size: .38em;
-    font-weight: 600;
+    font-size: .3em;
+    font-weight: 500;
     letter-spacing: .01em;
     margin-left: .65rem;
     vertical-align: middle;
