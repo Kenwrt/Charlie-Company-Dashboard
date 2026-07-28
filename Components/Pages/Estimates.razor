@@ -14,6 +14,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject OperationalEventPublisher OperationalEvents
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>Start Estimate</PageTitle>
 
@@ -102,7 +103,17 @@
                         <td>@quote.CustomerName<br /><small>@quote.CustomerAddress</small></td>
                         <td>@quote.Status</td>
                         <td>@quote.UpdatedAt.ToLocalTime().ToString("MM/dd/yyyy")</td>
-                        <td><a class="btn btn-sm btn-outline-primary" href="@($"estimates/{quote.Id}")">Open workspace</a></td>
+                        <td>
+                            <div class="d-flex gap-2 justify-content-end">
+                                <a class="btn btn-sm btn-outline-primary" href="@($"estimates/{quote.Id}")">Open workspace</a>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-danger"
+                                        disabled="@(deletingQuoteId == quote.Id)"
+                                        @onclick="() => DeleteWorkspaceAsync(quote)">
+                                    @(deletingQuoteId == quote.Id ? "Deleting…" : "Delete")
+                                </button>
+                            </div>
+                        </td>
                     </tr>
                 }
                 </tbody>
@@ -119,6 +130,7 @@
     private string? message;
     private bool lookingUp;
     private bool creating;
+    private int? deletingQuoteId;
 
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 
@@ -218,6 +230,75 @@
             QuoteCaseId: quote.Id,
             DurationMilliseconds: started.ElapsedMilliseconds));
         Navigation.NavigateTo($"estimates/{quote.Id}");
+    }
+
+    private async Task DeleteWorkspaceAsync(QuoteCase quote)
+    {
+        if (deletingQuoteId is not null) return;
+        var estimateReference = quote.HousecallProEstimateNumber ?? quote.HousecallProQuoteId ?? $"CCV-E-{quote.Id:D6}";
+        var confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Do you really want to delete estimate workspace {estimateReference} for {quote.CustomerName}? This removes its CCV tasks, photos, pricing, and history. The Housecall Pro estimate will not be deleted.");
+        if (!confirmed) return;
+
+        deletingQuoteId = quote.Id;
+        message = null;
+        try
+        {
+            var allowedOperationIds = operations.Select(x => x.Id).ToList();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var tracked = await db.QuoteCases
+                .Include(x => x.ProjectTasks).ThenInclude(x => x.Photos)
+                .SingleOrDefaultAsync(x => x.Id == quote.Id && allowedOperationIds.Contains(x.LocalOperationId));
+            if (tracked is null)
+            {
+                message = "The estimate workspace was not found or is no longer available to your assigned locations.";
+                return;
+            }
+
+            var storedPaths = tracked.ProjectTasks
+                .SelectMany(x => x.Photos)
+                .Select(x => x.StoragePath)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+            var localOperationId = tracked.LocalOperationId;
+            var deletedQuoteId = tracked.Id;
+            db.QuoteCases.Remove(tracked);
+            await db.SaveChangesAsync();
+
+            foreach (var storedPath in storedPaths)
+            {
+                try
+                {
+                    if (File.Exists(storedPath)) File.Delete(storedPath);
+                }
+                catch (IOException)
+                {
+                    // The database record is authoritative; orphaned files can be cleaned up later.
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // The database record is authoritative; orphaned files can be cleaned up later.
+                }
+            }
+
+            await OperationalEvents.PublishAsync(new(
+                "CharlieCompany.Web", "Estimating", "DeleteEstimateWorkspace", "Completed",
+                $"Estimate workspace {estimateReference} was deleted from CCV. The Housecall Pro estimate was not changed.",
+                CorrelationId: $"estimate-{deletedQuoteId:D6}",
+                LocalOperationId: localOperationId,
+                QuoteCaseId: deletedQuoteId));
+            message = $"Estimate workspace {estimateReference} was deleted from CCV. Housecall Pro was not changed.";
+            await ReloadAsync();
+        }
+        catch (DbUpdateException)
+        {
+            message = "The estimate workspace could not be deleted because related records are still in use.";
+        }
+        finally
+        {
+            deletingQuoteId = null;
+        }
     }
 
     private sealed class StartEstimateInput

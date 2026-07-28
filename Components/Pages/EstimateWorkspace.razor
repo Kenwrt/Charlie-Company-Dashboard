@@ -73,6 +73,19 @@ else
         </section>
 
         <section class="activity-panel">
+            <h2>Project Overview Notes</h2>
+            <p class="dashboard-subtitle">
+                Record the overall customer request, site context, project goals, constraints, and other information that applies to the entire estimate.
+            </p>
+            <InputTextArea class="form-control project-overview-notes"
+                           rows="6"
+                           maxlength="2000"
+                           @bind-Value="quote.WorkDescription"
+                           placeholder="Enter or dictate an overview of the complete project…" />
+            <small class="text-muted d-block mt-2">These notes apply to every project task in this estimate.</small>
+        </section>
+
+        <section class="activity-panel">
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
                 <div>
                     <h2>Project Tasks</h2>
@@ -274,6 +287,15 @@ else
                 }
             </div>
         </details>
+
+        <section class="estimate-save-bar">
+            <button type="button"
+                    class="btn btn-primary btn-lg"
+                    disabled="@savingEstimate"
+                    @onclick="SaveEstimateAsync">
+                @(savingEstimate ? "Saving Estimate…" : "Save Estimate")
+            </button>
+        </section>
     </section>
 }
 
@@ -285,6 +307,7 @@ else
     private string? message;
     private string newTaskType = string.Empty;
     private readonly HashSet<int> expandedTaskIds = [];
+    private bool savingEstimate;
     private static readonly ProjectPhotoRequirement AdditionalPhotoRequirement =
         new("additional", "Additional Photo", "Additional project context.");
 
@@ -337,6 +360,40 @@ else
         expandedTaskIds.Clear();
         expandedTaskIds.Add(task.Id);
         await ReloadAsync();
+    }
+
+    private async Task SaveEstimateAsync()
+    {
+        if (quote is null || savingEstimate) return;
+        savingEstimate = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var tracked = await db.QuoteCases
+                .Include(x => x.ProjectTasks)
+                .SingleOrDefaultAsync(x => x.Id == quote.Id);
+            if (tracked is null) return;
+
+            tracked.WorkDescription = quote.WorkDescription?.Trim() ?? string.Empty;
+            tracked.UpdatedAt = DateTimeOffset.UtcNow;
+            foreach (var editedTask in quote.ProjectTasks)
+            {
+                var trackedTask = tracked.ProjectTasks.SingleOrDefault(x => x.Id == editedTask.Id);
+                if (trackedTask is null) continue;
+                trackedTask.ScopeOfWork = editedTask.ScopeOfWork?.Trim() ?? string.Empty;
+                trackedTask.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+
+            await AddAuditEventAsync(db, quote, "Estimate saved, including Project Overview Notes and project-task scopes.");
+            await db.SaveChangesAsync();
+            await PublishEstimateEventAsync("EstimateWorkspace", "SaveEstimate", "Completed", "Estimate overview and project-task scopes saved.");
+            message = "Estimate saved.";
+            await ReloadAsync();
+        }
+        finally
+        {
+            savingEstimate = false;
+        }
     }
 
     private async Task DeleteProjectTaskAsync(QuoteProjectTask task)
