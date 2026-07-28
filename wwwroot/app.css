@@ -714,12 +714,55 @@ h1:focus {
     min-height: 16rem;
     font-size: 1.05rem;
     line-height: 1.55;
+    padding-bottom: 3.5rem;
+    padding-right: 4rem;
 }
 
 .project-overview-notes {
     font-size: 1.05rem;
     line-height: 1.55;
     min-height: 10rem;
+    padding-bottom: 3.5rem;
+    padding-right: 4rem;
+}
+
+.dictation-input-wrapper {
+    position: relative;
+}
+
+.dictation-toggle {
+    align-items: center;
+    background: #eef4ff;
+    border: 1px solid #b9cdf8;
+    border-radius: 50%;
+    bottom: 1rem;
+    color: #1d4ed8;
+    display: inline-flex;
+    font-size: 1.25rem;
+    height: 2.75rem;
+    justify-content: center;
+    position: absolute;
+    right: 1rem;
+    transition: background-color .15s ease, box-shadow .15s ease, transform .15s ease;
+    width: 2.75rem;
+}
+
+.dictation-toggle:hover {
+    background: #dfeaff;
+    transform: translateY(-1px);
+}
+
+.dictation-toggle.active {
+    animation: dictation-pulse 1.5s infinite;
+    background: #dc2626;
+    border-color: #b91c1c;
+    box-shadow: 0 0 0 .25rem rgba(220, 38, 38, .16);
+    color: #fff;
+}
+
+@keyframes dictation-pulse {
+    0%, 100% { box-shadow: 0 0 0 .2rem rgba(220, 38, 38, .12); }
+    50% { box-shadow: 0 0 0 .5rem rgba(220, 38, 38, .22); }
 }
 
 .estimate-save-bar {

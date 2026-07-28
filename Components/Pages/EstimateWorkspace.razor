@@ -1,6 +1,7 @@
 @page "/estimates/{QuoteId:int}"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Administrator,LocalOperator")]
+@implements IAsyncDisposable
 @using System.ComponentModel.DataAnnotations
 @using System.Security.Claims
 @using CharleyCompany.Dashboard.Web.Data
@@ -77,11 +78,26 @@ else
             <p class="dashboard-subtitle">
                 Record the overall customer request, site context, project goals, constraints, and other information that applies to the entire estimate.
             </p>
-            <InputTextArea class="form-control project-overview-notes"
-                           rows="6"
-                           maxlength="2000"
-                           @bind-Value="quote.WorkDescription"
-                           placeholder="Enter or dictate an overview of the complete project…" />
+            <div class="dictation-input-wrapper">
+                <InputTextArea id="project-overview-notes"
+                               class="form-control project-overview-notes"
+                               rows="6"
+                               maxlength="2000"
+                               @bind-Value="quote.WorkDescription"
+                               placeholder="Dictate or enter a general description of the project to be done." />
+                <button type="button"
+                        class="dictation-toggle @(IsDictating(ProjectOverviewElementId) ? "active" : null)"
+                        aria-label="@(IsDictating(ProjectOverviewElementId) ? "Stop project overview dictation" : "Start project overview dictation")"
+                        aria-pressed="@IsDictating(ProjectOverviewElementId)"
+                        title="@(IsDictating(ProjectOverviewElementId) ? "Stop dictation" : "Start dictation")"
+                        @onclick="() => ToggleDictationAsync(ProjectOverviewElementId)">
+                    <span aria-hidden="true">🎙</span>
+                </button>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(GetDictationMessage(ProjectOverviewElementId)))
+            {
+                <small class="@(IsDictating(ProjectOverviewElementId) ? "text-danger" : "text-muted") d-block mt-2">@GetDictationMessage(ProjectOverviewElementId)</small>
+            }
             <small class="text-muted d-block mt-2">These notes apply to every project task in this estimate.</small>
         </section>
 
@@ -146,10 +162,29 @@ else
                         <div class="row g-4">
                             <div class="col-12">
                                 <label class="form-label">Scope of Work</label>
-                                <InputTextArea class="form-control estimate-notes-input"
-                                               rows="7"
-                                               @bind-Value="task.ScopeOfWork"
-                                               placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
+                                @{
+                                    var taskScopeElementId = $"task-scope-{task.Id}";
+                                }
+                                <div class="dictation-input-wrapper">
+                                    <InputTextArea id="@taskScopeElementId"
+                                                   class="form-control estimate-notes-input"
+                                                   rows="7"
+                                                   maxlength="4000"
+                                                   @bind-Value="task.ScopeOfWork"
+                                                   placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
+                                    <button type="button"
+                                            class="dictation-toggle @(IsDictating(taskScopeElementId) ? "active" : null)"
+                                            aria-label="@(IsDictating(taskScopeElementId) ? $"Stop {task.TaskType} scope dictation" : $"Start {task.TaskType} scope dictation")"
+                                            aria-pressed="@IsDictating(taskScopeElementId)"
+                                            title="@(IsDictating(taskScopeElementId) ? "Stop dictation" : "Start dictation")"
+                                            @onclick="() => ToggleDictationAsync(taskScopeElementId)">
+                                        <span aria-hidden="true">🎙</span>
+                                    </button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(GetDictationMessage(taskScopeElementId)))
+                                {
+                                    <small class="@(IsDictating(taskScopeElementId) ? "text-danger" : "text-muted") d-block mt-2">@GetDictationMessage(taskScopeElementId)</small>
+                                }
                                 <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
                             </div>
                         </div>
@@ -307,7 +342,11 @@ else
     private string? message;
     private string newTaskType = string.Empty;
     private readonly HashSet<int> expandedTaskIds = [];
+    private readonly Dictionary<string, string?> dictationMessages = [];
     private bool savingEstimate;
+    private string? activeDictationElementId;
+    private DotNetObjectReference<EstimateWorkspace>? dictationReference;
+    private const string ProjectOverviewElementId = "project-overview-notes";
     private static readonly ProjectPhotoRequirement AdditionalPhotoRequirement =
         new("additional", "Additional Photo", "Additional project context.");
 
@@ -323,6 +362,35 @@ else
         {
             expandedTaskIds.Add(taskId);
         }
+    }
+
+    private bool IsDictating(string elementId) =>
+        string.Equals(activeDictationElementId, elementId, StringComparison.Ordinal);
+
+    private string? GetDictationMessage(string elementId) =>
+        dictationMessages.GetValueOrDefault(elementId);
+
+    private async Task ToggleDictationAsync(string elementId)
+    {
+        dictationReference ??= DotNetObjectReference.Create(this);
+        var result = await JS.InvokeAsync<DictationToggleResult>(
+            "ccvDictation.toggle",
+            elementId,
+            dictationReference);
+        activeDictationElementId = result.Active ? elementId : null;
+        dictationMessages[elementId] = result.Supported
+            ? (result.Active ? "Listening… Click the microphone again to stop." : null)
+            : "Dictation is not supported by this browser. Use Chrome or Edge, or use your device’s keyboard dictation.";
+    }
+
+    [JSInvokable]
+    public Task OnDictationStateChanged(string elementId, bool active, string? error)
+    {
+        activeDictationElementId = active ? elementId : null;
+        dictationMessages[elementId] = !string.IsNullOrWhiteSpace(error)
+            ? error
+            : (active ? "Listening… Click the microphone again to stop." : null);
+        return InvokeAsync(StateHasChanged);
     }
 
     private async Task ReloadAsync()
@@ -693,4 +761,19 @@ else
         "conditions" => "photo-guide-panel-16",
         _ => "photo-guide-panel-1"
     };
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("ccvDictation.stop");
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser circuit has already disconnected.
+        }
+        dictationReference?.Dispose();
+    }
+
+    private sealed record DictationToggleResult(bool Supported, bool Active);
 }
