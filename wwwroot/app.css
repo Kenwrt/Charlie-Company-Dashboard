@@ -718,6 +718,64 @@ h1:focus {
 
 .project-task-panel {
     border-left: 5px solid #2563eb;
+    overflow: hidden;
+    padding: 0;
+}
+
+.project-task-toggle {
+    align-items: center;
+    background: #fff;
+    border: 0;
+    color: #1f2937;
+    display: flex;
+    justify-content: space-between;
+    padding: 1.15rem 1.4rem;
+    text-align: left;
+    width: 100%;
+}
+
+.project-task-toggle:hover {
+    background: #f7f9fc;
+}
+
+.project-task-toggle-title small {
+    color: #64748b;
+    display: block;
+    font-size: .78rem;
+    font-weight: 700;
+    margin-bottom: .2rem;
+    text-transform: uppercase;
+}
+
+.project-task-toggle-title h2 {
+    margin: 0;
+}
+
+.project-task-chevron {
+    align-items: center;
+    background: #eaf1ff;
+    border-radius: 50%;
+    color: #1d4ed8;
+    display: inline-flex;
+    font-size: 1.3rem;
+    font-weight: 700;
+    height: 2rem;
+    justify-content: center;
+    width: 2rem;
+}
+
+.project-task-body {
+    border-top: 1px solid #d8e1ec;
+    padding: 1.4rem;
+}
+
+.project-task-actions {
+    border-top: 1px solid #d8e1ec;
+    display: flex;
+    gap: .75rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
 }
 
 .picture-capture-panel {
@@ -763,6 +821,54 @@ h1:focus {
     color: #64748b;
     min-height: 3.5rem;
 }
+
+.photo-guide-preview {
+    background-image: url("/images/photo-guides/project-photo-guide-sprite.png");
+    background-repeat: no-repeat;
+    background-size: 400% 400%;
+    border-radius: .6rem;
+    display: flex;
+    min-height: 220px;
+    overflow: hidden;
+    margin-bottom: .85rem;
+}
+
+.photo-guide-overlay {
+    align-self: flex-end;
+    background: linear-gradient(180deg, rgba(9, 20, 35, .12), rgba(9, 20, 35, .92));
+    color: #fff;
+    padding: 2.75rem 1rem 1rem;
+    width: 100%;
+}
+
+.photo-guide-overlay strong {
+    font-size: 1rem;
+}
+
+.photo-guide-overlay p {
+    color: #fff;
+    font-size: .88rem;
+    line-height: 1.4;
+    margin: .45rem 0 0;
+    min-height: 0;
+}
+
+.photo-guide-panel-1 { background-position: 0 0; }
+.photo-guide-panel-2 { background-position: 33.333% 0; }
+.photo-guide-panel-3 { background-position: 66.666% 0; }
+.photo-guide-panel-4 { background-position: 100% 0; }
+.photo-guide-panel-5 { background-position: 0 33.333%; }
+.photo-guide-panel-6 { background-position: 33.333% 33.333%; }
+.photo-guide-panel-7 { background-position: 66.666% 33.333%; }
+.photo-guide-panel-8 { background-position: 100% 33.333%; }
+.photo-guide-panel-9 { background-position: 0 66.666%; }
+.photo-guide-panel-10 { background-position: 33.333% 66.666%; }
+.photo-guide-panel-11 { background-position: 66.666% 66.666%; }
+.photo-guide-panel-12 { background-position: 100% 66.666%; }
+.photo-guide-panel-13 { background-position: 0 100%; }
+.photo-guide-panel-14 { background-position: 33.333% 100%; }
+.photo-guide-panel-15 { background-position: 66.666% 100%; }
+.photo-guide-panel-16 { background-position: 100% 100%; }
 
 .centcom-chat-layout {
     display: grid;

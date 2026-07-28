@@ -113,34 +113,33 @@ else
             var task = orderedTasks[taskIndex];
             var taskNumber = taskIndex + 1;
             <section class="activity-panel project-task-panel" @key="task.Id">
-                <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
-                    <div>
-                        <h2 class="mb-1">Project Task @taskNumber</h2>
-                        <span class="badge text-bg-primary">@task.TaskType</span>
+                <button type="button"
+                        class="project-task-toggle"
+                        aria-expanded="@expandedTaskIds.Contains(task.Id)"
+                        @onclick="() => ToggleProjectTask(task.Id)">
+                    <div class="project-task-toggle-title">
+                        <small>Project Task @taskNumber</small>
+                        <h2>@task.TaskType</h2>
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <span class="badge text-bg-light">@task.Photos.Count photo(s)</span>
-                        <button type="button"
-                                class="btn btn-sm btn-outline-danger"
-                                @onclick="() => DeleteProjectTaskAsync(task)">
-                            Delete Task
-                        </button>
+                        <span class="project-task-chevron" aria-hidden="true">@(expandedTaskIds.Contains(task.Id) ? "−" : "+")</span>
                     </div>
-                </div>
+                </button>
 
-                <div class="row g-4">
-                    <div class="col-12">
-                        <label class="form-label">Scope of Work</label>
-                        <InputTextArea class="form-control estimate-notes-input"
-                                       rows="7"
-                                       @bind-Value="task.ScopeOfWork"
-                                       placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
-                        <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
-                    </div>
-                    <div class="col-12">
-                        <button type="button" class="btn btn-outline-primary" @onclick="() => SaveProjectTaskAsync(task)">Save Project Task</button>
-                    </div>
-                </div>
+                @if (expandedTaskIds.Contains(task.Id))
+                {
+                    <div class="project-task-body">
+                        <div class="row g-4">
+                            <div class="col-12">
+                                <label class="form-label">Scope of Work</label>
+                                <InputTextArea class="form-control estimate-notes-input"
+                                               rows="7"
+                                               @bind-Value="task.ScopeOfWork"
+                                               placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
+                                <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
+                            </div>
+                        </div>
 
                 <div class="picture-capture-panel mt-4">
                     <h3>@task.TaskType Picture Guide</h3>
@@ -150,13 +149,17 @@ else
                         {
                             var captured = task.Photos.Where(x => x.RequirementKey == requirement.Key).OrderByDescending(x => x.CapturedAt).ToList();
                             <article class="photo-requirement-card">
-                                <div class="d-flex justify-content-between gap-2">
-                                    <strong>@requirement.Label</strong>
-                                    <span class="badge @(captured.Count > 0 ? "text-bg-success" : "text-bg-warning")">
-                                        @(captured.Count > 0 ? "Complete" : "Required")
-                                    </span>
+                                <div class="photo-guide-preview @PhotoGuidePanelClass(requirement.Key)">
+                                    <div class="photo-guide-overlay">
+                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                            <strong>@requirement.Label</strong>
+                                            <span class="badge @(captured.Count > 0 ? "text-bg-success" : "text-bg-warning")">
+                                                @(captured.Count > 0 ? "Complete" : "Required")
+                                            </span>
+                                        </div>
+                                        <p>@requirement.Instructions</p>
+                                    </div>
                                 </div>
-                                <p>@requirement.Instructions</p>
                                 <InputFile class="form-control"
                                            OnChange="args => CapturePicturesAsync(task, requirement, args)"
                                            accept="image/*"
@@ -193,6 +196,20 @@ else
                                    multiple />
                     </div>
                 </div>
+                        <div class="project-task-actions">
+                            <button type="button"
+                                    class="btn btn-primary"
+                                    @onclick="() => SaveProjectTaskAsync(task)">
+                                Save Project Task
+                            </button>
+                            <button type="button"
+                                    class="btn btn-outline-danger"
+                                    @onclick="() => DeleteProjectTaskAsync(task)">
+                                Delete Task
+                            </button>
+                        </div>
+                    </div>
+                }
             </section>
         }
 
@@ -267,10 +284,23 @@ else
     private QuoteVersion? version;
     private string? message;
     private string newTaskType = string.Empty;
+    private readonly HashSet<int> expandedTaskIds = [];
     private static readonly ProjectPhotoRequirement AdditionalPhotoRequirement =
         new("additional", "Additional Photo", "Additional project context.");
 
-    protected override Task OnParametersSetAsync() => ReloadAsync();
+    protected override Task OnParametersSetAsync()
+    {
+        expandedTaskIds.Clear();
+        return ReloadAsync();
+    }
+
+    private void ToggleProjectTask(int taskId)
+    {
+        if (!expandedTaskIds.Remove(taskId))
+        {
+            expandedTaskIds.Add(taskId);
+        }
+    }
 
     private async Task ReloadAsync()
     {
@@ -304,6 +334,8 @@ else
         await db.SaveChangesAsync();
         message = $"Project Task {task.SortOrder} added.";
         newTaskType = string.Empty;
+        expandedTaskIds.Clear();
+        expandedTaskIds.Add(task.Id);
         await ReloadAsync();
     }
 
@@ -365,6 +397,7 @@ else
 
         await PublishEstimateEventAsync("EstimateWorkspace", "DeleteProjectTask", "Completed", $"Project Task {deletedTaskNumber} deleted.");
         message = $"Project Task {deletedTaskNumber} deleted.";
+        expandedTaskIds.Remove(task.Id);
         await ReloadAsync();
     }
 
@@ -581,4 +614,26 @@ else
 
     private static string FormatFileSize(long bytes) =>
         bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:N1} MB" : $"{bytes / 1024d:N0} KB";
+
+    private static string PhotoGuidePanelClass(string requirementKey) => requirementKey switch
+    {
+        "overall" => "photo-guide-panel-1",
+        "length" => "photo-guide-panel-2",
+        "length-end" => "photo-guide-panel-3",
+        "width" => "photo-guide-panel-4",
+        "width-end" => "photo-guide-panel-3",
+        "roof-tie-in" => "photo-guide-panel-5",
+        "elevation" => "photo-guide-panel-6",
+        "openings" => "photo-guide-panel-7",
+        "connections" => "photo-guide-panel-8",
+        "grade" => "photo-guide-panel-9",
+        "access" => "photo-guide-panel-10",
+        "utilities" => "photo-guide-panel-11",
+        "damage-close" => "photo-guide-panel-12",
+        "damage-context" => "photo-guide-panel-13",
+        "measurements" => "photo-guide-panel-14",
+        "underneath" => "photo-guide-panel-15",
+        "conditions" => "photo-guide-panel-16",
+        _ => "photo-guide-panel-1"
+    };
 }
