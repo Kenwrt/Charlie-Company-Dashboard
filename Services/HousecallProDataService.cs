@@ -155,7 +155,7 @@ public sealed class HousecallProDataService(
                 new("ID", externalId),
                 new("Customer", CustomerName(root) ?? "Not provided"),
                 new("Status", Text(root, "work_status") ?? Text(root, "status") ?? FirstOptionText(root, "status") ?? "Not provided"),
-                new("Amount", Money(root, "total_amount").ToString("C")),
+                new("Amount", Money(root, "total_amount").ToString("C2")),
                 new("Updated", Date(root, "updated_at")?.ToLocalTime().ToString("g") ?? "Not provided")
             };
             var communications = ExtractCommunications(root);

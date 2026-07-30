@@ -90,9 +90,9 @@ else{
                 <div><dt>Status</dt><dd>@EffectiveStatus(localJob)</dd></div>
                 <div><dt>Scheduled start</dt><dd>@FormatDateTime(localJob.ScheduledStart)</dd></div>
                 <div><dt>Scheduled end</dt><dd>@FormatDateTime(localJob.ScheduledEnd)</dd></div>
-                <div><dt>Total job price</dt><dd>@localJob.JobPrice.ToString("C")</dd></div>
-                <div><dt>Amount invoiced</dt><dd>@localJob.TotalAmount.ToString("C")</dd></div>
-                <div><dt>Remaining uncollected</dt><dd>@localJob.OutstandingBalance.ToString("C")</dd></div>
+                <div><dt>Total job price</dt><dd>@localJob.JobPrice.ToString("C2")</dd></div>
+                <div><dt>Amount invoiced</dt><dd>@localJob.TotalAmount.ToString("C2")</dd></div>
+                <div><dt>Remaining uncollected</dt><dd>@localJob.OutstandingBalance.ToString("C2")</dd></div>
                 <div><dt>Last updated by HCP</dt><dd>@FormatDateTime(localJob.SourceUpdatedAt)</dd></div>
             </dl>
         </section>
@@ -101,9 +101,9 @@ else{
             <h2>Payment history</h2>
             <p>Payments and refunds recorded against this Housecall Pro job.</p>
             <dl class="finance-definition-list mb-3">
-                <div><dt>Amount invoiced</dt><dd>@localJob.TotalAmount.ToString("C")</dd></div>
-                <div><dt>Net payments recorded</dt><dd>@NetPayments.ToString("C")</dd></div>
-                <div><dt>Remaining uncollected</dt><dd>@localJob.OutstandingBalance.ToString("C")</dd></div>
+                <div><dt>Amount invoiced</dt><dd>@localJob.TotalAmount.ToString("C2")</dd></div>
+                <div><dt>Net payments recorded</dt><dd>@NetPayments.ToString("C2")</dd></div>
+                <div><dt>Remaining uncollected</dt><dd>@localJob.OutstandingBalance.ToString("C2")</dd></div>
             </dl>
             <div class="activity-list">
                 @foreach(var item in paymentHistory?.Transactions??[])
@@ -111,7 +111,7 @@ else{
                     <div class="activity-item">
                         <div>
                             <strong>@item.Type · @item.Method</strong>
-                            <span>@item.Amount.ToString("C") · @item.Status</span>
+                            <span>@item.Amount.ToString("C2") · @item.Status</span>
                             @if(!string.IsNullOrWhiteSpace(item.Note)){<span>@item.Note</span>}
                             <small>Invoice @item.InvoiceNumber@if(!string.IsNullOrWhiteSpace(item.Category)){<text> · @item.Category</text>}</small>
                         </div>
@@ -235,7 +235,7 @@ else{
                 new("ID",localEstimate.ExternalId),
                 new("Customer",localEstimate.CustomerName??"Not provided"),
                 new("Status",EffectiveStatus(localEstimate)),
-                new("Amount",localEstimate.TotalAmount.ToString("C")),
+                new("Amount",localEstimate.TotalAmount.ToString("C2")),
                 new("Updated",FormatDateTime(localEstimate.SourceUpdatedAt))
             };
             var json=JsonSerializer.Serialize(new{source="CCV synchronized cache",localEstimate.ExternalId,localEstimate.EstimateNumber,localEstimate.CustomerName,Status=EffectiveStatus(localEstimate),localEstimate.TotalAmount,localEstimate.SourceUpdatedAt},new JsonSerializerOptions{WriteIndented=true});
@@ -248,7 +248,7 @@ else{
                 new("ID",localJob.ExternalId),
                 new("Customer",localJob.CustomerName??"Not provided"),
                 new("Status",EffectiveStatus(localJob)),
-                new("Amount",localJob.TotalAmount.ToString("C")),
+                new("Amount",localJob.TotalAmount.ToString("C2")),
                 new("Updated",FormatDateTime(localJob.SourceUpdatedAt))
             };
             var json=JsonSerializer.Serialize(new{source="CCV synchronized cache",localJob.ExternalId,localJob.JobNumber,localJob.CustomerName,Status=EffectiveStatus(localJob),localJob.WorkStatus,localJob.JobPrice,localJob.TotalAmount,localJob.OutstandingBalance,localJob.SourceUpdatedAt},new JsonSerializerOptions{WriteIndented=true});

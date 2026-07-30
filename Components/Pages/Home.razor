@@ -80,12 +80,12 @@
         <div class="metric-grid finance-metric-grid">
             <NavLink class="metric-card metric-card-link accent-revenue" href="@ExpectedReceivablesHref">
                 <span>Expected Receivables</span>
-                <strong>@receivablesSummary.ExpectedBalance.ToString("C0")</strong>
+                <strong>@receivablesSummary.ExpectedBalance.ToString("C2")</strong>
                 <small>@receivablesSummary.ExpectedJobCount.ToString("N0") jobs with an uncollected balance</small>
             </NavLink>
             <NavLink class="metric-card metric-card-link accent-expired" href="@OverThirtyReceivablesHref">
                 <span>Receivables older than 30 days</span>
-                <strong>@receivablesSummary.OverThirtyBalance.ToString("C0")</strong>
+                <strong>@receivablesSummary.OverThirtyBalance.ToString("C2")</strong>
                 <small>@receivablesSummary.OverThirtyJobCount.ToString("N0") jobs older than 30 days</small>
             </NavLink>
         </div>
@@ -98,7 +98,7 @@
                 <tbody>
                     @foreach (var bucket in receivablesSummary.AgingBuckets)
                     {
-                        <tr><td>@bucket.Label</td><td>@bucket.JobCount.ToString("N0")</td><td>@bucket.Balance.ToString("C0")</td></tr>
+                        <tr><td>@bucket.Label</td><td>@bucket.JobCount.ToString("N0")</td><td>@bucket.Balance.ToString("C2")</td></tr>
                     }
                 </tbody>
             </table>
@@ -114,22 +114,22 @@
         <div class="metric-grid finance-metric-grid">
             <article class="metric-card accent-expenses">
                 <span>Open AP</span>
-                <strong>@apSummary.OpenBalance.ToString("C0")</strong>
+                <strong>@apSummary.OpenBalance.ToString("C2")</strong>
                 <small>@apSummary.OpenInvoiceCount.ToString("N0") open @(apSummary.OpenInvoiceCount == 1 ? "invoice" : "invoices")</small>
             </article>
             <article class="metric-card accent-expired">
                 <span>Past due</span>
-                <strong>@apSummary.PastDueBalance.ToString("C0")</strong>
+                <strong>@apSummary.PastDueBalance.ToString("C2")</strong>
                 <small>@apSummary.PastDueInvoiceCount.ToString("N0") overdue @(apSummary.PastDueInvoiceCount == 1 ? "invoice" : "invoices")</small>
             </article>
             <article class="metric-card accent-quotes">
                 <span>Due in 30 days</span>
-                <strong>@apSummary.DueSoonBalance.ToString("C0")</strong>
+                <strong>@apSummary.DueSoonBalance.ToString("C2")</strong>
                 <small>Open balance due through @DateOnly.FromDateTime(DateTime.Today.AddDays(30)).ToString("MM/dd/yyyy")</small>
             </article>
             <article class="metric-card accent-jobs">
                 <span>Applied payments</span>
-                <strong>@apSummary.AmountPaid.ToString("C0")</strong>
+                <strong>@apSummary.AmountPaid.ToString("C2")</strong>
                 <small>Payments recorded against open invoices</small>
             </article>
         </div>
@@ -155,7 +155,7 @@
                                 <td>@invoice.JobNumber</td>
                                 <td>@invoice.DueDate.ToString("MM/dd/yyyy")</td>
                                 <td>@invoice.Status</td>
-                                <td>@invoice.OpenBalance.ToString("C0")</td>
+                                <td>@invoice.OpenBalance.ToString("C2")</td>
                             </tr>
                         }
                     </tbody>
@@ -187,7 +187,7 @@
                             </div>
                             <div>
                                 <dt>Scheduled job charges</dt>
-                                <dd>@entity.MonthlyRevenue.ToString("C0")</dd>
+                                <dd>@entity.MonthlyRevenue.ToString("C2")</dd>
                             </div>
                         </dl>
                     </NavLink>
@@ -461,7 +461,7 @@
                 $"hcp/estimates?operation={operationSlug}&status=Outstanding&from={from}&through={through}"),
             new(
                 "Revenue this month",
-                snapshot.MonthlyRevenue.ToString("C0"),
+                snapshot.MonthlyRevenue.ToString("C2"),
                 "Outstanding charges for scheduled jobs",
                 "accent-revenue",
                 $"hcp/jobs?operation={operationSlug}&status=scheduled&from={from}&through={through}")

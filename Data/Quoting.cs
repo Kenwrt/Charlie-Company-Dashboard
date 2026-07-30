@@ -21,6 +21,7 @@ public static class ProjectTaskTypes
     public static readonly string[] All =
     [
         "Deck",
+        "Roofing",
         "Covered Deck / Roof Structure",
         "Screen Room",
         "Hardscape / Patio",
@@ -46,6 +47,14 @@ public static class ProjectPhotoGuidance
             new("length-end", "Length End Point", "Capture a close, clear photograph of the far end of the length measurement."),
             new("width", "Width Measurement", "Show the tape at the zero point and the full deck width with readable numbers."),
             new("width-end", "Width End Point", "Capture a close, clear photograph of the far end of the width measurement.")
+        ],
+        "Roofing" =>
+        [
+            Overall,
+            new("roof-planes", "Roof Planes", "Capture every roof plane, ridge, valley, penetration, and transition."),
+            new("eaves", "Eaves and Fascia", "Show eaves, fascia, gutters, drip edge, and visible decking conditions."),
+            new("pitch", "Pitch Measurement", "Capture a clear roof-pitch measurement from a safe location."),
+            new("access", "Access and Staging", "Show safe ladder, material-delivery, dumpster, and staging locations.")
         ],
         "Covered Deck / Roof Structure" =>
         [
@@ -129,10 +138,77 @@ public sealed class QuoteProjectTask
     public QuoteCase QuoteCase { get; set; } = null!;
     public int SortOrder { get; set; }
     [Required, StringLength(100)] public string TaskType { get; set; } = ProjectTaskTypes.All[0];
+    [StringLength(60)] public string? WorkType { get; set; }
     [StringLength(4000)] public string ScopeOfWork { get; set; } = string.Empty;
+    [Column(TypeName = "numeric(8,2)")] public decimal EstimatedDays { get; set; } = 1;
+    [Column(TypeName = "numeric(8,2)")] public decimal? CrewSizeOverride { get; set; }
+    [Column(TypeName = "numeric(18,2)")] public decimal? DailyCrewCostOverride { get; set; }
+    [Column(TypeName = "numeric(8,4)")] public decimal? ContingencyPercentOverride { get; set; }
+    [Column(TypeName = "numeric(8,4)")] public decimal? TargetMarginPercentOverride { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<QuoteProjectTaskPhoto> Photos { get; set; } = [];
+    public ICollection<QuoteTaskAnalysis> Analyses { get; set; } = [];
+    public ICollection<QuoteTaskCostSnapshot> CostSnapshots { get; set; } = [];
+}
+
+public static class QuoteTaskAnalysisStatuses
+{
+    public const string NotSubmitted = "Not submitted";
+    public const string Queued = "Queued";
+    public const string Processing = "Processing";
+    public const string NeedsReview = "Needs review";
+    public const string Accepted = "Accepted";
+    public const string Rejected = "Rejected";
+    public const string Failed = "Failed";
+}
+
+public sealed class QuoteTaskAnalysis
+{
+    public int Id { get; set; }
+    public int QuoteProjectTaskId { get; set; }
+    public QuoteProjectTask QuoteProjectTask { get; set; } = null!;
+    public int RevisionNumber { get; set; } = 1;
+    [Required, StringLength(30)] public string Status { get; set; } = QuoteTaskAnalysisStatuses.Queued;
+    [StringLength(450)] public string? SubmittedByUserId { get; set; }
+    [StringLength(120)] public string? ModelVersion { get; set; }
+    [StringLength(4000)] public string? Assumptions { get; set; }
+    [StringLength(4000)] public string? QuestionsAndWarnings { get; set; }
+    [Column(TypeName = "numeric(18,2)")] public decimal DeliveryAllowance { get; set; }
+    [Column(TypeName = "numeric(18,2)")] public decimal TaxAllowance { get; set; }
+    [Column(TypeName = "numeric(18,2)")] public decimal OtherAllowance { get; set; }
+    public DateTimeOffset SubmittedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? CompletedAt { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
+    [StringLength(450)] public string? ReviewedByUserId { get; set; }
+    public ICollection<QuoteTaskAnalysisMaterial> Materials { get; set; } = [];
+    public ICollection<QuoteTaskAnalysisExclusion> Exclusions { get; set; } = [];
+    [NotMapped] public decimal MaterialSubtotal => Materials.Sum(item => item.ExtendedCost);
+    [NotMapped] public decimal TotalCost => MaterialSubtotal + DeliveryAllowance + TaxAllowance + OtherAllowance;
+}
+
+public sealed class QuoteTaskAnalysisMaterial
+{
+    public int Id { get; set; }
+    public int QuoteTaskAnalysisId { get; set; }
+    public QuoteTaskAnalysis QuoteTaskAnalysis { get; set; } = null!;
+    public int? VendorProductId { get; set; }
+    public VendorProduct? VendorProduct { get; set; }
+    public int SortOrder { get; set; }
+    [StringLength(100)] public string? VendorSku { get; set; }
+    [Required, StringLength(500)] public string Description { get; set; } = string.Empty;
+    [Column(TypeName = "numeric(18,4)")] public decimal Quantity { get; set; }
+    [Required, StringLength(40)] public string Unit { get; set; } = "Each";
+    [Column(TypeName = "numeric(18,4)")] public decimal UnitCost { get; set; }
+    [Column(TypeName = "numeric(8,4)")] public decimal WastePercent { get; set; }
+    [Column(TypeName = "numeric(5,4)")] public decimal MatchConfidence { get; set; }
+    [StringLength(100)] public string? SourceType { get; set; }
+    [StringLength(255)] public string? SourceReference { get; set; }
+    public DateOnly? SourcePriceDate { get; set; }
+    public bool IsUnmatched { get; set; }
+    [StringLength(1000)] public string? Notes { get; set; }
+    [NotMapped] public decimal ExtendedCost =>
+        decimal.Round(Quantity * UnitCost * (1 + WastePercent / 100m), 2);
 }
 
 public sealed class QuoteProjectTaskPhoto
@@ -163,6 +239,7 @@ public sealed class QuoteVersion
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<QuoteLine> Lines { get; set; } = [];
+    public ICollection<QuoteCostSnapshot> CostSnapshots { get; set; } = [];
     [NotMapped] public decimal Subtotal => Lines.Sum(line => line.CustomerPrice);
     [NotMapped] public decimal TaxAmount => decimal.Round(Math.Max(0, Subtotal - DiscountAmount) * TaxRate / 100m, 2);
     [NotMapped] public decimal Total => Math.Max(0, Subtotal - DiscountAmount) + TaxAmount;

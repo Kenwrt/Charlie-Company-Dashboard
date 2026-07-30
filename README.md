@@ -38,6 +38,14 @@ Blazor Server dashboard for Charley Company operations metrics.
 - Serilog console logging.
 - Serilog rolling file logs in `Logs/charley-dashboard-.log` with hourly rolling filenames.
 
+## Layered Estimate Costing
+
+Costing policies are effective-dated, immutable revisions. A company-wide policy is the fallback; the active local-operation policy is a complete inherited override. Existing estimate cost snapshots retain the policy revision and supply prices used when they were created.
+
+Estimate pricing combines accepted CentCom materials, automatic standard supply kits, task/work-type crew rate cards, additional task and project costs, general-overhead allocation, contingency, and task-specific target margins. Task-level overrides remain available for exceptional projects.
+
+Material exclusions remain in the CentCom audit trail and must identify their recovery method and reference. An unmapped exclusion produces a warning rather than silently implying that its cost has been recovered.
+
 ## Run Locally
 
 The application uses PostgreSQL. Store the development connection string in .NET User Secrets so the password is never committed:
@@ -126,6 +134,28 @@ dotnet user-secrets set "Notifications:Email:SmtpHost" "smtp.example.com"
 dotnet user-secrets set "Notifications:Email:FromAddress" "dashboard@charleycompany.com"
 dotnet user-secrets set "Notifications:Email:UserName" "smtp-user"
 dotnet user-secrets set "Notifications:Email:Password" "smtp-password"
+```
+
+### Resend email
+
+Resend can send Identity messages (forgot-password and administrator password-reset links) and operator event notifications. Verify a sending domain in Resend, create a sending-only API key, and keep the key outside source control.
+
+```powershell
+dotnet user-secrets set "Email:Provider" "Resend"
+dotnet user-secrets set "Email:ResendApiKey" "re_replace_with_real_key"
+dotnet user-secrets set "Email:FromAddress" "notifications@your-verified-domain.example"
+dotnet user-secrets set "Email:FromName" "Charlie Company Ventures"
+dotnet user-secrets set "Email:ReplyToAddress" "operations@your-domain.example"
+```
+
+Production uses the equivalent environment variables:
+
+```text
+Email__Provider=Resend
+Email__ResendApiKey=re_replace_with_real_key
+Email__FromAddress=notifications@your-verified-domain.example
+Email__FromName=Charlie Company Ventures
+Email__ReplyToAddress=operations@your-domain.example
 ```
 
 SMS and iMessage notifications are represented as provider hooks. SMS should be wired to a provider such as Twilio or Azure Communication Services. Server-side iMessage delivery requires an approved Apple messaging integration, such as Apple Messages for Business; the app logs simulated iMessage notifications until that provider is configured.

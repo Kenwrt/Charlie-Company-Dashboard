@@ -6,6 +6,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
 @inject ApplicationDbContext DbContext
+@inject IJSRuntime JS
 
 <PageTitle>Supply Vendors</PageTitle>
 <h1>CCV supply vendors</h1>
@@ -32,17 +33,75 @@
 </EditForm>
 
 <section class="mt-5"><h2>Vendor directory</h2><div class="table-responsive"><table class="table"><thead><tr><th>Vendor</th><th>Contact</th><th>Location</th><th>Invoices</th><th></th></tr></thead><tbody>
- @foreach (var vendor in vendors) { <tr><td><strong>@vendor.Name</strong><br /><small>@vendor.AccountNumber</small></td><td>@vendor.Email<br />@vendor.Phone</td><td>@vendor.City, @vendor.StateOrProvince</td><td><a href="@($"admin/vendors/{vendor.Id}/invoices")">@vendor.PayableInvoices.Count invoice(s)</a><br /><a href="@($"admin/vendors/{vendor.Id}/catalog")">@vendor.VendorProducts.Count catalog item(s)</a></td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(vendor)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(vendor)">Delete</button></td></tr> }
+ @foreach (var vendor in vendors) {
+  <tr class="@(!vendor.IsActive ? "table-secondary" : null)">
+   <td><strong>@vendor.Name</strong> @if (!vendor.IsActive) { <span class="badge text-bg-secondary">Inactive</span> }<br /><small>@vendor.AccountNumber</small></td>
+   <td>@vendor.Email<br />@vendor.Phone</td>
+   <td>@vendor.City, @vendor.StateOrProvince</td>
+   <td><a href="@($"admin/vendors/{vendor.Id}/invoices")">@vendor.PayableInvoices.Count invoice(s)</a><br /><a href="@($"admin/vendors/{vendor.Id}/catalog")">@vendor.VendorProducts.Count catalog item(s)</a></td>
+   <td>
+    <div class="d-flex gap-1 flex-wrap">
+     <button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(vendor)">Edit</button>
+     @if (HasHistory(vendor))
+     {
+      <button class="btn btn-sm @(vendor.IsActive ? "btn-outline-warning" : "btn-outline-success")" @onclick="() => SetActiveAsync(vendor, !vendor.IsActive)">@(vendor.IsActive ? "Deactivate" : "Reactivate")</button>
+      <button class="btn btn-sm btn-outline-danger" disabled title="Vendors with invoice or catalog history must be retained for audit purposes.">Delete</button>
+     }
+     else
+     {
+      <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(vendor)">Delete</button>
+     }
+    </div>
+    @if (rowMessages.TryGetValue(vendor.Id, out var rowMessage))
+    {
+     <small class="text-muted d-block mt-1">@rowMessage</small>
+    }
+   </td>
+  </tr>
+ }
  </tbody></table></div></section>
 
 @code {
- private List<SupplyVendor> vendors = []; private VendorInput input = new(); private string? message;
+ private List<SupplyVendor> vendors = []; private VendorInput input = new(); private string? message; private readonly Dictionary<int, string> rowMessages = [];
  protected override Task OnInitializedAsync() => ReloadAsync();
  private async Task ReloadAsync() => vendors = await DbContext.SupplyVendors.AsNoTracking().AsSplitQuery().Include(x => x.PayableInvoices).Include(x => x.VendorProducts).OrderBy(x => x.Name).ToListAsync();
  private async Task SaveAsync() { SupplyVendor vendor; if (input.Id == 0) { vendor = new SupplyVendor(); DbContext.SupplyVendors.Add(vendor); } else vendor = await DbContext.SupplyVendors.FindAsync(input.Id) ?? throw new InvalidOperationException("Vendor not found."); Map(input, vendor); vendor.UpdatedAt = DateTimeOffset.UtcNow; await DbContext.SaveChangesAsync(); message = "Vendor saved."; Reset(); await ReloadAsync(); }
  private static void Map(VendorInput source, SupplyVendor target) { target.Name = source.Name.Trim(); target.LegalName = Clean(source.LegalName); target.AccountNumber = Clean(source.AccountNumber); target.Email = Clean(source.Email); target.Phone = Clean(source.Phone); target.AddressLine1 = Clean(source.AddressLine1); target.AddressLine2 = Clean(source.AddressLine2); target.City = Clean(source.City); target.StateOrProvince = Clean(source.StateOrProvince); target.PostalCode = Clean(source.PostalCode); target.Country = source.Country.Trim(); target.TaxIdentificationNumber = Clean(source.TaxIdentificationNumber); target.IsActive = source.IsActive; }
  private void Edit(SupplyVendor vendor) => input = new VendorInput { Id = vendor.Id, Name = vendor.Name, LegalName = vendor.LegalName, AccountNumber = vendor.AccountNumber, Email = vendor.Email, Phone = vendor.Phone, AddressLine1 = vendor.AddressLine1, AddressLine2 = vendor.AddressLine2, City = vendor.City, StateOrProvince = vendor.StateOrProvince, PostalCode = vendor.PostalCode, Country = vendor.Country, TaxIdentificationNumber = vendor.TaxIdentificationNumber, IsActive = vendor.IsActive };
- private async Task DeleteAsync(SupplyVendor vendor) { if (vendor.PayableInvoices.Count != 0) { message = "This vendor has invoices and cannot be deleted. Mark it inactive instead."; return; } var tracked = await DbContext.SupplyVendors.FindAsync(vendor.Id); if (tracked is not null) { DbContext.Remove(tracked); await DbContext.SaveChangesAsync(); message = "Vendor deleted."; await ReloadAsync(); } }
+ private static bool HasHistory(SupplyVendor vendor) => vendor.PayableInvoices.Count != 0 || vendor.VendorProducts.Count != 0;
+ private async Task SetActiveAsync(SupplyVendor vendor, bool isActive)
+ {
+  var action = isActive ? "reactivate" : "deactivate";
+  if (!await JS.InvokeAsync<bool>("confirm", $"Do you really want to {action} {vendor.Name}?")) return;
+  var tracked = await DbContext.SupplyVendors.FindAsync(vendor.Id);
+  if (tracked is null) return;
+  tracked.IsActive = isActive;
+  tracked.UpdatedAt = DateTimeOffset.UtcNow;
+  await DbContext.SaveChangesAsync();
+  rowMessages[vendor.Id] = isActive ? "Vendor reactivated." : "Vendor deactivated. Its historical invoices, catalog, and source documents were retained.";
+  await ReloadAsync();
+ }
+ private async Task DeleteAsync(SupplyVendor vendor)
+ {
+  var hasInvoices = await DbContext.PayableInvoices.AnyAsync(x => x.SupplyVendorId == vendor.Id);
+  var hasCatalog = await DbContext.VendorProducts.AnyAsync(x => x.SupplyVendorId == vendor.Id);
+  var hasDocuments = await DbContext.PriceImportDocuments.AnyAsync(x => x.SupplyVendorId == vendor.Id);
+  var hasSyncJobs = await DbContext.CatalogSyncJobs.AnyAsync(x => x.SupplyVendorId == vendor.Id);
+  var hasRule = await DbContext.PriceApprovalRules.AnyAsync(x => x.SupplyVendorId == vendor.Id);
+  if (hasInvoices || hasCatalog || hasDocuments || hasSyncJobs || hasRule)
+  {
+   rowMessages[vendor.Id] = "This vendor has retained financial or catalog history. Deactivate it instead of deleting it.";
+   return;
+  }
+  if (!await JS.InvokeAsync<bool>("confirm", $"Do you really want to permanently delete {vendor.Name}?")) return;
+  var tracked = await DbContext.SupplyVendors.FindAsync(vendor.Id);
+  if (tracked is null) return;
+  DbContext.Remove(tracked);
+  await DbContext.SaveChangesAsync();
+  message = $"{vendor.Name} was deleted.";
+  rowMessages.Remove(vendor.Id);
+  await ReloadAsync();
+ }
  private void Reset() => input = new(); private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
  private sealed class VendorInput { public int Id { get; set; } [Required, StringLength(160)] public string Name { get; set; } = ""; public string? LegalName { get; set; } public string? AccountNumber { get; set; } [EmailAddress] public string? Email { get; set; } public string? Phone { get; set; } public string? AddressLine1 { get; set; } public string? AddressLine2 { get; set; } public string? City { get; set; } public string? StateOrProvince { get; set; } public string? PostalCode { get; set; } public string Country { get; set; } = "United States"; public string? TaxIdentificationNumber { get; set; } public bool IsActive { get; set; } = true; }
 }

@@ -66,19 +66,19 @@
                         <dl>
                             <div>
                                 <dt>Open AP</dt>
-                                <dd>@dashboard.Summary.OpenAccountsPayable.ToString("C0")</dd>
+                                <dd>@dashboard.Summary.OpenAccountsPayable.ToString("C2")</dd>
                             </div>
                             <div>
                                 <dt>Debt</dt>
-                                <dd>@dashboard.Summary.DebtOutstanding.ToString("C0")</dd>
+                                <dd>@dashboard.Summary.DebtOutstanding.ToString("C2")</dd>
                             </div>
                             <div>
                                 <dt>Reserve</dt>
-                                <dd>@dashboard.Summary.ReserveSurplusOrDeficit.ToString("C0")</dd>
+                                <dd>@dashboard.Summary.ReserveSurplusOrDeficit.ToString("C2")</dd>
                             </div>
                             <div>
                                 <dt>Adjusted profit</dt>
-                                <dd>@dashboard.Summary.AdjustedEconomicProfitProxy.ToString("C0")</dd>
+                                <dd>@dashboard.Summary.AdjustedEconomicProfitProxy.ToString("C2")</dd>
                             </div>
                         </dl>
                     </NavLink>
@@ -93,11 +93,11 @@
             <article class="finance-panel">
                 <h2>True financial position</h2>
                 <dl class="finance-definition-list">
-                    <div><dt>Known accounting profit</dt><dd>@entityDashboard.Summary.KnownAccountingProfit.ToString("C0")</dd></div>
-                    <div><dt>Unrecorded AP and debt</dt><dd>@((entityDashboard.Summary.OpenAccountsPayable + entityDashboard.Summary.DebtOutstanding).ToString("C0"))</dd></div>
-                    <div><dt>Owner benefits pending classification</dt><dd>@entityDashboard.Summary.OwnerBenefits.ToString("C0")</dd></div>
-                    <div><dt>Adjusted economic profit proxy</dt><dd>@entityDashboard.Summary.AdjustedEconomicProfitProxy.ToString("C0")</dd></div>
-                    <div><dt>Cash variance</dt><dd>@entityDashboard.Summary.CashVariance.ToString("C0")</dd></div>
+                    <div><dt>Known accounting profit</dt><dd>@entityDashboard.Summary.KnownAccountingProfit.ToString("C2")</dd></div>
+                    <div><dt>Unrecorded AP and debt</dt><dd>@((entityDashboard.Summary.OpenAccountsPayable + entityDashboard.Summary.DebtOutstanding).ToString("C2"))</dd></div>
+                    <div><dt>Owner benefits pending classification</dt><dd>@entityDashboard.Summary.OwnerBenefits.ToString("C2")</dd></div>
+                    <div><dt>Adjusted economic profit proxy</dt><dd>@entityDashboard.Summary.AdjustedEconomicProfitProxy.ToString("C2")</dd></div>
+                    <div><dt>Cash variance</dt><dd>@entityDashboard.Summary.CashVariance.ToString("C2")</dd></div>
                 </dl>
             </article>
 
@@ -121,10 +121,10 @@
                                 <tr>
                                     <td>@week.WeekNumber</td>
                                     <td>@week.WeekEnding.ToString("MM/dd/yyyy")</td>
-                                    <td>@week.ExpectedCollections.ToString("C0")</td>
-                                    <td>@week.TotalCashUses.ToString("C0")</td>
-                                    <td>@week.EndingCash.ToString("C0")</td>
-                                    <td>@week.ReserveSurplusOrDeficit.ToString("C0")</td>
+                                    <td>@week.ExpectedCollections.ToString("C2")</td>
+                                    <td>@week.TotalCashUses.ToString("C2")</td>
+                                    <td>@week.EndingCash.ToString("C2")</td>
+                                    <td>@week.ReserveSurplusOrDeficit.ToString("C2")</td>
                                 </tr>
                             }
                         </tbody>
@@ -152,10 +152,10 @@
                                 <tr>
                                     <td>@item.Vendor</td>
                                     <td>@item.Tier</td>
-                                    <td>@item.OpenBalance.ToString("C0")</td>
+                                    <td>@item.OpenBalance.ToString("C2")</td>
                                     <td>@item.DaysPastDue(entityDashboard.EntityData.Assumptions.ReviewDate).ToString("N0")</td>
                                     <td>@item.AgingBucket(entityDashboard.EntityData.Assumptions.ReviewDate)</td>
-                                    <td>@item.ProposedWeeklyPayment.ToString("C0")</td>
+                                    <td>@item.ProposedWeeklyPayment.ToString("C2")</td>
                                 </tr>
                             }
                         </tbody>
@@ -182,8 +182,8 @@
                                 <tr>
                                     <td>@job.JobNumber</td>
                                     <td>@job.Customer</td>
-                                    <td>@job.ContractAmount.ToString("C0")</td>
-                                    <td>@job.GrossProfit.ToString("C0")</td>
+                                    <td>@job.ContractAmount.ToString("C2")</td>
+                                    <td>@job.GrossProfit.ToString("C2")</td>
                                     <td>@job.GrossMargin.ToString("P1")</td>
                                 </tr>
                             }
@@ -306,10 +306,10 @@
 
     private static IReadOnlyList<DashboardMetric> BuildFinanceMetrics(FinanceSummary summary) =>
     [
-        new("Known revenue", summary.KnownRevenue.ToString("C0"), "Workbook control panel revenue", "accent-revenue"),
-        new("Open AP", summary.OpenAccountsPayable.ToString("C0"), $"{summary.MaxApDaysPastDue:N0} max days past due", "accent-expenses"),
-        new("Debt outstanding", summary.DebtOutstanding.ToString("C0"), "Debt, notes, cards, and tax liabilities", "accent-expired"),
-        new("Reserve surplus / deficit", summary.ReserveSurplusOrDeficit.ToString("C0"), "Ending cash less reserve target", "accent-quotes"),
+        new("Known revenue", summary.KnownRevenue.ToString("C2"), "Workbook control panel revenue", "accent-revenue"),
+        new("Open AP", summary.OpenAccountsPayable.ToString("C2"), $"{summary.MaxApDaysPastDue:N0} max days past due", "accent-expenses"),
+        new("Debt outstanding", summary.DebtOutstanding.ToString("C2"), "Debt, notes, cards, and tax liabilities", "accent-expired"),
+        new("Reserve surplus / deficit", summary.ReserveSurplusOrDeficit.ToString("C2"), "Ending cash less reserve target", "accent-quotes"),
         new("CCV readiness", summary.ReadinessScore.ToString("P0"), "Average readiness scorecard pass rate", "accent-jobs")
     ];
 

@@ -7,7 +7,9 @@ using Microsoft.Extensions.Options;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
-public sealed class SmtpIdentityEmailSender(IOptions<EmailOptions> options) : IEmailSender<ApplicationUser>
+public sealed class SmtpIdentityEmailSender(
+    IOptions<EmailOptions> options,
+    ResendEmailClient resend) : IEmailSender<ApplicationUser>
 {
     private readonly EmailOptions settings = options.Value;
 
@@ -22,6 +24,12 @@ public sealed class SmtpIdentityEmailSender(IOptions<EmailOptions> options) : IE
 
     private async Task SendAsync(string recipient, string subject, string htmlBody)
     {
+        if (settings.Provider.Equals("Resend", StringComparison.OrdinalIgnoreCase))
+        {
+            await resend.SendAsync(recipient, subject, htmlBody);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(settings.SmtpHost) || string.IsNullOrWhiteSpace(settings.FromAddress))
             throw new InvalidOperationException("Email service is not configured. Set Email:SmtpHost and Email:FromAddress.");
 

@@ -24,6 +24,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<QuoteLine> QuoteLines => Set<QuoteLine>();
     public DbSet<QuoteProjectTask> QuoteProjectTasks => Set<QuoteProjectTask>();
     public DbSet<QuoteProjectTaskPhoto> QuoteProjectTaskPhotos => Set<QuoteProjectTaskPhoto>();
+    public DbSet<QuoteTaskAnalysis> QuoteTaskAnalyses => Set<QuoteTaskAnalysis>();
+    public DbSet<QuoteTaskAnalysisMaterial> QuoteTaskAnalysisMaterials => Set<QuoteTaskAnalysisMaterial>();
     public DbSet<QuotePricingRule> QuotePricingRules => Set<QuotePricingRule>();
     public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
     public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
@@ -35,6 +37,17 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<HousecallProJobFollowUp> HousecallProJobFollowUps => Set<HousecallProJobFollowUp>();
     public DbSet<CentComChatSession> CentComChatSessions => Set<CentComChatSession>();
     public DbSet<CentComChatMessage> CentComChatMessages => Set<CentComChatMessage>();
+    public DbSet<CostingPolicyVersion> CostingPolicyVersions => Set<CostingPolicyVersion>();
+    public DbSet<CostingPolicyRule> CostingPolicyRules => Set<CostingPolicyRule>();
+    public DbSet<QuoteCostSnapshot> QuoteCostSnapshots => Set<QuoteCostSnapshot>();
+    public DbSet<QuoteTaskCostSnapshot> QuoteTaskCostSnapshots => Set<QuoteTaskCostSnapshot>();
+    public DbSet<MaterialExclusionRule> MaterialExclusionRules => Set<MaterialExclusionRule>();
+    public DbSet<QuoteTaskAnalysisExclusion> QuoteTaskAnalysisExclusions => Set<QuoteTaskAnalysisExclusion>();
+    public DbSet<StandardSupplyKit> StandardSupplyKits => Set<StandardSupplyKit>();
+    public DbSet<StandardSupplyKitItem> StandardSupplyKitItems => Set<StandardSupplyKitItem>();
+    public DbSet<CrewRateCard> CrewRateCards => Set<CrewRateCard>();
+    public DbSet<TaskMarginRule> TaskMarginRules => Set<TaskMarginRule>();
+    public DbSet<QuoteTaskSupplyCostSnapshot> QuoteTaskSupplyCostSnapshots => Set<QuoteTaskSupplyCostSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -144,7 +157,82 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(photo => new { photo.QuoteProjectTaskId, photo.CapturedAt });
             entity.HasOne(photo => photo.QuoteProjectTask).WithMany(task => task.Photos).HasForeignKey(photo => photo.QuoteProjectTaskId).OnDelete(DeleteBehavior.Cascade);
         });
+        builder.Entity<QuoteTaskAnalysis>(entity =>
+        {
+            entity.HasIndex(analysis => new { analysis.QuoteProjectTaskId, analysis.RevisionNumber }).IsUnique();
+            entity.HasOne(analysis => analysis.QuoteProjectTask)
+                .WithMany(task => task.Analyses)
+                .HasForeignKey(analysis => analysis.QuoteProjectTaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<QuoteTaskAnalysisMaterial>(entity =>
+        {
+            entity.HasIndex(item => new { item.QuoteTaskAnalysisId, item.SortOrder }).IsUnique();
+            entity.HasOne(item => item.QuoteTaskAnalysis)
+                .WithMany(analysis => analysis.Materials)
+                .HasForeignKey(item => item.QuoteTaskAnalysisId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.VendorProduct)
+                .WithMany()
+                .HasForeignKey(item => item.VendorProductId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
         builder.Entity<QuotePricingRule>(entity => entity.HasIndex(rule => rule.LocalOperationId).IsUnique());
+        builder.Entity<CostingPolicyVersion>(entity =>
+        {
+            entity.HasIndex(policy => new { policy.LocalOperationId, policy.Name, policy.RevisionNumber }).IsUnique();
+            entity.HasOne(policy => policy.LocalOperation).WithMany().HasForeignKey(policy => policy.LocalOperationId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<CostingPolicyRule>(entity =>
+        {
+            entity.HasOne(rule => rule.CostingPolicyVersion).WithMany(policy => policy.Rules).HasForeignKey(rule => rule.CostingPolicyVersionId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<StandardSupplyKit>(entity =>
+        {
+            entity.HasIndex(item => new { item.CostingPolicyVersionId, item.Name }).IsUnique();
+            entity.HasOne(item => item.CostingPolicyVersion).WithMany(policy => policy.SupplyKits).HasForeignKey(item => item.CostingPolicyVersionId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<StandardSupplyKitItem>(entity =>
+        {
+            entity.HasIndex(item => new { item.StandardSupplyKitId, item.VendorProductId }).IsUnique();
+            entity.HasOne(item => item.StandardSupplyKit).WithMany(kit => kit.Items).HasForeignKey(item => item.StandardSupplyKitId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.VendorProduct).WithMany().HasForeignKey(item => item.VendorProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<CrewRateCard>(entity =>
+        {
+            entity.HasIndex(item => new { item.CostingPolicyVersionId, item.TaskType, item.WorkType }).IsUnique();
+            entity.HasOne(item => item.CostingPolicyVersion).WithMany(policy => policy.CrewRates).HasForeignKey(item => item.CostingPolicyVersionId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<TaskMarginRule>(entity =>
+        {
+            entity.HasIndex(item => new { item.CostingPolicyVersionId, item.TaskType, item.WorkType }).IsUnique();
+            entity.HasOne(item => item.CostingPolicyVersion).WithMany(policy => policy.MarginRules).HasForeignKey(item => item.CostingPolicyVersionId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<MaterialExclusionRule>(entity =>
+        {
+            entity.HasIndex(rule => new { rule.MatchPhrase, rule.TaskType }).IsUnique();
+        });
+        builder.Entity<QuoteTaskAnalysisExclusion>(entity =>
+        {
+            entity.HasOne(item => item.QuoteTaskAnalysis).WithMany(analysis => analysis.Exclusions).HasForeignKey(item => item.QuoteTaskAnalysisId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.MaterialExclusionRule).WithMany().HasForeignKey(item => item.MaterialExclusionRuleId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<QuoteCostSnapshot>(entity =>
+        {
+            entity.HasIndex(snapshot => new { snapshot.QuoteVersionId, snapshot.RevisionNumber }).IsUnique();
+            entity.HasOne(snapshot => snapshot.QuoteVersion).WithMany(version => version.CostSnapshots).HasForeignKey(snapshot => snapshot.QuoteVersionId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(snapshot => snapshot.CostingPolicyVersion).WithMany().HasForeignKey(snapshot => snapshot.CostingPolicyVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<QuoteTaskCostSnapshot>(entity =>
+        {
+            entity.HasOne(snapshot => snapshot.QuoteCostSnapshot).WithMany(cost => cost.Tasks).HasForeignKey(snapshot => snapshot.QuoteCostSnapshotId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(snapshot => snapshot.QuoteProjectTask).WithMany(task => task.CostSnapshots).HasForeignKey(snapshot => snapshot.QuoteProjectTaskId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<QuoteTaskSupplyCostSnapshot>(entity =>
+        {
+            entity.HasOne(item => item.QuoteTaskCostSnapshot).WithMany(task => task.RequiredSupplies).HasForeignKey(item => item.QuoteTaskCostSnapshotId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.VendorProduct).WithMany().HasForeignKey(item => item.VendorProductId).OnDelete(DeleteBehavior.SetNull);
+        });
         builder.Entity<QuoteAuditEvent>(entity => entity.HasOne(item => item.QuoteCase).WithMany(quote => quote.AuditEvents).HasForeignKey(item => item.QuoteCaseId).OnDelete(DeleteBehavior.Cascade));
         builder.Entity<QuoteProcessingJob>(entity =>
         {

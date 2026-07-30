@@ -65,7 +65,7 @@ public sealed class SpreadsheetFinanceDataSource(OperationCatalogService operati
 
         var systemReadinessChecks = new List<ReadinessCheck>
         {
-            new("Liquidity", "Operating reserve surplus / deficit", reserveSurplus.ToString("C0"), ">= 0", reserveSurplus >= 0 ? "Pass" : "Fail", reserveSurplus >= 0 ? 1 : 0, "Company", DateOnly.FromDateTime(new DateTime(2026, 8, 15))),
+            new("Liquidity", "Operating reserve surplus / deficit", reserveSurplus.ToString("C2"), ">= 0", reserveSurplus >= 0 ? "Pass" : "Fail", reserveSurplus >= 0 ? 1 : 0, "Company", DateOnly.FromDateTime(new DateTime(2026, 8, 15))),
             new("AP", "No vendors >60 days without payment plan", data.AccountsPayable.Max(item => item.DaysPastDue(asOfDate)).ToString("N0"), "<= 60 or approved plan", data.AccountsPayable.Max(item => item.DaysPastDue(asOfDate)) <= data.Assumptions.ApPolicyLimitDays ? "Pass" : "Fail", data.AccountsPayable.Max(item => item.DaysPastDue(asOfDate)) <= data.Assumptions.ApPolicyLimitDays ? 1 : 0, "Company", DateOnly.FromDateTime(new DateTime(2026, 8, 15)))
         };
 

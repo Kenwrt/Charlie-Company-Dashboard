@@ -19,8 +19,11 @@
 
   <ItemGroup>
     <Content Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;bin\**;obj\**" />
+    <Content Remove="Tools\**" />
+    <Compile Remove="Tools\**\*.cs" />
     <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
     <None Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;bin\**;obj\**" />
+    <None Remove="Tools\**" />
   </ItemGroup>
 
 </Project>

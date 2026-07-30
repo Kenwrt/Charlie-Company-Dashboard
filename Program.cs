@@ -76,6 +76,11 @@ try
         .AddDefaultTokenProviders();
 
     builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+    builder.Services.AddHttpClient<ResendEmailClient>(client =>
+    {
+        client.BaseAddress = new Uri("https://api.resend.com/");
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
     builder.Services.AddScoped<IEmailSender<ApplicationUser>, SmtpIdentityEmailSender>();
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
     builder.Services.Configure<CentComOptions>(builder.Configuration.GetSection(CentComOptions.SectionName));
@@ -97,6 +102,8 @@ try
     builder.Services.AddScoped<HousecallProDashboardDataSource>();
     builder.Services.AddHttpClient<HousecallProDataService>();
     builder.Services.AddHttpClient<CentComChatClient>();
+    builder.Services.AddScoped<CentComTaskAnalysisService>();
+    builder.Services.AddHostedService<CentComTaskAnalysisWorker>();
     builder.Services.AddScoped<IDashboardDataSource>(services => services.GetRequiredService<HousecallProDashboardDataSource>());
     builder.Services.AddHostedService<HousecallProSyncService>();
 

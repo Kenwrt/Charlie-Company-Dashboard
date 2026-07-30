@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260729203110_AddVersionedCostingPolicies")]
+    partial class AddVersionedCostingPolicies
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -125,7 +128,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("SupplyVendorId");
 
-                    b.ToTable("CatalogSyncJobs", (string)null);
+                    b.ToTable("CatalogSyncJobs");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatMessage", b =>
@@ -156,7 +159,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("CentComChatSessionId", "CreatedAt");
 
-                    b.ToTable("CentComChatMessages", (string)null);
+                    b.ToTable("CentComChatMessages");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CentComChatSession", b =>
@@ -187,7 +190,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("CreatedByUserId", "UpdatedAt");
 
-                    b.ToTable("CentComChatSessions", (string)null);
+                    b.ToTable("CentComChatSessions");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CostingPolicyRule", b =>
@@ -234,7 +237,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("CostingPolicyVersionId");
 
-                    b.ToTable("CostingPolicyRules", (string)null);
+                    b.ToTable("CostingPolicyRules");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CostingPolicyVersion", b =>
@@ -270,9 +273,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<DateOnly?>("EndDate")
                         .HasColumnType("date");
 
-                    b.Property<decimal>("ExpectedMonthlyProductiveCrewDays")
-                        .HasColumnType("numeric(8,2)");
-
                     b.Property<decimal>("GeneralOverheadFixed")
                         .HasColumnType("numeric(18,2)");
 
@@ -287,9 +287,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.Property<int?>("LocalOperationId")
                         .HasColumnType("integer");
-
-                    b.Property<decimal>("MonthlyOverheadBudget")
-                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -308,48 +305,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("LocalOperationId", "Name", "RevisionNumber")
                         .IsUnique();
 
-                    b.ToTable("CostingPolicyVersions", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CrewRateCard", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CostingPolicyVersionId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("CrewSize")
-                        .HasColumnType("numeric(8,2)");
-
-                    b.Property<decimal>("DailyCrewCost")
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("TaskType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("WorkType")
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CostingPolicyVersionId", "TaskType", "WorkType")
-                        .IsUnique();
-
-                    b.ToTable("CrewRateCards", (string)null);
+                    b.ToTable("CostingPolicyVersions");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
@@ -438,7 +394,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("LocalOperationId", "Status");
 
-                    b.ToTable("HousecallProEstimates", (string)null);
+                    b.ToTable("HousecallProEstimates");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimateCommunication", b =>
@@ -483,7 +439,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("HousecallProEstimateId", "EnteredAt");
 
-                    b.ToTable("HousecallProEstimateCommunications", (string)null);
+                    b.ToTable("HousecallProEstimateCommunications");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimateFollowUp", b =>
@@ -523,7 +479,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("HousecallProEstimateId", "EnteredAt");
 
-                    b.ToTable("HousecallProEstimateFollowUps", (string)null);
+                    b.ToTable("HousecallProEstimateFollowUps");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProJob", b =>
@@ -618,7 +574,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("LocalOperationId", "WorkStatus");
 
-                    b.ToTable("HousecallProJobs", (string)null);
+                    b.ToTable("HousecallProJobs");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProJobFollowUp", b =>
@@ -658,7 +614,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("HousecallProJobId", "EnteredAt");
 
-                    b.ToTable("HousecallProJobFollowUps", (string)null);
+                    b.ToTable("HousecallProJobFollowUps");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.InvoiceLine", b =>
@@ -702,7 +658,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("VendorProductId");
 
-                    b.ToTable("InvoiceLines", (string)null);
+                    b.ToTable("InvoiceLines");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.LocalOperation", b =>
@@ -791,55 +747,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("Slug")
                         .IsUnique();
 
-                    b.ToTable("LocalOperations", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.MaterialExclusionRule", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("MatchPhrase")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("RecoveryReference")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("RecoveryType")
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.Property<string>("TaskType")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("MatchPhrase", "TaskType")
-                        .IsUnique();
-
-                    b.ToTable("MaterialExclusionRules", (string)null);
+                    b.ToTable("LocalOperations");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.NotificationRecipient", b =>
@@ -889,7 +797,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("NotificationRecipients", (string)null);
+                    b.ToTable("NotificationRecipients");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.OperationIntegration", b =>
@@ -925,7 +833,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("LocalOperationId", "Provider")
                         .IsUnique();
 
-                    b.ToTable("OperationIntegrations", (string)null);
+                    b.ToTable("OperationIntegrations");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.OperationalEvent", b =>
@@ -1024,7 +932,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("LocalOperationId", "Timestamp");
 
-                    b.ToTable("OperationalEvents", (string)null);
+                    b.ToTable("OperationalEvents");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PayableInvoice", b =>
@@ -1085,7 +993,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("SupplyVendorId", "InvoiceNumber")
                         .IsUnique();
 
-                    b.ToTable("PayableInvoices", (string)null);
+                    b.ToTable("PayableInvoices");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceApprovalRule", b =>
@@ -1116,7 +1024,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("SupplyVendorId")
                         .IsUnique();
 
-                    b.ToTable("PriceApprovalRules", (string)null);
+                    b.ToTable("PriceApprovalRules");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportDocument", b =>
@@ -1165,7 +1073,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("SupplyVendorId");
 
-                    b.ToTable("PriceImportDocuments", (string)null);
+                    b.ToTable("PriceImportDocuments");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.PriceImportRow", b =>
@@ -1212,7 +1120,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("VendorProductId");
 
-                    b.ToTable("PriceImportRows", (string)null);
+                    b.ToTable("PriceImportRows");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.Product", b =>
@@ -1252,7 +1160,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("Manufacturer", "ManufacturerPartNumber");
 
-                    b.ToTable("Products", (string)null);
+                    b.ToTable("Products");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteAuditEvent", b =>
@@ -1291,7 +1199,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("QuoteCaseId");
 
-                    b.ToTable("QuoteAuditEvents", (string)null);
+                    b.ToTable("QuoteAuditEvents");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteCase", b =>
@@ -1365,7 +1273,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("LocalOperationId", "Status");
 
-                    b.ToTable("QuoteCases", (string)null);
+                    b.ToTable("QuoteCases");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteCostSnapshot", b =>
@@ -1424,7 +1332,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("QuoteVersionId", "RevisionNumber")
                         .IsUnique();
 
-                    b.ToTable("QuoteCostSnapshots", (string)null);
+                    b.ToTable("QuoteCostSnapshots");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteLine", b =>
@@ -1484,7 +1392,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("QuoteVersionId");
 
-                    b.ToTable("QuoteLines", (string)null);
+                    b.ToTable("QuoteLines");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuotePricingRule", b =>
@@ -1518,7 +1426,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("LocalOperationId")
                         .IsUnique();
 
-                    b.ToTable("QuotePricingRules", (string)null);
+                    b.ToTable("QuotePricingRules");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProcessingJob", b =>
@@ -1558,7 +1466,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("QuoteProjectTaskId");
 
-                    b.ToTable("QuoteProcessingJobs", (string)null);
+                    b.ToTable("QuoteProcessingJobs");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTask", b =>
@@ -1606,16 +1514,12 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("WorkType")
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
                     b.HasKey("Id");
 
                     b.HasIndex("QuoteCaseId", "SortOrder")
                         .IsUnique();
 
-                    b.ToTable("QuoteProjectTasks", (string)null);
+                    b.ToTable("QuoteProjectTasks");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteProjectTaskPhoto", b =>
@@ -1664,7 +1568,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("QuoteProjectTaskId", "CapturedAt");
 
-                    b.ToTable("QuoteProjectTaskPhotos", (string)null);
+                    b.ToTable("QuoteProjectTaskPhotos");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysis", b =>
@@ -1729,43 +1633,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("QuoteProjectTaskId", "RevisionNumber")
                         .IsUnique();
 
-                    b.ToTable("QuoteTaskAnalyses", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysisExclusion", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTimeOffset>("ExcludedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("MaterialExclusionRuleId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("QuoteTaskAnalysisId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("MaterialExclusionRuleId");
-
-                    b.HasIndex("QuoteTaskAnalysisId");
-
-                    b.ToTable("QuoteTaskAnalysisExclusions", (string)null);
+                    b.ToTable("QuoteTaskAnalyses");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysisMaterial", b =>
@@ -1836,7 +1704,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("QuoteTaskAnalysisId", "SortOrder")
                         .IsUnique();
 
-                    b.ToTable("QuoteTaskAnalysisMaterials", (string)null);
+                    b.ToTable("QuoteTaskAnalysisMaterials");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskCostSnapshot", b =>
@@ -1846,9 +1714,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("AllocatedProjectOverhead")
-                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("AppliedRules")
                         .HasMaxLength(2000)
@@ -1878,15 +1743,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<int>("QuoteProjectTaskId")
                         .HasColumnType("integer");
 
-                    b.Property<decimal>("RequiredSupplyCost")
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<decimal>("SuggestedCustomerPrice")
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<decimal>("TargetMarginPercent")
-                        .HasColumnType("numeric(8,4)");
-
                     b.Property<decimal>("TaskOverhead")
                         .HasColumnType("numeric(18,2)");
 
@@ -1899,52 +1755,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("QuoteProjectTaskId");
 
-                    b.ToTable("QuoteTaskCostSnapshots", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskSupplyCostSnapshot", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<decimal>("ExtendedCost")
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("KitName")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<decimal>("Quantity")
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<int>("QuoteTaskCostSnapshotId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("UnitCost")
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<int?>("VendorProductId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("WastePercent")
-                        .HasColumnType("numeric(8,4)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("QuoteTaskCostSnapshotId");
-
-                    b.HasIndex("VendorProductId");
-
-                    b.ToTable("QuoteTaskSupplyCostSnapshots", (string)null);
+                    b.ToTable("QuoteTaskCostSnapshots");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteVersion", b =>
@@ -1991,80 +1802,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("QuoteCaseId", "VersionNumber")
                         .IsUnique();
 
-                    b.ToTable("QuoteVersions", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.StandardSupplyKit", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CostingPolicyVersionId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("TaskType")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("WorkType")
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CostingPolicyVersionId", "Name")
-                        .IsUnique();
-
-                    b.ToTable("StandardSupplyKits", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.StandardSupplyKitItem", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<decimal>("Quantity")
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<int>("StandardSupplyKitId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("VendorProductId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("WastePercent")
-                        .HasColumnType("numeric(8,4)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("VendorProductId");
-
-                    b.HasIndex("StandardSupplyKitId", "VendorProductId")
-                        .IsUnique();
-
-                    b.ToTable("StandardSupplyKitItems", (string)null);
+                    b.ToTable("QuoteVersions");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.SupplyVendor", b =>
@@ -2138,45 +1876,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("Name");
 
-                    b.ToTable("SupplyVendors", (string)null);
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.TaskMarginRule", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CostingPolicyVersionId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<decimal>("TargetMarginPercent")
-                        .HasColumnType("numeric(8,4)");
-
-                    b.Property<string>("TaskType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("WorkType")
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CostingPolicyVersionId", "TaskType", "WorkType")
-                        .IsUnique();
-
-                    b.ToTable("TaskMarginRules", (string)null);
+                    b.ToTable("SupplyVendors");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.UserLocalOperation", b =>
@@ -2191,7 +1891,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.HasIndex("LocalOperationId");
 
-                    b.ToTable("UserLocalOperations", (string)null);
+                    b.ToTable("UserLocalOperations");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.VendorPrice", b =>
@@ -2231,7 +1931,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("VendorProductId", "EffectiveDate")
                         .IsUnique();
 
-                    b.ToTable("VendorPrices", (string)null);
+                    b.ToTable("VendorPrices");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.VendorProduct", b =>
@@ -2276,7 +1976,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.HasIndex("SupplyVendorId", "VendorSku")
                         .IsUnique();
 
-                    b.ToTable("VendorProducts", (string)null);
+                    b.ToTable("VendorProducts");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
@@ -2484,17 +2184,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("LocalOperation");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CrewRateCard", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.CostingPolicyVersion", "CostingPolicyVersion")
-                        .WithMany("CrewRates")
-                        .HasForeignKey("CostingPolicyVersionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CostingPolicyVersion");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
@@ -2770,25 +2459,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("QuoteProjectTask");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysisExclusion", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.MaterialExclusionRule", "MaterialExclusionRule")
-                        .WithMany()
-                        .HasForeignKey("MaterialExclusionRuleId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysis", "QuoteTaskAnalysis")
-                        .WithMany("Exclusions")
-                        .HasForeignKey("QuoteTaskAnalysisId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("MaterialExclusionRule");
-
-                    b.Navigation("QuoteTaskAnalysis");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysisMaterial", b =>
                 {
                     b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysis", "QuoteTaskAnalysis")
@@ -2826,24 +2496,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("QuoteProjectTask");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskSupplyCostSnapshot", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteTaskCostSnapshot", "QuoteTaskCostSnapshot")
-                        .WithMany("RequiredSupplies")
-                        .HasForeignKey("QuoteTaskCostSnapshotId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.VendorProduct", "VendorProduct")
-                        .WithMany()
-                        .HasForeignKey("VendorProductId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("QuoteTaskCostSnapshot");
-
-                    b.Navigation("VendorProduct");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteVersion", b =>
                 {
                     b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteCase", "QuoteCase")
@@ -2853,47 +2505,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("QuoteCase");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.StandardSupplyKit", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.CostingPolicyVersion", "CostingPolicyVersion")
-                        .WithMany("SupplyKits")
-                        .HasForeignKey("CostingPolicyVersionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CostingPolicyVersion");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.StandardSupplyKitItem", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.StandardSupplyKit", "StandardSupplyKit")
-                        .WithMany("Items")
-                        .HasForeignKey("StandardSupplyKitId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.VendorProduct", "VendorProduct")
-                        .WithMany()
-                        .HasForeignKey("VendorProductId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("StandardSupplyKit");
-
-                    b.Navigation("VendorProduct");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.TaskMarginRule", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.CostingPolicyVersion", "CostingPolicyVersion")
-                        .WithMany("MarginRules")
-                        .HasForeignKey("CostingPolicyVersionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CostingPolicyVersion");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.UserLocalOperation", b =>
@@ -3009,7 +2620,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                             b1.HasKey("IdentityUserPasskeyCredentialId");
 
-                            b1.ToTable("AspNetUserPasskeys", (string)null);
+                            b1.ToTable("AspNetUserPasskeys");
 
                             b1
                                 .ToJson("Data")
@@ -3059,13 +2670,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.CostingPolicyVersion", b =>
                 {
-                    b.Navigation("CrewRates");
-
-                    b.Navigation("MarginRules");
-
                     b.Navigation("Rules");
-
-                    b.Navigation("SupplyKits");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.HousecallProEstimate", b =>
@@ -3129,14 +2734,7 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysis", b =>
                 {
-                    b.Navigation("Exclusions");
-
                     b.Navigation("Materials");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskCostSnapshot", b =>
-                {
-                    b.Navigation("RequiredSupplies");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteVersion", b =>
@@ -3144,11 +2742,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("CostSnapshots");
 
                     b.Navigation("Lines");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.StandardSupplyKit", b =>
-                {
-                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.SupplyVendor", b =>

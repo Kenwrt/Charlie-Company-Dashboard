@@ -75,9 +75,9 @@
                     <td>@job.Address</td>
                     <td>@EffectiveStatus(job)</td>
                     <td>@(job.ScheduledStart?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not provided")</td>
-                    <td>@job.JobPrice.ToString("C")</td>
-                    <td>@job.TotalAmount.ToString("C")</td>
-                    <td>@job.OutstandingBalance.ToString("C")</td>
+                    <td>@job.JobPrice.ToString("C2")</td>
+                    <td>@job.TotalAmount.ToString("C2")</td>
+                    <td>@job.OutstandingBalance.ToString("C2")</td>
                     <td><a class="btn btn-sm btn-outline-primary" href="@($"hcp/{job.LocalOperation.Slug}/jobs/{job.ExternalId}")">Details</a></td>
                 </tr>
             }
@@ -85,9 +85,9 @@
             <tfoot>
                 <tr class="table-light fw-bold">
                     <td colspan="6">Filtered totals (@totalCount @(totalCount == 1 ? "job" : "jobs"))</td>
-                    <td>@totalJobPrice.ToString("C")</td>
-                    <td>@totalAmountInvoiced.ToString("C")</td>
-                    <td>@totalUncollected.ToString("C")</td>
+                    <td>@totalJobPrice.ToString("C2")</td>
+                    <td>@totalAmountInvoiced.ToString("C2")</td>
+                    <td>@totalUncollected.ToString("C2")</td>
                     <td></td>
                 </tr>
             </tfoot>

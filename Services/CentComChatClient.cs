@@ -12,6 +12,8 @@ public sealed class CentComChatClient(
     IOptions<CentComOptions> options,
     ILogger<CentComChatClient> logger)
 {
+    public sealed record RequestMessage(string Role, string Content);
+
     private readonly CentComOptions settings = options.Value;
 
     public bool IsConfigured => settings.IsConfigured;
@@ -19,6 +21,24 @@ public sealed class CentComChatClient(
     public async Task<string> CompleteAsync(
         IEnumerable<CentComChatMessage> conversation,
         CancellationToken cancellationToken = default)
+        => await CompleteAsync(
+            conversation.Select(message => new RequestMessage(message.Role, message.Content)),
+            cancellationToken);
+
+    public async Task<string> CompleteAsync(
+        IEnumerable<RequestMessage> conversation,
+        CancellationToken cancellationToken = default)
+        => await SendAsync(conversation, requireJson: false, cancellationToken);
+
+    public async Task<string> CompleteJsonAsync(
+        IEnumerable<RequestMessage> conversation,
+        CancellationToken cancellationToken = default)
+        => await SendAsync(conversation, requireJson: true, cancellationToken);
+
+    private async Task<string> SendAsync(
+        IEnumerable<RequestMessage> conversation,
+        bool requireJson,
+        CancellationToken cancellationToken)
     {
         if (!settings.IsConfigured)
         {
@@ -34,14 +54,19 @@ public sealed class CentComChatClient(
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
         }
 
-        request.Content = JsonContent.Create(new
-        {
-            model = settings.Model,
-            messages = conversation
-                .OrderBy(x => x.CreatedAt)
-                .Select(x => new { role = x.Role, content = x.Content })
-                .ToArray()
-        });
+        var messages = conversation
+            .Select(x => new { role = x.Role, content = x.Content })
+            .ToArray();
+        request.Content = requireJson
+            ? JsonContent.Create(new
+            {
+                model = settings.Model,
+                messages,
+                response_format = new { type = "json_object" },
+                temperature = 0,
+                max_tokens = 8192
+            })
+            : JsonContent.Create(new { model = settings.Model, messages });
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);

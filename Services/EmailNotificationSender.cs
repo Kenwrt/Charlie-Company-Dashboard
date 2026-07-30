@@ -8,9 +8,12 @@ namespace CharleyCompany.Dashboard.Web.Services;
 
 public sealed class EmailNotificationSender(
     IOptions<NotificationOptions> options,
+    IOptions<EmailOptions> identityEmailOptions,
+    ResendEmailClient resend,
     ILogger<EmailNotificationSender> logger) : IOutboundNotificationSender
 {
     private readonly EmailNotificationOptions emailOptions = options.Value.Email;
+    private readonly EmailOptions sharedEmailOptions = identityEmailOptions.Value;
 
     public async Task SendAsync(NotificationRecipient recipient, NotificationMessage message, CancellationToken cancellationToken)
     {
@@ -21,6 +24,18 @@ public sealed class EmailNotificationSender(
 
         try
         {
+            if (sharedEmailOptions.Provider.Equals("Resend", StringComparison.OrdinalIgnoreCase))
+            {
+                await resend.SendAsync(
+                    recipient.EmailAddress,
+                    message.Subject,
+                    $"<p>{WebUtility.HtmlEncode(message.Body).Replace(Environment.NewLine, "<br />")}</p>",
+                    message.Body,
+                    cancellationToken);
+                logger.LogInformation("Resend notification sent to {EmailAddress} for {EventType}.", recipient.EmailAddress, message.EventType);
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(emailOptions.SmtpHost))
             {
                 logger.LogInformation(
@@ -56,4 +71,3 @@ public sealed class EmailNotificationSender(
         }
     }
 }
-
