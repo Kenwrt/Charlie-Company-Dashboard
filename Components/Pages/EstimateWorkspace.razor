@@ -1380,24 +1380,17 @@ else
         if (!confirmed) return;
 
         await using var db = await DbFactory.CreateDbContextAsync();
-        if (await db.QuoteTaskCostSnapshots.AnyAsync(x => x.QuoteProjectTaskId == task.Id))
-        {
-            message = "This task is part of an immutable cost snapshot and cannot be deleted. Create a new estimate revision instead.";
-            return;
-        }
         await using var transaction = await db.Database.BeginTransactionAsync();
         var tracked = await db.QuoteProjectTasks
-            .Include(x => x.Photos)
             .SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (tracked is null) return;
 
-        var storedPaths = tracked.Photos
-            .Select(x => x.StoragePath)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToList();
         var deletedTaskNumber = tracked.SortOrder;
         var deletedTaskType = tracked.TaskType;
-        db.QuoteProjectTasks.Remove(tracked);
+        tracked.IsDeleted = true;
+        tracked.DeletedAt = DateTimeOffset.UtcNow;
+        tracked.UpdatedAt = tracked.DeletedAt.Value;
+        tracked.SortOrder = int.MinValue + tracked.Id;
         await db.SaveChangesAsync();
 
         var remainingTasks = await db.QuoteProjectTasks
@@ -1414,25 +1407,9 @@ else
             remainingTasks[index].SortOrder = index + 1;
         }
 
-        await AddAuditEventAsync(db, quote, $"Project Task {deletedTaskNumber} ({deletedTaskType}) deleted.");
+        await AddAuditEventAsync(db, quote, $"Project Task {deletedTaskNumber} ({deletedTaskType}) removed from the active estimate; prior analysis and costing history retained.");
         await db.SaveChangesAsync();
         await transaction.CommitAsync();
-
-        foreach (var storedPath in storedPaths)
-        {
-            try
-            {
-                if (File.Exists(storedPath)) File.Delete(storedPath);
-            }
-            catch (IOException)
-            {
-                // The database record is authoritative; orphaned files can be cleaned up later.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // The database record is authoritative; orphaned files can be cleaned up later.
-            }
-        }
 
         await PublishEstimateEventAsync("EstimateWorkspace", "DeleteProjectTask", "Completed", $"Project Task {deletedTaskNumber} deleted.");
         message = $"Project Task {deletedTaskNumber} deleted.";

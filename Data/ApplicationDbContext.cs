@@ -150,6 +150,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<QuoteProjectTask>(entity =>
         {
             entity.HasIndex(task => new { task.QuoteCaseId, task.SortOrder }).IsUnique();
+            entity.HasQueryFilter(task => !task.IsDeleted);
             entity.HasOne(task => task.QuoteCase).WithMany(quote => quote.ProjectTasks).HasForeignKey(task => task.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<QuoteProjectTaskPhoto>(entity =>

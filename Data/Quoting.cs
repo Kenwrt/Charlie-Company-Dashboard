@@ -145,6 +145,8 @@ public sealed class QuoteProjectTask
     [Column(TypeName = "numeric(18,2)")] public decimal? DailyCrewCostOverride { get; set; }
     [Column(TypeName = "numeric(8,4)")] public decimal? ContingencyPercentOverride { get; set; }
     [Column(TypeName = "numeric(8,4)")] public decimal? TargetMarginPercentOverride { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<QuoteProjectTaskPhoto> Photos { get; set; } = [];
