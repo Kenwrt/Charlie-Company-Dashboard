@@ -13,6 +13,7 @@ namespace CharleyCompany.Dashboard.Web.Services;
 public sealed class CentComTaskAnalysisService(
     IDbContextFactory<ApplicationDbContext> dbFactory,
     CentComChatClient centCom,
+    HomeDepotCatalogLookupService homeDepot,
     IOptions<CentComOptions> options,
     ILogger<CentComTaskAnalysisService> logger)
 {
@@ -104,6 +105,16 @@ public sealed class CentComTaskAnalysisService(
                     continue;
                 }
                 var match = FindCatalogMatch(proposed, catalog);
+                HomeDepotLookupResult? remoteMatch = null;
+                if (match is null)
+                {
+                    remoteMatch = await homeDepot.FindAsync(proposed.Description, cancellationToken);
+                    if (remoteMatch?.MatchKind == HomeDepotMatchKinds.Exact)
+                    {
+                        match = await GetOrCreateHomeDepotCatalogItemAsync(db, remoteMatch, proposed.Unit, cancellationToken);
+                        catalog.Add(match);
+                    }
+                }
                 var quantity = Math.Max(0, proposed.Quantity);
                 var wastePercent = proposed.WastePercent is > 0 and <= 1
                     ? proposed.WastePercent * 100
@@ -112,20 +123,27 @@ public sealed class CentComTaskAnalysisService(
                 {
                     SortOrder = sortOrder++,
                     VendorProductId = match?.VendorProductId,
-                    VendorSku = match?.Sku ?? proposed.VendorSku?.Trim(),
-                    Description = Trim(proposed.Description, 500) ?? "Unspecified material",
+                    VendorSku = match?.Sku ?? (remoteMatch?.MatchKind == HomeDepotMatchKinds.Similar ? RemoteSku(remoteMatch) : proposed.VendorSku?.Trim()),
+                    Description = remoteMatch?.MatchKind == HomeDepotMatchKinds.Similar
+                        ? Trim(remoteMatch.Title, 500) ?? "Unspecified Home Depot alternative"
+                        : Trim(proposed.Description, 500) ?? "Unspecified material",
+                    OriginalDescription = Trim(proposed.Description, 500) ?? "Unspecified material",
                     Quantity = quantity,
                     Unit = Trim(proposed.Unit, 40) ?? match?.Unit ?? "Each",
-                    UnitCost = match?.UnitPrice ?? 0,
+                    UnitCost = match?.UnitPrice ?? remoteMatch?.UnitPrice ?? 0,
                     WastePercent = Math.Clamp(wastePercent, 0, 100),
-                    MatchConfidence = match is null ? 0 : 1,
-                    SourceType = match is null ? "CentCom estimate - unmatched" : match.VendorName,
+                    MatchConfidence = match is not null ? 1 : remoteMatch?.Confidence ?? 0,
+                    SourceType = match is not null ? match.VendorName : remoteMatch is not null ? "Home Depot via SerpApi" : "CentCom estimate - unmatched",
                     SourceReference = match is null
-                        ? null
+                        ? Trim(remoteMatch?.ProductUrl ?? remoteMatch?.SearchQuery, 255)
                         : string.Join(" · ", new[] { match.SourceType, match.SourceReference }
                             .Where(value => !string.IsNullOrWhiteSpace(value))),
                     SourcePriceDate = match?.EffectiveDate,
-                    IsUnmatched = match is null,
+                    IsUnmatched = match is null && remoteMatch is null,
+                    MatchKind = match is not null
+                        ? (match.VendorName.Equals("Home Depot", StringComparison.OrdinalIgnoreCase) ? MaterialMatchKinds.HomeDepotExact : MaterialMatchKinds.Catalog)
+                        : remoteMatch is not null ? MaterialMatchKinds.HomeDepotSimilar : MaterialMatchKinds.Unresolved,
+                    ReviewDecision = match is not null ? MaterialReviewDecisions.Accepted : MaterialReviewDecisions.Pending,
                     Notes = Trim(proposed.Notes, 1000)
                 });
             }
@@ -145,8 +163,10 @@ public sealed class CentComTaskAnalysisService(
                             : $"Recovered through {rule.RecoveryType}: {rule.RecoveryReference ?? "reference not supplied"}";
                         return $"[EXCLUDED BY POLICY] {item.Description}: {item.Reason} ({recovery})";
                     }))
+                    .Concat(analysis.Materials.Where(item => item.MatchKind == MaterialMatchKinds.HomeDepotSimilar)
+                        .Select(item => $"[SIMILAR PRODUCT] Requested '{item.OriginalDescription}'; proposed '{item.Description}'. Review before accepting."))
                     .Concat(analysis.Materials.Where(item => item.IsUnmatched)
-                        .Select(item => $"No active vendor price match: {item.Description}"))),
+                        .Select(item => $"[UNRESOLVED MATERIAL] {item.OriginalDescription ?? item.Description}: enter a catalog item or one-off price."))),
                 4000);
             analysis.DeliveryAllowance = Math.Max(0, result.DeliveryAllowance);
             analysis.TaxAllowance = Math.Max(0, result.TaxAllowance);
@@ -167,6 +187,86 @@ public sealed class CentComTaskAnalysisService(
             await db.SaveChangesAsync(CancellationToken.None);
         }
     }
+
+    private static async Task<CatalogItem> GetOrCreateHomeDepotCatalogItemAsync(
+        ApplicationDbContext db,
+        HomeDepotLookupResult result,
+        string proposedUnit,
+        CancellationToken cancellationToken)
+    {
+        var vendor = await db.SupplyVendors.SingleOrDefaultAsync(
+            item => item.Name.ToLower() == "home depot", cancellationToken);
+        if (vendor is null)
+        {
+            vendor = new SupplyVendor { Name = "Home Depot", LegalName = "The Home Depot", IsActive = true };
+            db.SupplyVendors.Add(vendor);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        var sku = RemoteSku(result);
+        var item = await db.VendorProducts
+            .Include(product => product.Prices)
+            .Include(product => product.Product)
+            .SingleOrDefaultAsync(product => product.SupplyVendorId == vendor.Id && product.VendorSku == sku, cancellationToken);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        if (item is null)
+        {
+            var unit = Trim(proposedUnit, 40) ?? "Each";
+            item = new VendorProduct
+            {
+                SupplyVendorId = vendor.Id,
+                VendorSku = sku,
+                VendorDescription = Trim(result.Title, 300),
+                PurchaseUnit = unit,
+                PackageQuantity = 1,
+                IsActive = true,
+                Product = new Product
+                {
+                    Name = Trim(result.Title, 160) ?? "Home Depot product",
+                    Category = CategoryForRemoteProduct(result.Title),
+                    Manufacturer = "Home Depot",
+                    ManufacturerPartNumber = result.ProductId,
+                    UnitOfMeasure = unit,
+                    IsActive = true
+                }
+            };
+            db.VendorProducts.Add(item);
+        }
+
+        var price = item.Prices.SingleOrDefault(value => value.EffectiveDate == today);
+        if (price is null)
+        {
+            var current = item.Prices.Where(value => value.ExpirationDate is null).OrderByDescending(value => value.EffectiveDate).FirstOrDefault();
+            if (current is not null && current.EffectiveDate < today) current.ExpirationDate = today.AddDays(-1);
+            price = new VendorPrice
+            {
+                UnitPrice = result.UnitPrice,
+                EffectiveDate = today,
+                SourceType = "SerpApi exact match",
+                SourceReference = Trim(result.ProductUrl ?? result.SearchQuery, 200)
+            };
+            item.Prices.Add(price);
+        }
+        else if (price.UnitPrice != result.UnitPrice)
+        {
+            price.UnitPrice = result.UnitPrice;
+            price.SourceReference = Trim(result.ProductUrl ?? result.SearchQuery, 200);
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return new CatalogItem(item.Id, vendor.Name, sku, item.VendorDescription ?? item.Product.Name,
+            item.PurchaseUnit, result.UnitPrice, today, price.SourceType, price.SourceReference);
+    }
+
+    private static string RemoteSku(HomeDepotLookupResult result) =>
+        !string.IsNullOrWhiteSpace(result.ProductId)
+            ? $"HD-{Trim(result.ProductId, 96)}"
+            : $"HD-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(result.Title)))[..16]}";
+
+    private static string CategoryForRemoteProduct(string description) =>
+        ContainsAny(description, "deck", "board") ? "Decking and Accessories" :
+        ContainsAny(description, "screw", "nail", "bolt", "fastener") ? "Fasteners" :
+        ContainsAny(description, "hanger", "bracket", "anchor", "post base") ? "Connectors" :
+        "Lumber and Building Materials";
 
     private static async Task<List<CatalogItem>> LoadCatalogAsync(
         ApplicationDbContext db,

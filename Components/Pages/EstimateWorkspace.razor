@@ -101,15 +101,23 @@ else
             <small class="text-muted d-block mt-2">These notes apply to every project task in this estimate.</small>
         </section>
 
-        <section class="activity-panel">
-            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+        <section class="activity-panel project-tasks-disclosure">
+            <button type="button" class="project-tasks-summary" aria-expanded="@projectTasksExpanded" @onclick="ToggleProjectTasks">
                 <div>
                     <h2>Project Tasks</h2>
                     <p class="dashboard-subtitle mb-0">
                         Add every distinct part of the project. CentCom will analyze each task’s photographs and dictated scope of work separately.
                     </p>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge text-bg-light">@quote.ProjectTasks.Count task(s)</span>
+                    <span class="disclosure-chevron @(projectTasksExpanded ? "expanded" : null)" aria-hidden="true">⌄</span>
+                </div>
+            </button>
+            @if (projectTasksExpanded)
+            {
+            <div class="project-tasks-body">
+                <div class="project-task-add-controls">
                     <InputSelect class="form-select" @bind-Value="newTaskType">
                         <option value="">Select task type</option>
                         @foreach (var taskType in ProjectTaskTypes.All)
@@ -124,14 +132,12 @@ else
                         Add Project Task
                     </button>
                 </div>
-            </div>
-        </section>
 
         @if (quote.ProjectTasks.Count == 0)
         {
-            <section class="activity-panel">
+            <div class="alert alert-light border mb-0">
                 <p class="mb-0">No project tasks have been added. Select a project task type above to begin.</p>
-            </section>
+            </div>
         }
 
         @{
@@ -277,18 +283,22 @@ else
                                    multiple />
                     </div>
                 </div>
-                        <div class="border rounded p-3 mt-4">
-                            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                        <details class="centcom-analysis-disclosure border rounded mt-4">
+                            <summary class="centcom-analysis-summary">
                                 <div>
                                     <h3 class="mb-1">CentCom Analysis</h3>
                                     <p class="text-muted mb-0">
                                         Revisioned material quantities and provisional costs for this project task.
                                     </p>
                                 </div>
-                                <span class="badge @AnalysisStatusClass(analysis?.Status)">
-                                    @(analysis?.Status ?? QuoteTaskAnalysisStatuses.NotSubmitted)
-                                </span>
-                            </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge @AnalysisStatusClass(analysis?.Status)">
+                                        @(analysis?.Status ?? QuoteTaskAnalysisStatuses.NotSubmitted)
+                                    </span>
+                                    <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+                                </div>
+                            </summary>
+                            <div class="centcom-analysis-body">
 
                             @if (analysis is null)
                             {
@@ -339,6 +349,24 @@ else
                                 }
                                 else
                                 {
+                                    @foreach (var vendorGroup in analysis.Materials
+                                        .OrderBy(x => x.SortOrder)
+                                        .GroupBy(MaterialVendorName)
+                                        .OrderBy(group => MaterialVendorSortOrder(group.Key))
+                                        .ThenBy(group => group.Key))
+                                    {
+                                    <details class="vendor-analysis-disclosure border rounded mb-3">
+                                        <summary class="vendor-analysis-summary">
+                                            <div>
+                                                <h4 class="mb-0">@vendorGroup.Key</h4>
+                                                <small>@vendorGroup.Count() item(s)</small>
+                                            </div>
+                                            <div class="d-flex align-items-center gap-3">
+                                                <strong>@vendorGroup.Sum(item => item.ExtendedCost).ToString("C2")</strong>
+                                                <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+                                            </div>
+                                        </summary>
+                                    <div class="vendor-analysis-body">
                                     <div class="table-responsive">
                                         <table class="table table-sm align-middle">
                                             <thead>
@@ -349,22 +377,29 @@ else
                                                     <th>Waste</th>
                                                     <th>Extended</th>
                                                     <th>Source</th>
-                                                    <th>Confidence</th>
+                                                    <th>Match / review</th>
+                                                    <th>Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var item in analysis.Materials.OrderBy(x => x.SortOrder))
+                                                @foreach (var item in vendorGroup)
                                                 {
-                                                    <tr class="@(item.IsUnmatched ? "table-warning" : null)">
+                                                    <tr class="@(item.IsRemoved ? "table-secondary" : item.MatchKind is MaterialMatchKinds.HomeDepotSimilar or MaterialMatchKinds.Unresolved ? "table-warning" : null)">
                                                         <td>
-                                                            <strong>@(item.VendorSku ?? "Unmatched")</strong><br />
+                                                            <strong>@(item.VendorSku ?? "No catalog SKU")</strong><br />
                                                             @if (editingAnalysisIds.Contains(analysis.Id))
                                                             {
+                                                                <InputText class="form-control form-control-sm mb-1" @bind-Value="item.VendorSku" placeholder="SKU (optional for one-off)" />
                                                                 <InputText class="form-control form-control-sm" @bind-Value="item.Description" />
                                                             }
                                                             else
                                                             {
                                                                 <small>@item.Description</small>
+                                                            }
+                                                            @if (!string.IsNullOrWhiteSpace(item.OriginalDescription) &&
+                                                                !item.OriginalDescription.Equals(item.Description, StringComparison.OrdinalIgnoreCase))
+                                                            {
+                                                                <br /><small class="text-warning-emphasis"><strong>Originally requested:</strong> @item.OriginalDescription</small>
                                                             }
                                                         </td>
                                                         <td>
@@ -406,55 +441,55 @@ else
                                                                 <br /><small>@item.SourcePriceDate.Value.ToString("MM/dd/yyyy")</small>
                                                             }
                                                         </td>
-                                                        <td>@item.MatchConfidence.ToString("P0")</td>
+                                                        <td>
+                                                            <span class="badge @MaterialMatchClass(item.MatchKind)">@item.MatchKind</span><br />
+                                                            <small>@item.MatchConfidence.ToString("P0") · @item.ReviewDecision</small>
+                                                        </td>
+                                                        <td>
+                                                            @if (analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview)
+                                                            {
+                                                                <div class="d-grid gap-1">
+                                                                    <button type="button" class="btn btn-sm btn-outline-success" @onclick="() => SetMaterialDecisionAsync(analysis, item, MaterialReviewDecisions.Accepted)">Accept item</button>
+                                                                    <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => SetMaterialDecisionAsync(analysis, item, MaterialReviewDecisions.Removed)">Remove</button>
+                                                                    <select class="form-select form-select-sm" value="@ReplacementSelection(item.Id)" @onchange="args => SetReplacementSelection(item.Id, args.Value?.ToString())">
+                                                                        <option value="0">Replace from catalog…</option>
+                                                                        @foreach (var catalogItem in reviewCatalogItems)
+                                                                        {
+                                                                            <option value="@catalogItem.Id">@catalogItem.Product.Name — @catalogItem.SupplyVendor.Name / @catalogItem.VendorSku</option>
+                                                                        }
+                                                                    </select>
+                                                                    <button type="button" class="btn btn-sm btn-outline-primary" disabled="@(ReplacementSelection(item.Id) == 0)" @onclick="() => ReplaceMaterialFromCatalogAsync(analysis, item)">Use catalog item</button>
+                                                                    @if (editingAnalysisIds.Contains(analysis.Id) && !item.IsRemoved)
+                                                                    {
+                                                                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => AddMaterialToHomeDepotCatalogAsync(analysis, item)">Save as Home Depot catalog item</button>
+                                                                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => MarkMaterialOneOffAsync(analysis, item)">Use price once</button>
+                                                                    }
+                                                                </div>
+                                                            }
+                                                        </td>
                                                     </tr>
                                                 }
                                             </tbody>
                                             <tfoot>
                                                 <tr>
-                                                    <th colspan="4">Material subtotal</th>
-                                                    <th>@analysis.MaterialSubtotal.ToString("C2")</th>
-                                                    <th colspan="2"></th>
+                                                    <th colspan="4">@vendorGroup.Key subtotal</th>
+                                                    <th>@vendorGroup.Sum(item => item.ExtendedCost).ToString("C2")</th>
+                                                    <th colspan="3"></th>
                                                 </tr>
                                             </tfoot>
                                         </table>
                                     </div>
-                                    <div class="row g-2">
-                                        <div class="col-md-3">
-                                            <strong>Delivery</strong><br />
-                                            @if (editingAnalysisIds.Contains(analysis.Id))
-                                            {
-                                                <InputNumber class="form-control form-control-sm" @bind-Value="analysis.DeliveryAllowance" />
-                                            }
-                                            else
-                                            {
-                                                @analysis.DeliveryAllowance.ToString("C2")
-                                            }
-                                        </div>
-                                        <div class="col-md-3">
-                                            <strong>Tax</strong><br />
-                                            @if (editingAnalysisIds.Contains(analysis.Id))
-                                            {
-                                                <InputNumber class="form-control form-control-sm" @bind-Value="analysis.TaxAllowance" />
-                                            }
-                                            else
-                                            {
-                                                @analysis.TaxAllowance.ToString("C2")
-                                            }
-                                        </div>
-                                        <div class="col-md-3">
-                                            <strong>Other allowances</strong><br />
-                                            @if (editingAnalysisIds.Contains(analysis.Id))
-                                            {
-                                                <InputNumber class="form-control form-control-sm" @bind-Value="analysis.OtherAllowance" />
-                                            }
-                                            else
-                                            {
-                                                @analysis.OtherAllowance.ToString("C2")
-                                            }
-                                        </div>
-                                        <div class="col-md-3"><strong>Task total</strong><br />@analysis.TotalCost.ToString("C2")</div>
                                     </div>
+                                    </details>
+                                    }
+                                    <div class="alert alert-light border d-flex justify-content-between align-items-center">
+                                        <strong>Overall material subtotal</strong>
+                                        <strong>@analysis.MaterialSubtotal.ToString("C2")</strong>
+                                    </div>
+                                    @if (analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview && editingAnalysisIds.Contains(analysis.Id))
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-primary mt-2" @onclick="() => AddManualMaterialLine(analysis)">Add material manually</button>
+                                    }
                                 }
                             }
 
@@ -467,7 +502,6 @@ else
                                 </button>
                                 @if (analysis?.Status == QuoteTaskAnalysisStatuses.NeedsReview)
                                 {
-                                    <button type="button" class="btn btn-success" @onclick="() => ReviewAnalysisAsync(analysis, true)">Accept</button>
                                     @if (editingAnalysisIds.Contains(analysis.Id))
                                     {
                                         <button type="button" class="btn btn-primary" @onclick="() => SaveAnalysisEditsAsync(analysis)">Save edits</button>
@@ -477,10 +511,10 @@ else
                                     {
                                         <button type="button" class="btn btn-outline-secondary" @onclick="() => editingAnalysisIds.Add(analysis.Id)">Edit</button>
                                     }
-                                    <button type="button" class="btn btn-outline-danger" @onclick="() => ReviewAnalysisAsync(analysis, false)">Reject</button>
                                 }
                             </div>
-                        </div>
+                            </div>
+                        </details>
                         <div class="project-task-actions">
                             <button type="button"
                                     class="btn btn-primary"
@@ -496,29 +530,62 @@ else
                     </div>
                 }
             </section>
-        }
-
-        <section class="activity-panel">
-            <h2>Job Cost Summary</h2>
-            <p class="dashboard-subtitle">
-                Accepted CentCom material costs combined with the effective labor, task overhead, project overhead, contingency, and margin policy.
-            </p>
-            @{
-                var acceptedAnalyses = AcceptedAnalyses().ToList();
             }
-            @if (acceptedAnalyses.Count == 0)
+            </div>
+            }
+        </section>
+
+        @{
+            var pricingAnalyses = PricingAnalyses().ToList();
+            var hasPreliminaryPricing = pricingAnalyses.Any(x => x.Status != QuoteTaskAnalysisStatuses.Accepted);
+        }
+        <section class="activity-panel pricing-workspace job-cost-panel">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <p class="eyebrow">Internal estimating</p>
+                    <h2>Job Cost &amp; Margin</h2>
+                    <p class="dashboard-subtitle mb-0">What the job costs CCV, the gross margin we want, and the resulting selling price before customer discounts.</p>
+                </div>
+                @if (currentCostSnapshot is not null)
+                {
+                    <span class="badge @(hasPreliminaryPricing ? "text-bg-warning" : "text-bg-secondary")">@(hasPreliminaryPricing ? "Preliminary pricing" : $"Cost snapshot r{currentCostSnapshot.RevisionNumber}")</span>
+                }
+            </div>
+            @if (pricingAnalyses.Count == 0)
             {
-                <div class="alert alert-light border mb-0">
-                    No CentCom task analyses have been accepted yet.
+                <div class="alert alert-light border mt-3 mb-0">
+                    Complete the CentCom analysis to calculate preliminary job and customer totals.
                 </div>
             }
             else if (currentCostSnapshot is null)
             {
-                <div class="alert alert-warning">No immutable cost snapshot has been created for this estimate version.</div>
-                <button class="btn btn-primary" @onclick="CreateCostSnapshotAsync">Price using current policy</button>
+                <div class="alert alert-warning mt-3 mb-0">Automatic pricing is waiting for an active costing policy.</div>
             }
             else
             {
+                <div class="job-economics-grid mt-3">
+                    <article class="pricing-value-card cost-value">
+                        <span>Current cost to perform job</span>
+                        <strong>@currentCostSnapshot.TotalCost.ToString("C2")</strong>
+                        <small>Materials, labor, supplies, overhead, and contingency</small>
+                    </article>
+                    <article class="pricing-input-card">
+                        <label class="form-label" for="job-target-margin">Desired gross margin</label>
+                        <div class="input-group input-group-lg">
+                            <InputNumber id="job-target-margin" class="form-control" min="1" max="99" step="1" @bind-Value="pricingTargetMargin" @bind-Value:event="oninput" />
+                            <span class="input-group-text">%</span>
+                        </div>
+                        <small>Company policy: @currentCostSnapshot.CostingPolicyVersion.DefaultTargetMarginPercent.ToString("N2")%</small>
+                    </article>
+                    <article class="pricing-value-card sell-value">
+                        <span>Selling price before discount</span>
+                        <strong>@PricingBasePrice.ToString("C2")</strong>
+                        <small>@PricingGrossProfit.ToString("C2") gross profit before discount</small>
+                    </article>
+                </div>
+
+                <details class="mt-3">
+                    <summary class="fw-semibold">View task-level cost breakdown</summary>
                 <div class="table-responsive">
                     <table class="table align-middle">
                         <thead><tr><th>Task</th><th>CentCom materials</th><th>Required supplies</th><th>Labor</th><th>Task costs</th><th>Allocated overhead</th><th>Margin</th><th>Suggested price</th></tr></thead>
@@ -553,48 +620,76 @@ else
                         </tfoot>
                     </table>
                 </div>
-                <div class="metric-grid mt-3">
-                    <article class="metric-card"><span>Target margin</span><strong>@($"{currentCostSnapshot.TargetMarginPercent:N2}%")</strong></article>
-                    <article class="metric-card"><span>Suggested price</span><strong>@currentCostSnapshot.SuggestedCustomerPrice.ToString("C2")</strong></article>
-                    <article class="metric-card"><span>Expected gross profit</span><strong>@currentCostSnapshot.ExpectedGrossProfit.ToString("C2")</strong></article>
-                    <article class="metric-card accent-revenue"><span>Effective margin</span><strong>@($"{currentCostSnapshot.EffectiveMarginPercent:N2}%")</strong></article>
-                </div>
-                <div class="row g-3 mt-2">
-                    <div class="col-md-3"><label class="form-label">Price adjustment</label><InputNumber class="form-control" @bind-Value="currentCostSnapshot.PriceAdjustment" /></div>
-                    <div class="col-md-6"><label class="form-label">Adjustment reason</label><InputText class="form-control" @bind-Value="currentCostSnapshot.AdjustmentReason" /></div>
-                    <div class="col-md-3 d-flex align-items-end gap-2"><button class="btn btn-outline-primary" @onclick="SavePriceAdjustmentAsync">Save adjustment</button><button class="btn btn-outline-secondary" @onclick="CreateCostSnapshotAsync">Reprice</button></div>
-                </div>
-                <small class="text-muted d-block mt-3">Snapshot revision @currentCostSnapshot.RevisionNumber · Policy @currentCostSnapshot.CostingPolicyVersion.Name r@currentCostSnapshot.CostingPolicyVersion.RevisionNumber · @currentCostSnapshot.PricedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</small>
+                </details>
+                <small class="text-muted d-block mt-3">@(hasPreliminaryPricing ? "Preliminary totals — updates automatically as task pricing changes" : $"Cost snapshot r{currentCostSnapshot.RevisionNumber}") · @currentCostSnapshot.CostingPolicyVersion.Name r@(currentCostSnapshot.CostingPolicyVersion.RevisionNumber)</small>
             }
         </section>
 
-        @if (version is not null)
+        @if (currentCostSnapshot is not null)
         {
-            <section class="activity-panel">
-                <h2>Pricing</h2>
-                <div class="metric-grid">
-                    <article class="metric-card">
-                        <span>Subtotal</span>
-                        <strong>@version.Subtotal.ToString("C2")</strong>
-                    </article>
-                    <article class="metric-card">
-                        <span>Discount</span>
-                        <strong>@version.DiscountAmount.ToString("C2")</strong>
-                    </article>
-                    <article class="metric-card">
-                        <span>Tax</span>
-                        <strong>@version.TaxAmount.ToString("C2")</strong>
-                    </article>
-                    <article class="metric-card accent-revenue">
-                        <span>Total Price</span>
-                        <strong>@version.Total.ToString("C2")</strong>
-                    </article>
+            <section class="activity-panel customer-price-panel">
+                <p class="eyebrow">Customer-facing calculation</p>
+                <h2>Customer Price</h2>
+                <p class="dashboard-subtitle">Apply one discount percentage across the entire job, calculate tax, and review the final amount presented to the customer.</p>
+
+                <div class="row g-3 customer-price-controls">
+                    <div class="col-md-3">
+                        <label class="form-label" for="job-discount-percent">Promotional Discounts</label>
+                        <div class="input-group input-group-lg"><InputNumber id="job-discount-percent" class="form-control" min="0" max="100" step="1" @bind-Value="discountValue" @bind-Value:event="oninput" /><span class="input-group-text">%</span></div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label" for="job-tax-rate">Tax rate</label>
+                        <div class="input-group input-group-lg">
+                            <InputNumber id="job-tax-rate" class="form-control" min="0" max="100" step="0.01" @bind-Value="pricingTaxRate" @bind-Value:event="oninput" />
+                            <span class="input-group-text">%</span>
+                        </div>
+                        <small class="text-muted">Enter the rate for @(quote?.CustomerAddress ?? "the customer service address").</small>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="pricing-reason">Pricing note</label>
+                        <InputText id="pricing-reason" class="form-control form-control-lg" @bind-Value="pricingAdjustmentReason" placeholder="Reason for discount or margin change" />
+                    </div>
                 </div>
 
-                @if (version.Lines.Count == 0)
+                <div class="metric-grid">
+                    <article class="metric-card"><span>Price before discount</span><strong>@PricingBasePrice.ToString("C2")</strong></article>
+                    <article class="metric-card"><span>Promotional discount</span><strong class="@(discountValue > 0 ? "text-danger" : null)">@discountValue%</strong><small>Discount amount: @(PricingDiscountAmount > 0 ? $"−{PricingDiscountAmount:C2}" : PricingDiscountAmount.ToString("C2")) · Subtotal: @PricingPriceAfterDiscount.ToString("C2")</small></article>
+                    <article class="metric-card"><span>Tax (@pricingTaxRate.ToString("N2")%)</span><strong>@PricingTaxAmount.ToString("C2")</strong></article>
+                    <article class="metric-card accent-revenue customer-total-card"><span>Customer total</span><strong>@PricingFinalPrice.ToString("C2")</strong><small>After discount and tax</small></article>
+                </div>
+                <div class="effective-margin-banner @(IsPricingBelowPolicyMargin ? "below-margin" : "")">
+                    <div><span>Effective gross margin after discount</span><strong>@($"{PricingEffectiveMargin:N2}%")</strong></div>
+                    @if (IsPricingBelowPolicyMargin)
+                    {
+                        <p class="mb-0">This price is below the policy margin of @currentCostSnapshot.CostingPolicyVersion.DefaultTargetMarginPercent.ToString("N2")%. Review before approval.</p>
+                    }
+                    else
+                    {
+                        <p class="mb-0">The customer price meets the current policy margin.</p>
+                    }
+                </div>
+            </section>
+        }
+
+        @if (version is not null && currentCostSnapshot is null)
+        {
+            <section class="activity-panel">
+                <h2>@(version.Lines.Count == 0 ? "Estimate Workflow" : "Customer Pricing")</h2>
+                @if (version.Lines.Count > 0)
+                {
+                    <div class="metric-grid mt-3">
+                        <article class="metric-card"><span>Subtotal</span><strong>@version.Subtotal.ToString("C2")</strong></article>
+                        <article class="metric-card"><span>Discount</span><strong>@version.DiscountAmount.ToString("C2")</strong></article>
+                        <article class="metric-card"><span>Tax</span><strong>@version.TaxAmount.ToString("C2")</strong></article>
+                        <article class="metric-card accent-revenue"><span>Total Price</span><strong>@version.Total.ToString("C2")</strong></article>
+                    </div>
+                }
+                else
                 {
                     <div class="alert alert-light border mt-3 mb-0">
-                        Material quantities and calculated pricing will appear after project-task photographs and scope notes are analyzed.
+                        @(pricingAnalyses.Count == 0
+                            ? "Complete the CentCom analysis to calculate preliminary job costs and customer totals."
+                            : "Preliminary job costs and customer totals calculate automatically from the latest analysis.")
                     </div>
                 }
 
@@ -617,7 +712,7 @@ else
         <details class="activity-panel">
             <summary><strong>Audit history</strong></summary>
             <div class="activity-list mt-3">
-                @foreach (var item in quote.AuditEvents.OrderByDescending(x => x.OccurredAt))
+                @foreach (var item in quote!.AuditEvents.OrderByDescending(x => x.OccurredAt))
                 {
                     <div class="activity-item">
                         <div>
@@ -647,10 +742,17 @@ else
     private QuoteCase? quote;
     private QuoteVersion? version;
     private QuoteCostSnapshot? currentCostSnapshot;
+    private int pricingTargetMargin;
+    private int discountValue;
+    private decimal pricingTaxRate;
+    private string? pricingAdjustmentReason;
     private string? message;
     private string newTaskType = string.Empty;
+    private bool projectTasksExpanded = true;
     private readonly HashSet<int> expandedTaskIds = [];
     private readonly HashSet<int> editingAnalysisIds = [];
+    private readonly Dictionary<int, int> replacementCatalogSelections = [];
+    private List<VendorProduct> reviewCatalogItems = [];
     private readonly Dictionary<string, string?> dictationMessages = [];
     private bool savingEstimate;
     private string? activeDictationElementId;
@@ -675,6 +777,8 @@ else
             expandedTaskIds.Add(taskId);
         }
     }
+
+    private void ToggleProjectTasks() => projectTasksExpanded = !projectTasksExpanded;
 
     private bool IsDictating(string elementId) =>
         string.Equals(activeDictationElementId, elementId, StringComparison.Ordinal);
@@ -720,8 +824,65 @@ else
             .Include(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.Exclusions)
             .Include(x => x.AuditEvents)
             .SingleOrDefaultAsync(x => x.Id == QuoteId && allowed.Contains(x.LocalOperationId));
+        reviewCatalogItems = await db.VendorProducts.AsNoTracking()
+            .Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
+            .Where(x => x.IsActive && x.SupplyVendor.IsActive)
+            .OrderBy(x => x.Product.Name).ThenBy(x => x.SupplyVendor.Name)
+            .ToListAsync();
         version = quote?.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
         currentCostSnapshot = version?.CostSnapshots.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
+        var defaultTaxRate = await db.QuotePricingRules.AsNoTracking()
+            .Where(x => quote != null && x.LocalOperationId == quote.LocalOperationId)
+            .Select(x => (decimal?)x.DefaultTaxRate)
+            .SingleOrDefaultAsync() ?? 0;
+        if (currentCostSnapshot is not null)
+        {
+            pricingTargetMargin = (int)decimal.Round(currentCostSnapshot.TargetMarginPercent, 0, MidpointRounding.AwayFromZero);
+            var savedDiscount = Math.Max(0, version?.DiscountAmount ?? -currentCostSnapshot.PriceAdjustment);
+            discountValue = currentCostSnapshot.SuggestedCustomerPrice <= 0
+                ? 0
+                : (int)decimal.Round(savedDiscount / currentCostSnapshot.SuggestedCustomerPrice * 100m, 0, MidpointRounding.AwayFromZero);
+            pricingAdjustmentReason = currentCostSnapshot.AdjustmentReason;
+        }
+        else if (pricingTargetMargin == 0)
+        {
+            pricingTargetMargin = 40;
+        }
+        pricingTaxRate = decimal.Round(version?.TaxRate > 0 ? version.TaxRate : defaultTaxRate, 2);
+
+        if (PricingAnalyses().Any() && PricingSnapshotNeedsRefresh())
+        {
+            await CreateCostSnapshotAsync();
+        }
+    }
+
+    private decimal PricingTargetMargin => Math.Clamp(pricingTargetMargin, 1, 99);
+    private decimal PricingBasePrice => currentCostSnapshot is null
+        ? 0
+        : decimal.Round(currentCostSnapshot.TotalCost / (1 - PricingTargetMargin / 100m), 2);
+    private decimal PricingDiscountAmount => decimal.Round(PricingBasePrice * Math.Clamp(discountValue, 0, 100) / 100m, 2);
+    private decimal PricingPriceAfterDiscount => Math.Max(0, PricingBasePrice - PricingDiscountAmount);
+    private decimal PricingTaxAmount => decimal.Round(PricingPriceAfterDiscount * Math.Clamp(pricingTaxRate, 0, 100) / 100m, 2);
+    private decimal PricingFinalPrice => PricingPriceAfterDiscount + PricingTaxAmount;
+    private decimal PricingGrossProfit => currentCostSnapshot is null ? 0 : PricingBasePrice - currentCostSnapshot.TotalCost;
+    private decimal PricingEffectiveMargin => currentCostSnapshot is null || PricingPriceAfterDiscount <= 0
+        ? 0
+        : decimal.Round((PricingPriceAfterDiscount - currentCostSnapshot.TotalCost) / PricingPriceAfterDiscount * 100m, 2);
+    private bool IsPricingBelowPolicyMargin => currentCostSnapshot is not null
+        && PricingEffectiveMargin < currentCostSnapshot.CostingPolicyVersion.DefaultTargetMarginPercent;
+
+    private bool PricingSnapshotNeedsRefresh()
+    {
+        if (currentCostSnapshot is null || quote is null) return true;
+        foreach (var analysis in PricingAnalyses())
+        {
+            var taskCost = currentCostSnapshot.Tasks.SingleOrDefault(x => x.QuoteProjectTaskId == analysis.QuoteProjectTaskId);
+            if (taskCost is null || taskCost.MaterialCost != analysis.MaterialSubtotal) return true;
+            if (analysis.CompletedAt > currentCostSnapshot.PricedAt) return true;
+            var task = quote.ProjectTasks.Single(x => x.Id == analysis.QuoteProjectTaskId);
+            if (task.UpdatedAt > currentCostSnapshot.PricedAt) return true;
+        }
+        return false;
     }
 
     private static QuoteTaskAnalysis? LatestAnalysis(QuoteProjectTask task) =>
@@ -731,6 +892,15 @@ else
         quote?.ProjectTasks
             .Select(task => task.Analyses
                 .Where(x => x.Status == QuoteTaskAnalysisStatuses.Accepted)
+                .OrderByDescending(x => x.RevisionNumber)
+                .FirstOrDefault())
+            .Where(x => x is not null)
+            .Select(x => x!) ?? [];
+
+    private IEnumerable<QuoteTaskAnalysis> PricingAnalyses() =>
+        quote?.ProjectTasks
+            .Select(task => task.Analyses
+                .Where(x => x.Status is QuoteTaskAnalysisStatuses.Accepted or QuoteTaskAnalysisStatuses.NeedsReview)
                 .OrderByDescending(x => x.RevisionNumber)
                 .FirstOrDefault())
             .Where(x => x is not null)
@@ -747,6 +917,189 @@ else
         QuoteTaskAnalysisStatuses.Queued or QuoteTaskAnalysisStatuses.Processing => "text-bg-primary",
         _ => "text-bg-secondary"
     };
+
+    private static string MaterialMatchClass(string matchKind) => matchKind switch
+    {
+        MaterialMatchKinds.Catalog or MaterialMatchKinds.HomeDepotExact or MaterialMatchKinds.ManualCatalog => "text-bg-success",
+        MaterialMatchKinds.HomeDepotSimilar => "text-bg-warning",
+        MaterialMatchKinds.OneOff => "text-bg-info",
+        _ => "text-bg-danger"
+    };
+
+    private string MaterialVendorName(QuoteTaskAnalysisMaterial material)
+    {
+        if (material.VendorProductId is not null)
+        {
+            var catalogItem = reviewCatalogItems.FirstOrDefault(item => item.Id == material.VendorProductId.Value);
+            if (catalogItem is not null) return catalogItem.SupplyVendor.Name;
+        }
+        if (material.MatchKind == MaterialMatchKinds.OneOff) return "One-off materials";
+        if (material.MatchKind == MaterialMatchKinds.Unresolved || material.IsUnmatched) return "Unresolved materials";
+        if (material.SourceType?.Contains("Home Depot", StringComparison.OrdinalIgnoreCase) == true) return "Home Depot";
+        if (!string.IsNullOrWhiteSpace(material.SourceType) &&
+            !material.SourceType.Equals("Manual", StringComparison.OrdinalIgnoreCase) &&
+            !material.SourceType.Contains("CentCom", StringComparison.OrdinalIgnoreCase))
+            return material.SourceType;
+        return "Other materials";
+    }
+
+    private static int MaterialVendorSortOrder(string vendorName) => vendorName switch
+    {
+        "Decks & Docks" => 10,
+        "Nexan Building Products, Inc." => 20,
+        "Home Depot" => 30,
+        "One-off materials" => 90,
+        "Unresolved materials" => 100,
+        _ => 50
+    };
+
+    private int ReplacementSelection(int materialId) => replacementCatalogSelections.GetValueOrDefault(materialId);
+
+    private void SetReplacementSelection(int materialId, string? value) =>
+        replacementCatalogSelections[materialId] = int.TryParse(value, out var selected) ? selected : 0;
+
+    private void AddManualMaterialLine(QuoteTaskAnalysis analysis)
+    {
+        analysis.Materials.Add(new QuoteTaskAnalysisMaterial
+        {
+            SortOrder = analysis.Materials.Count == 0 ? 1 : analysis.Materials.Max(x => x.SortOrder) + 1,
+            Description = "Manually entered material",
+            OriginalDescription = "Manually entered material",
+            Quantity = 1,
+            Unit = "Each",
+            MatchKind = MaterialMatchKinds.Unresolved,
+            ReviewDecision = MaterialReviewDecisions.Pending,
+            IsUnmatched = true,
+            SourceType = "Manual review"
+        });
+    }
+
+    private async Task SetMaterialDecisionAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material, string decision)
+    {
+        if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview || material.Id == 0) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteTaskAnalysisMaterials
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+            .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+        if (tracked is null) return;
+        tracked.ReviewDecision = decision;
+        tracked.IsRemoved = decision == MaterialReviewDecisions.Removed;
+        await db.SaveChangesAsync();
+        message = tracked.IsRemoved ? $"Removed '{tracked.Description}' from this estimate." : $"Accepted '{tracked.Description}'.";
+        await ReloadAsync();
+    }
+
+    private async Task ReplaceMaterialFromCatalogAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material)
+    {
+        if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview || material.Id == 0) return;
+        var replacementId = ReplacementSelection(material.Id);
+        if (replacementId == 0) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteTaskAnalysisMaterials
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+            .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+        var replacement = await db.VendorProducts.Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
+            .SingleOrDefaultAsync(x => x.Id == replacementId && x.IsActive && x.SupplyVendor.IsActive);
+        if (tracked is null || replacement is null) return;
+        var price = CurrentCatalogPrice(replacement);
+        if (price is null) { message = "The selected catalog item has no active price."; return; }
+        tracked.VendorProductId = replacement.Id;
+        tracked.VendorSku = replacement.VendorSku;
+        tracked.Description = replacement.VendorDescription ?? replacement.Product.Name;
+        tracked.Unit = replacement.PurchaseUnit;
+        tracked.UnitCost = price.UnitPrice;
+        tracked.MatchConfidence = 1;
+        tracked.MatchKind = MaterialMatchKinds.Catalog;
+        tracked.ReviewDecision = MaterialReviewDecisions.Replaced;
+        tracked.IsRemoved = false;
+        tracked.IsUnmatched = false;
+        tracked.SourceType = replacement.SupplyVendor.Name;
+        tracked.SourceReference = price.SourceReference ?? price.SourceType;
+        tracked.SourcePriceDate = price.EffectiveDate;
+        await db.SaveChangesAsync();
+        replacementCatalogSelections.Remove(material.Id);
+        message = $"Replaced the proposed item with {replacement.Product.Name}.";
+        await ReloadAsync();
+    }
+
+    private async Task MarkMaterialOneOffAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material)
+    {
+        if (quote is null || material.Id == 0 || material.UnitCost <= 0) { message = "Enter a positive unit cost before using a one-off item."; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteTaskAnalysisMaterials.SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id);
+        if (tracked is null) return;
+        tracked.VendorProductId = null;
+        tracked.VendorSku = string.IsNullOrWhiteSpace(material.VendorSku) ? null : material.VendorSku.Trim();
+        tracked.Description = material.Description.Trim();
+        tracked.Quantity = Math.Max(0, material.Quantity);
+        tracked.Unit = material.Unit.Trim();
+        tracked.UnitCost = material.UnitCost;
+        tracked.WastePercent = Math.Max(0, material.WastePercent);
+        tracked.MatchKind = MaterialMatchKinds.OneOff;
+        tracked.ReviewDecision = MaterialReviewDecisions.Accepted;
+        tracked.IsRemoved = false;
+        tracked.IsUnmatched = false;
+        tracked.SourceType = "Manual one-off price";
+        tracked.SourceReference = null;
+        tracked.SourcePriceDate = DateOnly.FromDateTime(DateTime.Today);
+        await db.SaveChangesAsync();
+        message = $"'{tracked.Description}' will be used once and was not added to the catalog.";
+        await ReloadAsync();
+    }
+
+    private async Task AddMaterialToHomeDepotCatalogAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material)
+    {
+        if (quote is null || material.Id == 0 || material.UnitCost <= 0) { message = "Enter a positive price before adding the item to the catalog."; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var tracked = await db.QuoteTaskAnalysisMaterials.SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id);
+        if (tracked is null) return;
+        var vendor = await db.SupplyVendors.SingleOrDefaultAsync(x => x.Name.ToLower() == "home depot");
+        if (vendor is null) { vendor = new SupplyVendor { Name = "Home Depot", LegalName = "The Home Depot" }; db.SupplyVendors.Add(vendor); await db.SaveChangesAsync(); }
+        var sku = string.IsNullOrWhiteSpace(material.VendorSku)
+            ? $"HD-MANUAL-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(material.Description.Trim().ToUpperInvariant())))[..12]}"
+            : material.VendorSku.Trim();
+        var catalogItem = await db.VendorProducts.Include(x => x.Prices)
+            .SingleOrDefaultAsync(x => x.SupplyVendorId == vendor.Id && x.VendorSku == sku);
+        if (catalogItem is null)
+        {
+            catalogItem = new VendorProduct
+            {
+                SupplyVendorId = vendor.Id, VendorSku = sku, VendorDescription = material.Description.Trim(), PurchaseUnit = material.Unit.Trim(), PackageQuantity = 1,
+                Product = new Product { Name = material.Description.Trim()[..Math.Min(160, material.Description.Trim().Length)], Manufacturer = "Home Depot", ManufacturerPartNumber = sku, UnitOfMeasure = material.Unit.Trim() }
+            };
+            db.VendorProducts.Add(catalogItem);
+        }
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var price = catalogItem.Prices.SingleOrDefault(x => x.EffectiveDate == today);
+        if (price is null) { price = new VendorPrice { UnitPrice = material.UnitCost, EffectiveDate = today, SourceType = "Manual estimate review" }; catalogItem.Prices.Add(price); }
+        else price.UnitPrice = material.UnitCost;
+        tracked.VendorProduct = catalogItem;
+        tracked.VendorSku = sku;
+        tracked.Description = material.Description.Trim();
+        tracked.Quantity = Math.Max(0, material.Quantity);
+        tracked.Unit = material.Unit.Trim();
+        tracked.UnitCost = material.UnitCost;
+        tracked.WastePercent = Math.Max(0, material.WastePercent);
+        tracked.MatchKind = MaterialMatchKinds.ManualCatalog;
+        tracked.ReviewDecision = MaterialReviewDecisions.Accepted;
+        tracked.IsRemoved = false;
+        tracked.IsUnmatched = false;
+        tracked.SourceType = vendor.Name;
+        tracked.SourceReference = "Manual estimate review";
+        tracked.SourcePriceDate = today;
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        message = $"Added '{tracked.Description}' to the Home Depot catalog and selected it for this estimate.";
+        await ReloadAsync();
+    }
+
+    private static VendorPrice? CurrentCatalogPrice(VendorProduct item)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return item.Prices.Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today))
+            .OrderByDescending(x => x.EffectiveDate).ThenByDescending(x => x.Id).FirstOrDefault();
+    }
 
     private async Task SubmitTaskAnalysisAsync(QuoteProjectTask task)
     {
@@ -829,8 +1182,15 @@ else
         await using var db = await DbFactory.CreateDbContextAsync();
         var tracked = await db.QuoteTaskAnalyses
             .Include(x => x.QuoteProjectTask)
+            .Include(x => x.Materials)
             .SingleOrDefaultAsync(x => x.Id == analysis.Id && x.QuoteProjectTask.QuoteCaseId == quote.Id);
         if (tracked is null || tracked.Status != QuoteTaskAnalysisStatuses.NeedsReview) return;
+        if (accept && tracked.Materials.Any(x => !x.IsRemoved &&
+            (x.ReviewDecision == MaterialReviewDecisions.Pending || x.MatchKind == MaterialMatchKinds.Unresolved)))
+        {
+            message = "Review every unresolved or suggested material. Accept it, replace it, remove it, add it to the catalog, or mark it one-off before accepting the analysis.";
+            return;
+        }
         var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         tracked.Status = accept ? QuoteTaskAnalysisStatuses.Accepted : QuoteTaskAnalysisStatuses.Rejected;
         tracked.ReviewedAt = DateTimeOffset.UtcNow;
@@ -861,7 +1221,21 @@ else
         foreach (var edited in analysis.Materials)
         {
             var item = tracked.Materials.SingleOrDefault(x => x.Id == edited.Id);
+            if (item is null && edited.Id == 0)
+            {
+                item = new QuoteTaskAnalysisMaterial
+                {
+                    SortOrder = edited.SortOrder,
+                    OriginalDescription = edited.OriginalDescription ?? edited.Description,
+                    MatchKind = MaterialMatchKinds.Unresolved,
+                    ReviewDecision = MaterialReviewDecisions.Pending,
+                    IsUnmatched = true,
+                    SourceType = "Manual review"
+                };
+                tracked.Materials.Add(item);
+            }
             if (item is null) continue;
+            item.VendorSku = string.IsNullOrWhiteSpace(edited.VendorSku) ? null : edited.VendorSku.Trim();
             item.Description = edited.Description.Trim();
             item.Quantity = Math.Max(0, edited.Quantity);
             item.Unit = edited.Unit.Trim();
@@ -913,12 +1287,14 @@ else
     private async Task SaveEstimateAsync()
     {
         if (quote is null || savingEstimate) return;
+        if (currentCostSnapshot is not null && !ValidatePricingInputs()) return;
         savingEstimate = true;
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             var tracked = await db.QuoteCases
                 .Include(x => x.ProjectTasks)
+                .Include(x => x.Versions).ThenInclude(x => x.CostSnapshots).ThenInclude(x => x.Tasks)
                 .SingleOrDefaultAsync(x => x.Id == quote.Id);
             if (tracked is null) return;
 
@@ -938,16 +1314,63 @@ else
                 trackedTask.UpdatedAt = DateTimeOffset.UtcNow;
             }
 
-            await AddAuditEventAsync(db, quote, "Estimate saved, including Project Overview Notes and project-task scopes.");
+            if (version is not null && currentCostSnapshot is not null)
+            {
+                var trackedVersion = tracked.Versions.SingleOrDefault(x => x.Id == version.Id);
+                var trackedSnapshot = trackedVersion?.CostSnapshots.SingleOrDefault(x => x.Id == currentCostSnapshot.Id);
+                if (trackedVersion is not null && trackedSnapshot is not null)
+                {
+                    trackedSnapshot.TargetMarginPercent = decimal.Round(PricingTargetMargin, 4);
+                    trackedSnapshot.SuggestedCustomerPrice = PricingBasePrice;
+                    trackedSnapshot.PriceAdjustment = -PricingDiscountAmount;
+                    trackedSnapshot.AdjustmentReason = pricingAdjustmentReason?.Trim();
+                    trackedVersion.DiscountAmount = PricingDiscountAmount;
+                    trackedVersion.TaxRate = decimal.Round(pricingTaxRate, 4);
+                    foreach (var taskCost in trackedSnapshot.Tasks)
+                    {
+                        taskCost.TargetMarginPercent = trackedSnapshot.TargetMarginPercent;
+                        taskCost.SuggestedCustomerPrice = decimal.Round(taskCost.TotalCost / (1 - trackedSnapshot.TargetMarginPercent / 100m), 2);
+                    }
+                }
+            }
+
+            await AddAuditEventAsync(db, quote,
+                currentCostSnapshot is null
+                    ? "Estimate saved, including Project Overview Notes and project-task scopes."
+                    : $"Estimate saved with task details and pricing: {PricingTargetMargin:N0}% target margin, {discountValue}% promotional discount, {pricingTaxRate:N2}% tax, {PricingFinalPrice:C2} customer total.");
             await db.SaveChangesAsync();
-            await PublishEstimateEventAsync("EstimateWorkspace", "SaveEstimate", "Completed", "Estimate overview and project-task scopes saved.");
-            message = "Estimate saved.";
+            await PublishEstimateEventAsync("EstimateWorkspace", "SaveEstimate", "Completed", "Estimate overview, project tasks, and pricing saved.");
+            message = currentCostSnapshot is null
+                ? "Estimate saved."
+                : $"Estimate and pricing saved. Customer total is {PricingFinalPrice:C2}.";
             await ReloadAsync();
         }
         finally
         {
             savingEstimate = false;
         }
+    }
+
+    private bool ValidatePricingInputs()
+    {
+        if (currentCostSnapshot is null) return true;
+        if (pricingTargetMargin is <= 0 or >= 100)
+        {
+            message = "Enter a job target gross margin greater than 0% and less than 100%.";
+            return false;
+        }
+        if (discountValue is < 0 or > 100 || pricingTaxRate is < 0 or > 100)
+        {
+            message = "Discount and tax rates must be between 0% and 100%.";
+            return false;
+        }
+        var marginChanged = decimal.Round(pricingTargetMargin, 4) != decimal.Round(currentCostSnapshot.TargetMarginPercent, 4);
+        if ((PricingDiscountAmount > 0 || marginChanged) && string.IsNullOrWhiteSpace(pricingAdjustmentReason))
+        {
+            message = "Enter a reason for the promotional discount or job-level margin change.";
+            return false;
+        }
+        return true;
     }
 
     private async Task DeleteProjectTaskAsync(QuoteProjectTask task)
@@ -1064,10 +1487,14 @@ else
             .Include(x => x.QuoteCase).ThenInclude(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.Materials)
             .SingleOrDefaultAsync(x => x.Id == version.Id);
         if (trackedVersion is null) return;
-        var accepted = trackedVersion.QuoteCase.ProjectTasks
-            .Select(task => task.Analyses.Where(x => x.Status == QuoteTaskAnalysisStatuses.Accepted).OrderByDescending(x => x.RevisionNumber).FirstOrDefault())
+        var pricingCandidates = trackedVersion.QuoteCase.ProjectTasks
+            .Select(task => task.Analyses
+                .Where(x => x.Status is QuoteTaskAnalysisStatuses.Accepted or QuoteTaskAnalysisStatuses.NeedsReview)
+                .OrderByDescending(x => x.RevisionNumber)
+                .FirstOrDefault())
             .Where(x => x is not null).ToDictionary(x => x!.QuoteProjectTaskId, x => x!);
-        if (accepted.Count == 0) { message = "Accept at least one CentCom task analysis before pricing."; return; }
+        if (pricingCandidates.Count == 0) { message = "Complete at least one CentCom task analysis before pricing."; return; }
+        var isPreliminary = pricingCandidates.Values.Any(x => x.Status != QuoteTaskAnalysisStatuses.Accepted);
 
         var revision = (await db.QuoteCostSnapshots.Where(x => x.QuoteVersionId == version.Id).Select(x => (int?)x.RevisionNumber).MaxAsync() ?? 0) + 1;
         var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
@@ -1081,14 +1508,14 @@ else
         decimal projectDays = 0;
         foreach (var task in trackedVersion.QuoteCase.ProjectTasks.OrderBy(x => x.SortOrder))
         {
-            if (!accepted.TryGetValue(task.Id, out var analysis)) continue;
+            if (!pricingCandidates.TryGetValue(task.Id, out var analysis)) continue;
             var days = Math.Max(0, task.EstimatedDays);
             var crewRate = policy.CrewRates.Where(x => x.IsActive && x.TaskType == task.TaskType
                     && (x.WorkType == null || x.WorkType == task.WorkType))
                 .OrderByDescending(x => x.WorkType != null).FirstOrDefault();
             var crew = task.CrewSizeOverride ?? crewRate?.CrewSize ?? policy.DefaultCrewSize;
             var dailyCrew = task.DailyCrewCostOverride ?? crewRate?.DailyCrewCost ?? policy.DefaultDailyCrewCost;
-            var material = analysis.TotalCost;
+            var material = analysis.MaterialSubtotal;
             var applicableKits = policy.SupplyKits.Where(x => x.IsActive
                     && (x.TaskType == null || x.TaskType == task.TaskType)
                     && (x.WorkType == null || x.WorkType == task.WorkType)).ToList();
@@ -1149,7 +1576,9 @@ else
             var marginRule = policy.MarginRules.Where(x => x.IsActive && x.TaskType == task.TaskType
                     && (x.WorkType == null || x.WorkType == task.WorkType))
                 .OrderByDescending(x => x.WorkType != null).FirstOrDefault();
-            taskCost.TargetMarginPercent = task.TargetMarginPercentOverride ?? marginRule?.TargetMarginPercent ?? policy.DefaultTargetMarginPercent;
+            taskCost.TargetMarginPercent = currentCostSnapshot is not null
+                ? PricingTargetMargin
+                : task.TargetMarginPercentOverride ?? marginRule?.TargetMarginPercent ?? policy.DefaultTargetMarginPercent;
             taskCost.SuggestedCustomerPrice = taskCost.TargetMarginPercent >= 100
                 ? taskCost.TotalCost
                 : decimal.Round(taskCost.TotalCost / (1 - taskCost.TargetMarginPercent / 100m), 2);
@@ -1160,28 +1589,11 @@ else
         snapshot.TargetMarginPercent = snapshot.SuggestedCustomerPrice <= 0 ? 0
             : decimal.Round((snapshot.SuggestedCustomerPrice - snapshot.TotalCost) / snapshot.SuggestedCustomerPrice * 100m, 4);
         db.QuoteCostSnapshots.Add(snapshot);
-        await AddAuditEventAsync(db, quote, $"Cost snapshot revision {revision} created using {policy.Name} revision {policy.RevisionNumber}.");
+        await AddAuditEventAsync(db, quote, $"{(isPreliminary ? "Preliminary cost" : "Cost")} snapshot revision {revision} created using {policy.Name} revision {policy.RevisionNumber}.");
         await db.SaveChangesAsync();
-        message = $"Cost snapshot revision {revision} created. Previous snapshots remain unchanged.";
-        await ReloadAsync();
-    }
-
-    private async Task SavePriceAdjustmentAsync()
-    {
-        if (quote is null || currentCostSnapshot is null) return;
-        if (currentCostSnapshot.PriceAdjustment != 0 && string.IsNullOrWhiteSpace(currentCostSnapshot.AdjustmentReason))
-        {
-            message = "Enter a reason for the customer price adjustment.";
-            return;
-        }
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var tracked = await db.QuoteCostSnapshots.FindAsync(currentCostSnapshot.Id);
-        if (tracked is null) return;
-        tracked.PriceAdjustment = currentCostSnapshot.PriceAdjustment;
-        tracked.AdjustmentReason = currentCostSnapshot.AdjustmentReason?.Trim();
-        await AddAuditEventAsync(db, quote, $"Price adjustment of {tracked.PriceAdjustment:C2} saved on cost snapshot revision {tracked.RevisionNumber}.");
-        await db.SaveChangesAsync();
-        message = "Price adjustment saved.";
+        message = isPreliminary
+            ? $"Preliminary totals calculated in snapshot revision {revision}. Reprice after any material review changes."
+            : $"Cost snapshot revision {revision} created. Previous snapshots remain unchanged.";
         await ReloadAsync();
     }
 

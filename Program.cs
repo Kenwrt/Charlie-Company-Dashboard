@@ -84,6 +84,13 @@ try
     builder.Services.AddScoped<IEmailSender<ApplicationUser>, SmtpIdentityEmailSender>();
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
     builder.Services.Configure<CentComOptions>(builder.Configuration.GetSection(CentComOptions.SectionName));
+    builder.Services.Configure<SerpApiOptions>(builder.Configuration.GetSection(SerpApiOptions.SectionName));
+    builder.Services.AddHttpClient<HomeDepotCatalogLookupService>((services, client) =>
+    {
+        var serpApi = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<SerpApiOptions>>().Value;
+        client.BaseAddress = new Uri(serpApi.BaseUrl.TrimEnd('/'));
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
     builder.Services.AddSingleton<DashboardNotificationService>();
     builder.Services.AddMemoryCache();

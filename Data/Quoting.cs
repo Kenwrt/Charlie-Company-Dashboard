@@ -197,6 +197,7 @@ public sealed class QuoteTaskAnalysisMaterial
     public int SortOrder { get; set; }
     [StringLength(100)] public string? VendorSku { get; set; }
     [Required, StringLength(500)] public string Description { get; set; } = string.Empty;
+    [StringLength(500)] public string? OriginalDescription { get; set; }
     [Column(TypeName = "numeric(18,4)")] public decimal Quantity { get; set; }
     [Required, StringLength(40)] public string Unit { get; set; } = "Each";
     [Column(TypeName = "numeric(18,4)")] public decimal UnitCost { get; set; }
@@ -206,9 +207,30 @@ public sealed class QuoteTaskAnalysisMaterial
     [StringLength(255)] public string? SourceReference { get; set; }
     public DateOnly? SourcePriceDate { get; set; }
     public bool IsUnmatched { get; set; }
+    [Required, StringLength(30)] public string MatchKind { get; set; } = MaterialMatchKinds.Unresolved;
+    [Required, StringLength(30)] public string ReviewDecision { get; set; } = MaterialReviewDecisions.Pending;
+    public bool IsRemoved { get; set; }
     [StringLength(1000)] public string? Notes { get; set; }
     [NotMapped] public decimal ExtendedCost =>
-        decimal.Round(Quantity * UnitCost * (1 + WastePercent / 100m), 2);
+        IsRemoved ? 0 : decimal.Round(Quantity * UnitCost * (1 + WastePercent / 100m), 2);
+}
+
+public static class MaterialMatchKinds
+{
+    public const string Catalog = "Catalog";
+    public const string HomeDepotExact = "Home Depot exact";
+    public const string HomeDepotSimilar = "Home Depot similar";
+    public const string ManualCatalog = "Manual catalog";
+    public const string OneOff = "One-off";
+    public const string Unresolved = "Unresolved";
+}
+
+public static class MaterialReviewDecisions
+{
+    public const string Pending = "Pending";
+    public const string Accepted = "Accepted";
+    public const string Replaced = "Replaced";
+    public const string Removed = "Removed";
 }
 
 public sealed class QuoteProjectTaskPhoto
