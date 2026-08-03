@@ -6,6 +6,7 @@ namespace CharleyCompany.Dashboard.Web.Data;
 public class ApplicationUser : IdentityUser
 {
     public bool MustChangePassword { get; set; }
+    public bool AdminAuditEmail { get; set; }
     public ICollection<UserLocalOperation> LocalOperationMemberships { get; set; } = [];
 }
 

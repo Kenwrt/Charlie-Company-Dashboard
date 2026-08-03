@@ -451,6 +451,107 @@ h1:focus {
     border-top: 1px solid #e2e8f0;
 }
 
+.analysis-note-disclosure {
+    overflow: hidden;
+    background: #f8fafc;
+}
+
+.analysis-note-disclosure.assumption-notes {
+    border-left: 4px solid #3b82f6 !important;
+}
+
+.analysis-note-disclosure.warning-notes {
+    border-left: 4px solid #f59e0b !important;
+    background: #fffbeb;
+}
+
+.analysis-note-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.analysis-note-summary::-webkit-details-marker {
+    display: none;
+}
+
+.analysis-note-summary > span:first-child {
+    flex: 1;
+}
+
+.analysis-note-summary strong,
+.analysis-note-summary small {
+    display: block;
+}
+
+.analysis-note-summary small {
+    margin-top: 0.15rem;
+    color: #64748b;
+}
+
+.analysis-note-body {
+    padding: 0.9rem 1.25rem 1rem;
+    border-top: 1px solid #e2e8f0;
+}
+
+.analysis-note-list {
+    display: grid;
+    gap: 0.75rem;
+    padding-left: 1.35rem;
+}
+
+.analysis-note-list li {
+    padding-left: 0.25rem;
+}
+
+.analysis-note-list li::marker {
+    color: #64748b;
+    font-weight: 700;
+}
+
+.analysis-note-list p {
+    margin: 0.15rem 0 0;
+    color: #334155;
+    line-height: 1.5;
+}
+
+.analysis-review-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+.analysis-review-card {
+    padding: 1rem;
+    border: 1px solid #f5c451;
+    border-radius: 0.65rem;
+    background: #fff;
+}
+
+.analysis-review-card.resolved {
+    border-color: #86efac;
+    background: #f0fdf4;
+}
+
+.analysis-review-card p {
+    margin: 0.25rem 0 0;
+    color: #334155;
+    line-height: 1.45;
+}
+
+.resolution-action-panel {
+    padding-top: 0.15rem;
+    border-top: 1px solid #e2e8f0;
+}
+
+.resolution-action-panel > summary {
+    cursor: pointer;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
 .disclosure-chevron {
     display: inline-block;
     color: #64748b;
@@ -1370,6 +1471,147 @@ details[open] > summary .disclosure-chevron {
 .password-visibility-toggle:hover {
     background: #eef3f8;
     color: #172334;
+}
+
+/* Responsive estimator workspace: phone, tablet portrait, and touch sizing. */
+.dashboard-shell h1 {
+    font-size: clamp(1.75rem, 4vw, 2.2rem);
+}
+
+.dashboard-shell h2 {
+    font-size: clamp(1.2rem, 2.4vw, 1.55rem);
+}
+
+@media (max-width: 1200px) {
+    .dashboard-shell small,
+    .dashboard-shell .eyebrow,
+    .dashboard-shell .badge {
+        font-size: 0.875rem;
+        line-height: 1.4;
+    }
+
+    .dashboard-shell .btn,
+    .dashboard-shell .form-control,
+    .dashboard-shell .form-select,
+    .dashboard-shell summary {
+        min-height: 44px;
+    }
+
+    .dashboard-shell input,
+    .dashboard-shell select,
+    .dashboard-shell textarea {
+        font-size: 1rem;
+    }
+}
+
+@media (max-width: 900px) {
+    .dashboard-shell {
+        gap: 1rem;
+    }
+
+    .customer-price-controls > [class*="col-"] {
+        flex: 0 0 100%;
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .customer-price-controls {
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    .policy-audit-panel .table-responsive,
+    .job-cost-panel .table-responsive {
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .policy-audit-table,
+    .job-cost-panel table {
+        min-width: 900px;
+    }
+}
+
+@media (max-width: 560px) {
+    .content.px-4 {
+        padding-left: 0.85rem !important;
+        padding-right: 0.85rem !important;
+    }
+
+    .activity-panel,
+    .estimate-customer-panel {
+        padding: 1rem;
+    }
+
+    .centcom-analysis-body {
+        padding-left: 0.65rem;
+        padding-right: 0.65rem;
+    }
+
+    .vendor-analysis-body {
+        padding: 0.4rem;
+    }
+
+    .material-analysis-table,
+    .material-analysis-table tbody,
+    .material-analysis-table tr,
+    .material-analysis-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .material-analysis-table thead {
+        display: none;
+    }
+
+    .material-analysis-table tbody tr {
+        margin: 0.65rem 0;
+        padding: 0.45rem 0.65rem;
+        border: 1px solid #d8e1ec;
+        border-radius: 0.65rem;
+        background: #fff;
+    }
+
+    .material-analysis-table tbody tr.table-warning {
+        background: #fff8db;
+    }
+
+    .material-analysis-table td {
+        display: grid;
+        grid-template-columns: minmax(6.5rem, 0.42fr) minmax(0, 1fr);
+        gap: 0.75rem;
+        padding: 0.65rem 0.25rem;
+        border-bottom: 1px solid #e5eaf1;
+        text-align: left !important;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .material-analysis-table td:last-child {
+        border-bottom: 0;
+    }
+
+    .material-analysis-table td::before {
+        content: attr(data-label);
+        color: #52616f;
+        font-size: 0.875rem;
+        font-weight: 800;
+    }
+
+    .material-analysis-table td[data-label="Actions"] {
+        grid-template-columns: 1fr;
+    }
+
+    .material-analysis-table td[data-label="Actions"]::before {
+        margin-bottom: 0.15rem;
+    }
+
+    .material-analysis-table .btn,
+    .material-analysis-table .form-select,
+    .material-analysis-table .form-control {
+        width: 100%;
+    }
 }
 
 .password-visibility-toggle:focus-visible {

@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260802201433_AddEstimatorAnalysisResolutions")]
+    partial class AddEstimatorAnalysisResolutions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -29,9 +32,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
-
-                    b.Property<bool>("AdminAuditEmail")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
@@ -1305,9 +1305,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<DateTimeOffset?>("AdminCompletionEmailSentAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("AssignedUserId")
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
@@ -1346,13 +1343,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<string>("HousecallProQuoteId")
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
-
-                    b.Property<DateTimeOffset?>("LastMaterialEmailSentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastMaterialEmailSignature")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("LocalOperationId")
                         .HasColumnType("integer");
@@ -1931,11 +1921,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<string>("ResolvedByUserId")
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
-
-                    b.Property<string>("ReviewKind")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
 
                     b.Property<int>("SortOrder")
                         .HasColumnType("integer");

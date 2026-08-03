@@ -123,6 +123,9 @@ public sealed class QuoteCase
     [Required, StringLength(40)] public string Status { get; set; } = QuoteStatuses.Received;
     [StringLength(450)] public string? AssignedUserId { get; set; }
     public ApplicationUser? AssignedUser { get; set; }
+    [StringLength(64)] public string? LastMaterialEmailSignature { get; set; }
+    public DateTimeOffset? LastMaterialEmailSentAt { get; set; }
+    public DateTimeOffset? AdminCompletionEmailSentAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<QuoteVersion> Versions { get; set; } = [];
@@ -185,6 +188,7 @@ public sealed class QuoteTaskAnalysis
     [StringLength(450)] public string? ReviewedByUserId { get; set; }
     public ICollection<QuoteTaskAnalysisMaterial> Materials { get; set; } = [];
     public ICollection<QuoteTaskAnalysisExclusion> Exclusions { get; set; } = [];
+    public ICollection<QuoteTaskAnalysisReviewItem> ReviewItems { get; set; } = [];
     [NotMapped] public decimal MaterialSubtotal => Materials.Sum(item => item.ExtendedCost);
     [NotMapped] public decimal TotalCost => MaterialSubtotal + DeliveryAllowance + TaxAllowance + OtherAllowance;
 }
@@ -212,9 +216,59 @@ public sealed class QuoteTaskAnalysisMaterial
     [Required, StringLength(30)] public string MatchKind { get; set; } = MaterialMatchKinds.Unresolved;
     [Required, StringLength(30)] public string ReviewDecision { get; set; } = MaterialReviewDecisions.Pending;
     public bool IsRemoved { get; set; }
+    public bool IsEstimatorLocked { get; set; }
     [StringLength(1000)] public string? Notes { get; set; }
     [NotMapped] public decimal ExtendedCost =>
         IsRemoved ? 0 : decimal.Round(Quantity * UnitCost * (1 + WastePercent / 100m), 2);
+}
+
+public sealed class QuoteTaskAnalysisReviewItem
+{
+    public int Id { get; set; }
+    public int QuoteTaskAnalysisId { get; set; }
+    public QuoteTaskAnalysis QuoteTaskAnalysis { get; set; } = null!;
+    public int SortOrder { get; set; }
+    [Required, StringLength(80)] public string ItemKey { get; set; } = string.Empty;
+    [Required, StringLength(20)] public string ReviewKind { get; set; } = AnalysisReviewKinds.Warning;
+    [Required, StringLength(100)] public string Category { get; set; } = "Review item";
+    [Required, StringLength(1000)] public string Description { get; set; } = string.Empty;
+    [Required, StringLength(30)] public string Status { get; set; } = AnalysisReviewStatuses.NeedsReview;
+    [StringLength(2000)] public string? EstimatorResponse { get; set; }
+    [StringLength(60)] public string? ResolutionAction { get; set; }
+    public int? AddedVendorProductId { get; set; }
+    public VendorProduct? AddedVendorProduct { get; set; }
+    [Column(TypeName = "numeric(18,4)")] public decimal AddedProductQuantity { get; set; }
+    [StringLength(200)] public string? AdditionalFeeName { get; set; }
+    [Column(TypeName = "numeric(18,2)")] public decimal AdditionalFeeAmount { get; set; }
+    [StringLength(450)] public string? ResolvedByUserId { get; set; }
+    public DateTimeOffset? ResolvedAt { get; set; }
+}
+
+public static class AnalysisReviewStatuses
+{
+    public const string NeedsReview = "Needs review";
+    public const string Accepted = "Accepted";
+    public const string Resolved = "Resolved";
+    public const string NotApplicable = "Not applicable";
+    public const string FieldVerification = "Field verification required";
+    public static readonly string[] All = [NeedsReview, Accepted, Resolved, NotApplicable, FieldVerification];
+}
+
+public static class AnalysisReviewKinds
+{
+    public const string Warning = "Warning";
+    public const string Assumption = "Assumption";
+}
+
+public static class AssumptionResolutionActions
+{
+    public const string CorrectAssumption = "Correct assumption";
+    public const string UpdateTaskScope = "Update task scope";
+    public const string ChangeMaterials = "Change materials";
+    public const string AddTaskFee = "Add task fee";
+    public const string FieldVerification = "Requires field verification";
+    public const string NotPartOfJob = "Not part of this job";
+    public static readonly string[] All = [CorrectAssumption, UpdateTaskScope, ChangeMaterials, AddTaskFee, FieldVerification, NotPartOfJob];
 }
 
 public static class MaterialMatchKinds

@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801193952_AddPreferredCatalogSelections")]
+    partial class AddPreferredCatalogSelections
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -29,9 +32,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
-
-                    b.Property<bool>("AdminAuditEmail")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
@@ -1305,9 +1305,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<DateTimeOffset?>("AdminCompletionEmailSentAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("AssignedUserId")
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
@@ -1346,13 +1343,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<string>("HousecallProQuoteId")
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
-
-                    b.Property<DateTimeOffset?>("LastMaterialEmailSentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastMaterialEmailSignature")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("LocalOperationId")
                         .HasColumnType("integer");
@@ -1800,9 +1790,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
-                    b.Property<bool>("IsEstimatorLocked")
-                        .HasColumnType("boolean");
-
                     b.Property<bool>("IsRemoved")
                         .HasColumnType("boolean");
 
@@ -1876,83 +1863,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("QuoteTaskAnalysisMaterials");
-                });
-
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysisReviewItem", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("AddedProductQuantity")
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<int?>("AddedVendorProductId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("AdditionalFeeAmount")
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("AdditionalFeeName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("EstimatorResponse")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("ItemKey")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<int>("QuoteTaskAnalysisId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ResolutionAction")
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.Property<DateTimeOffset?>("ResolvedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ResolvedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("ReviewKind")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AddedVendorProductId");
-
-                    b.HasIndex("QuoteTaskAnalysisId", "ItemKey")
-                        .IsUnique();
-
-                    b.ToTable("QuoteTaskAnalysisReviewItems");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskCostSnapshot", b =>
@@ -2935,24 +2845,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("VendorProduct");
                 });
 
-            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysisReviewItem", b =>
-                {
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.VendorProduct", "AddedVendorProduct")
-                        .WithMany()
-                        .HasForeignKey("AddedVendorProductId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteTaskAnalysis", "QuoteTaskAnalysis")
-                        .WithMany("ReviewItems")
-                        .HasForeignKey("QuoteTaskAnalysisId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("AddedVendorProduct");
-
-                    b.Navigation("QuoteTaskAnalysis");
-                });
-
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskCostSnapshot", b =>
                 {
                     b.HasOne("CharleyCompany.Dashboard.Web.Data.QuoteCostSnapshot", "QuoteCostSnapshot")
@@ -3278,8 +3170,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Navigation("Exclusions");
 
                     b.Navigation("Materials");
-
-                    b.Navigation("ReviewItems");
                 });
 
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.QuoteTaskCostSnapshot", b =>

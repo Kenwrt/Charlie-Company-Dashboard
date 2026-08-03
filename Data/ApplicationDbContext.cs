@@ -26,6 +26,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<QuoteProjectTaskPhoto> QuoteProjectTaskPhotos => Set<QuoteProjectTaskPhoto>();
     public DbSet<QuoteTaskAnalysis> QuoteTaskAnalyses => Set<QuoteTaskAnalysis>();
     public DbSet<QuoteTaskAnalysisMaterial> QuoteTaskAnalysisMaterials => Set<QuoteTaskAnalysisMaterial>();
+    public DbSet<QuoteTaskAnalysisReviewItem> QuoteTaskAnalysisReviewItems => Set<QuoteTaskAnalysisReviewItem>();
     public DbSet<QuotePricingRule> QuotePricingRules => Set<QuotePricingRule>();
     public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
     public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
@@ -106,6 +107,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<VendorProduct>(entity =>
         {
             entity.HasIndex(item => new { item.SupplyVendorId, item.VendorSku }).IsUnique();
+            entity.HasIndex(item => new { item.IsPreferred, item.PreferencePriority });
             entity.Property(item => item.PackageQuantity).HasPrecision(18, 4);
             entity.HasOne(item => item.SupplyVendor).WithMany(vendor => vendor.VendorProducts).HasForeignKey(item => item.SupplyVendorId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(item => item.Product).WithMany(product => product.VendorProducts).HasForeignKey(item => item.ProductId).OnDelete(DeleteBehavior.Restrict);
@@ -177,6 +179,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .WithMany()
                 .HasForeignKey(item => item.VendorProductId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<QuoteTaskAnalysisReviewItem>(entity =>
+        {
+            entity.HasIndex(item => new { item.QuoteTaskAnalysisId, item.ItemKey }).IsUnique();
+            entity.HasOne(item => item.QuoteTaskAnalysis).WithMany(analysis => analysis.ReviewItems).HasForeignKey(item => item.QuoteTaskAnalysisId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.AddedVendorProduct).WithMany().HasForeignKey(item => item.AddedVendorProductId).OnDelete(DeleteBehavior.SetNull);
         });
         builder.Entity<QuotePricingRule>(entity => entity.HasIndex(rule => rule.LocalOperationId).IsUnique());
         builder.Entity<CostingPolicyVersion>(entity =>

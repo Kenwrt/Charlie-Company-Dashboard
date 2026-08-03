@@ -44,6 +44,8 @@ public sealed class HomeDepotCatalogLookupService(
         var candidates = (payload?.ShoppingResults ?? [])
             .Where(item => item.Source.Contains("Home Depot", StringComparison.OrdinalIgnoreCase))
             .Where(item => item.ExtractedPrice is > 0 && !string.IsNullOrWhiteSpace(item.Title))
+            .Where(item => !description.Contains("trex", StringComparison.OrdinalIgnoreCase) ||
+                item.Title.Contains("trex", StringComparison.OrdinalIgnoreCase))
             .Take(Math.Clamp(settings.MaximumResults, 1, 40))
             .Select(item => Score(description, item))
             .OrderByDescending(item => item.Score)

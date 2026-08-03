@@ -13,6 +13,9 @@ public sealed class VendorProduct
     [StringLength(300)] public string? VendorDescription { get; set; }
     [Range(0.0001, double.MaxValue)] public decimal PackageQuantity { get; set; } = 1;
     [Required, StringLength(40)] public string PurchaseUnit { get; set; } = "Each";
+    [StringLength(120)] public string? ProductSystem { get; set; }
+    public bool IsPreferred { get; set; }
+    [Range(0, 1000)] public int PreferencePriority { get; set; } = 100;
     public bool IsActive { get; set; } = true;
     public ICollection<VendorPrice> Prices { get; set; } = [];
     public ICollection<InvoiceLine> InvoiceLines { get; set; } = [];

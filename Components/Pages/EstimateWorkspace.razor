@@ -13,6 +13,9 @@
 @inject OperationAccessService OperationAccess
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject OperationalEventPublisher OperationalEvents
+@inject CentComTaskAnalysisService CentComTaskAnalysis
+@inject EstimateMaterialEmailService EstimateMaterialEmails
+@inject EstimateAdminAuditEmailService EstimateAdminAuditEmails
 @inject IWebHostEnvironment Environment
 @inject IConfiguration Configuration
 @inject IJSRuntime JS
@@ -169,7 +172,7 @@ else
                         <div class="row g-4">
                             <div class="col-md-4">
                                 <label class="form-label">Work type</label>
-                                <InputSelect class="form-select" @bind-Value="task.WorkType">
+                                <InputSelect class="form-select" @bind-Value="task.WorkType" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)">
                                     <option value="">Select work type…</option>
                                     @foreach (var workType in ProjectWorkTypes.All) { <option value="@workType">@workType</option> }
                                 </InputSelect>
@@ -186,6 +189,7 @@ else
                                                    rows="7"
                                                    maxlength="4000"
                                                    @bind-Value="task.ScopeOfWork"
+                                                   @bind-Value:after="() => AutoSaveProjectTaskAsync(task)"
                                                    placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
                                     <button type="button"
                                             class="dictation-toggle @(IsDictating(taskScopeElementId) ? "active" : null)"
@@ -202,29 +206,19 @@ else
                                 }
                                 <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-4">
                                 <label class="form-label">Estimated job days</label>
-                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.EstimatedDays" />
+                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.EstimatedDays" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-4">
                                 <label class="form-label">Crew size override</label>
-                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.CrewSizeOverride" />
+                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.CrewSizeOverride" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
                                 <small class="text-muted">Leave blank for policy default.</small>
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-4">
                                 <label class="form-label">Daily crew cost override</label>
-                                <InputNumber class="form-control" min="0" step="1" @bind-Value="task.DailyCrewCostOverride" />
+                                <InputNumber class="form-control" min="0" step="1" @bind-Value="task.DailyCrewCostOverride" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
                                 <small class="text-muted">Leave blank for policy default.</small>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Contingency % override</label>
-                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.ContingencyPercentOverride" />
-                                <small class="text-muted">Leave blank for policy default.</small>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">Target margin % override</label>
-                                <InputNumber class="form-control" min="0" max="99.99" step="0.5" @bind-Value="task.TargetMarginPercentOverride" />
-                                <small class="text-muted">Leave blank for the task margin rule.</small>
                             </div>
                         </div>
 
@@ -308,6 +302,16 @@ else
                             }
                             else
                             {
+                                var assumptionItems = AnalysisNoteItems(analysis.Assumptions, "Assumption");
+                                var warningItems = AnalysisNoteItems(analysis.QuestionsAndWarnings, "Review item");
+                                var pendingAssumptionItems = analysis.ReviewItems
+                                    .Where(item => item.ReviewKind == AnalysisReviewKinds.Assumption && IsReviewItemOutstanding(item))
+                                    .OrderBy(item => item.SortOrder)
+                                    .ToList();
+                                var pendingReviewItems = analysis.ReviewItems
+                                    .Where(item => item.ReviewKind == AnalysisReviewKinds.Warning && IsReviewItemOutstanding(item))
+                                    .OrderBy(item => item.SortOrder)
+                                    .ToList();
                                 <dl class="row mt-3 mb-2">
                                     <dt class="col-sm-3">Revision</dt>
                                     <dd class="col-sm-9">@analysis.RevisionNumber</dd>
@@ -317,17 +321,128 @@ else
                                     <dd class="col-sm-9">@(analysis.ModelVersion ?? "Pending")</dd>
                                 </dl>
 
-                                @if (!string.IsNullOrWhiteSpace(analysis.Assumptions))
+                                @if (assumptionItems.Count > 0)
                                 {
-                                    <h4>Assumptions</h4>
-                                    <p class="preserve-lines">@analysis.Assumptions</p>
+                                    <details class="analysis-note-disclosure assumption-notes border rounded mb-3">
+                                        <summary class="analysis-note-summary">
+                                            <span><strong>Assumptions</strong><small>@pendingAssumptionItems.Count item(s) requiring estimator review</small></span>
+                                            <span class="badge @(pendingAssumptionItems.Count == 0 ? "text-bg-success" : "text-bg-warning")">@(pendingAssumptionItems.Count == 0 ? "Complete" : "Review")</span>
+                                            <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+                                        </summary>
+                                        <div class="analysis-note-body">
+                                            <div class="analysis-review-grid">
+                                                @foreach (var item in pendingAssumptionItems)
+                                                {
+                                                    <article class="analysis-review-card">
+                                                        <div class="d-flex justify-content-between align-items-start gap-3">
+                                                            <div><strong>@item.Category</strong><p>@item.Description</p></div>
+                                                            <span class="badge @ReviewStatusClass(item.Status)">@item.Status</span>
+                                                        </div>
+                                                        <div class="d-flex flex-wrap gap-2 mt-2">
+                                                            <button type="button" class="btn btn-sm btn-outline-success" @onclick="() => SaveReviewDispositionAsync(item, AnalysisReviewStatuses.Accepted)">Accept assumption</button>
+                                                        </div>
+                                                        <details class="mt-3 resolution-action-panel" open="@(item.Status == AnalysisReviewStatuses.FieldVerification)">
+                                                            <summary>Reject and correct this assumption</summary>
+                                                            <div class="row g-2 mt-1">
+                                                                <div class="col-lg-4">
+                                                                    <label class="form-label">Resolution</label>
+                                                                    <select class="form-select form-select-sm" @bind="item.ResolutionAction">
+                                                                        <option value="">Select how to resolve…</option>
+                                                                        @foreach (var action in AssumptionResolutionActions.All)
+                                                                        {
+                                                                            <option value="@action">@action</option>
+                                                                        }
+                                                                    </select>
+                                                                </div>
+                                                                <div class="col-lg-8">
+                                                                    <label class="form-label">Correction or estimator response</label>
+                                                                    <InputTextArea class="form-control form-control-sm" rows="2" @bind-Value="item.EstimatorResponse" placeholder="Enter the confirmed condition, measurement, exclusion, or decision…" />
+                                                                </div>
+                                                            </div>
+                                                            @if (item.ResolutionAction == AssumptionResolutionActions.ChangeMaterials)
+                                                            {
+                                                                <div class="row g-2 mt-2">
+                                                                    <div class="col-lg-7">
+                                                                        <select class="form-select form-select-sm" value="@ReviewCatalogSelection(item.Id)" @onchange="args => SetReviewCatalogSelection(item.Id, args.Value?.ToString())">
+                                                                            <option value="0">Select catalog product…</option>
+                                                                            @foreach (var catalogItem in reviewCatalogItems.Where(x => CurrentCatalogPrice(x) is not null))
+                                                                            {
+                                                                                <option value="@catalogItem.Id">@catalogItem.Product.Name — @catalogItem.SupplyVendor.Name — @CurrentCatalogPrice(catalogItem)!.UnitPrice.ToString("C2")</option>
+                                                                            }
+                                                                        </select>
+                                                                    </div>
+                                                                    <div class="col-lg-2"><InputNumber class="form-control form-control-sm" min="0.01" step="1" @bind-Value="item.AddedProductQuantity" placeholder="Qty" /></div>
+                                                                    <div class="col-lg-3"><button type="button" class="btn btn-sm btn-primary w-100" @onclick="() => AddReviewCatalogProductAsync(analysis, item)">Add product &amp; resolve</button></div>
+                                                                </div>
+                                                            }
+                                                            else if (item.ResolutionAction == AssumptionResolutionActions.AddTaskFee)
+                                                            {
+                                                                <div class="row g-2 mt-2">
+                                                                    <div class="col-lg-5"><InputText class="form-control form-control-sm" @bind-Value="item.AdditionalFeeName" placeholder="Fee name" /></div>
+                                                                    <div class="col-lg-3"><InputNumber class="form-control form-control-sm" min="0" step="1" @bind-Value="item.AdditionalFeeAmount" placeholder="Amount" /></div>
+                                                                    <div class="col-lg-4"><button type="button" class="btn btn-sm btn-primary w-100" @onclick="() => AddReviewFeeAsync(item)">Add fee &amp; resolve</button></div>
+                                                                </div>
+                                                            }
+                                                            else
+                                                            {
+                                                                <button type="button" class="btn btn-sm btn-primary mt-2" @onclick="() => ResolveAssumptionAsync(item)">Save assumption resolution</button>
+                                                            }
+                                                        </details>
+                                                    </article>
+                                                }
+                                            </div>
+                                        </div>
+                                    </details>
                                 }
-                                @if (!string.IsNullOrWhiteSpace(analysis.QuestionsAndWarnings))
+                                @if (warningItems.Count > 0)
                                 {
-                                    <div class="alert alert-warning">
-                                        <strong>Questions and warnings</strong>
-                                        <div class="preserve-lines">@analysis.QuestionsAndWarnings</div>
-                                    </div>
+                                    <details class="analysis-note-disclosure warning-notes border rounded mb-3">
+                                        <summary class="analysis-note-summary">
+                                            <span><strong>Questions and warnings</strong><small>@pendingReviewItems.Count item(s) requiring estimator review</small></span>
+                                            <span class="badge @(AllReviewItemsResolved(analysis) ? "text-bg-success" : "text-bg-warning")">@(AllReviewItemsResolved(analysis) ? "Complete" : "Review")</span>
+                                            <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+                                        </summary>
+                                        <div class="analysis-note-body">
+                                            <div class="analysis-review-grid">
+                                                @foreach (var item in pendingReviewItems)
+                                                {
+                                                    <article class="analysis-review-card @(item.Status == AnalysisReviewStatuses.NeedsReview ? null : "resolved")">
+                                                        <div class="d-flex justify-content-between align-items-start gap-3">
+                                                            <div><strong>@item.Category</strong><p>@item.Description</p></div>
+                                                            <span class="badge @ReviewStatusClass(item.Status)">@item.Status</span>
+                                                        </div>
+                                                        <label class="form-label mt-2">Estimator response</label>
+                                                        <InputTextArea class="form-control" rows="2" @bind-Value="item.EstimatorResponse" placeholder="Document the confirmed condition, measurement, or decision…" />
+                                                        <div class="d-flex flex-wrap gap-2 mt-2">
+                                                            <button type="button" class="btn btn-sm btn-outline-success" @onclick="() => SaveReviewDispositionAsync(item, AnalysisReviewStatuses.Accepted)">Accept as stated</button>
+                                                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => SaveReviewDispositionAsync(item, AnalysisReviewStatuses.Resolved)">Resolve with response</button>
+                                                            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => SaveReviewDispositionAsync(item, AnalysisReviewStatuses.NotApplicable)">Not applicable</button>
+                                                        </div>
+                                                        <details class="mt-3 resolution-action-panel">
+                                                            <summary>Add a catalog product or task fee</summary>
+                                                            <div class="row g-2 mt-1">
+                                                                <div class="col-lg-7">
+                                                                    <select class="form-select form-select-sm" value="@ReviewCatalogSelection(item.Id)" @onchange="args => SetReviewCatalogSelection(item.Id, args.Value?.ToString())">
+                                                                        <option value="0">Select catalog product…</option>
+                                                                        @foreach (var catalogItem in reviewCatalogItems.Where(x => CurrentCatalogPrice(x) is not null))
+                                                                        {
+                                                                            <option value="@catalogItem.Id">@catalogItem.Product.Name — @catalogItem.SupplyVendor.Name — @CurrentCatalogPrice(catalogItem)!.UnitPrice.ToString("C2")</option>
+                                                                        }
+                                                                    </select>
+                                                                </div>
+                                                                <div class="col-lg-2"><InputNumber class="form-control form-control-sm" min="0.01" step="1" @bind-Value="item.AddedProductQuantity" placeholder="Qty" /></div>
+                                                                <div class="col-lg-3"><button type="button" class="btn btn-sm btn-primary w-100" @onclick="() => AddReviewCatalogProductAsync(analysis, item)">Add product &amp; resolve</button></div>
+                                                                <div class="col-lg-5"><InputText class="form-control form-control-sm" @bind-Value="item.AdditionalFeeName" placeholder="Fee name (permit, disposal, rental…)" /></div>
+                                                                <div class="col-lg-2"><InputNumber class="form-control form-control-sm" min="0" step="1" @bind-Value="item.AdditionalFeeAmount" placeholder="Amount" /></div>
+                                                                <div class="col-lg-3"><button type="button" class="btn btn-sm btn-outline-primary w-100" @onclick="() => AddReviewFeeAsync(item)">Add fee &amp; resolve</button></div>
+                                                            </div>
+                                                        </details>
+                                                    </article>
+                                                }
+                                            </div>
+                                            <button type="button" class="btn btn-primary mt-3" disabled="@(!AllReviewItemsResolved(analysis))" @onclick="() => ReanalyzeWithResolutionsAsync(task, analysis)">Reanalyze with resolutions</button>
+                                        </div>
+                                    </details>
                                 }
                                 @if (analysis.Exclusions.Count > 0)
                                 {
@@ -350,6 +465,7 @@ else
                                 else
                                 {
                                     @foreach (var vendorGroup in analysis.Materials
+                                        .Where(x => !x.IsRemoved)
                                         .OrderBy(x => x.SortOrder)
                                         .GroupBy(MaterialVendorName)
                                         .OrderBy(group => MaterialVendorSortOrder(group.Key))
@@ -368,7 +484,7 @@ else
                                         </summary>
                                     <div class="vendor-analysis-body">
                                     <div class="table-responsive">
-                                        <table class="table table-sm align-middle">
+                                        <table class="table table-sm align-middle material-analysis-table">
                                             <thead>
                                                 <tr>
                                                     <th>SKU / Material</th>
@@ -385,7 +501,7 @@ else
                                                 @foreach (var item in vendorGroup)
                                                 {
                                                     <tr class="@(item.IsRemoved ? "table-secondary" : item.MatchKind is MaterialMatchKinds.HomeDepotSimilar or MaterialMatchKinds.Unresolved ? "table-warning" : null)">
-                                                        <td>
+                                                        <td data-label="SKU / Material">
                                                             <strong>@(item.VendorSku ?? "No catalog SKU")</strong><br />
                                                             @if (editingAnalysisIds.Contains(analysis.Id))
                                                             {
@@ -402,7 +518,7 @@ else
                                                                 <br /><small class="text-warning-emphasis"><strong>Originally requested:</strong> @item.OriginalDescription</small>
                                                             }
                                                         </td>
-                                                        <td>
+                                                        <td data-label="Quantity">
                                                             @if (editingAnalysisIds.Contains(analysis.Id))
                                                             {
                                                                 <InputNumber class="form-control form-control-sm" @bind-Value="item.Quantity" />
@@ -413,7 +529,7 @@ else
                                                                 @($"{item.Quantity:N2} {item.Unit}")
                                                             }
                                                         </td>
-                                                        <td>
+                                                        <td data-label="Unit cost">
                                                             @if (editingAnalysisIds.Contains(analysis.Id))
                                                             {
                                                                 <InputNumber class="form-control form-control-sm" @bind-Value="item.UnitCost" />
@@ -423,7 +539,7 @@ else
                                                                 @item.UnitCost.ToString("C2")
                                                             }
                                                         </td>
-                                                        <td>
+                                                        <td data-label="Waste">
                                                             @if (editingAnalysisIds.Contains(analysis.Id))
                                                             {
                                                                 <InputNumber class="form-control form-control-sm" @bind-Value="item.WastePercent" />
@@ -433,32 +549,37 @@ else
                                                                 @($"{item.WastePercent:N1}%")
                                                             }
                                                         </td>
-                                                        <td>@item.ExtendedCost.ToString("C2")</td>
-                                                        <td>
+                                                        <td data-label="Extended">@item.ExtendedCost.ToString("C2")</td>
+                                                        <td data-label="Source">
                                                             @(item.SourceReference ?? item.SourceType ?? "Not supplied")
                                                             @if (item.SourcePriceDate is not null)
                                                             {
                                                                 <br /><small>@item.SourcePriceDate.Value.ToString("MM/dd/yyyy")</small>
                                                             }
                                                         </td>
-                                                        <td>
+                                                        <td data-label="Match / review">
                                                             <span class="badge @MaterialMatchClass(item.MatchKind)">@item.MatchKind</span><br />
                                                             <small>@item.MatchConfidence.ToString("P0") · @item.ReviewDecision</small>
                                                         </td>
-                                                        <td>
+                                                        <td data-label="Actions">
                                                             @if (analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview)
                                                             {
                                                                 <div class="d-grid gap-1">
                                                                     <button type="button" class="btn btn-sm btn-outline-success" @onclick="() => SetMaterialDecisionAsync(analysis, item, MaterialReviewDecisions.Accepted)">Accept item</button>
                                                                     <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => SetMaterialDecisionAsync(analysis, item, MaterialReviewDecisions.Removed)">Remove</button>
-                                                                    <select class="form-select form-select-sm" value="@ReplacementSelection(item.Id)" @onchange="args => SetReplacementSelection(item.Id, args.Value?.ToString())">
+                                                                    <select class="form-select form-select-sm"
+                                                                            @key="ReplacementSelectKey(item)"
+                                                                            value="0"
+                                                                            disabled="@replacingMaterialIds.Contains(item.Id)"
+                                                                            @onchange="async args => await SelectReplacementFromCatalogAsync(analysis, item, args.Value?.ToString())">
                                                                         <option value="0">Replace from catalog…</option>
                                                                         @foreach (var catalogItem in reviewCatalogItems)
                                                                         {
-                                                                            <option value="@catalogItem.Id">@catalogItem.Product.Name — @catalogItem.SupplyVendor.Name / @catalogItem.VendorSku</option>
+                                                                            var catalogPrice = CurrentCatalogPrice(catalogItem);
+                                                                            <option value="@catalogItem.Id" disabled="@(catalogPrice is null)">@catalogItem.Product.Name — @catalogItem.SupplyVendor.Name / @catalogItem.VendorSku@(catalogPrice is null ? " — no active price" : $" — {catalogPrice.UnitPrice:C2}")</option>
                                                                         }
                                                                     </select>
-                                                                    <button type="button" class="btn btn-sm btn-outline-primary" disabled="@(ReplacementSelection(item.Id) == 0)" @onclick="() => ReplaceMaterialFromCatalogAsync(analysis, item)">Use catalog item</button>
+                                                                    <small class="text-muted">@(replacingMaterialIds.Contains(item.Id) ? "Applying replacement…" : "Selecting an item replaces this row immediately.")</small>
                                                                     @if (editingAnalysisIds.Contains(analysis.Id) && !item.IsRemoved)
                                                                     {
                                                                         <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => AddMaterialToHomeDepotCatalogAsync(analysis, item)">Save as Home Depot catalog item</button>
@@ -486,6 +607,18 @@ else
                                         <strong>Overall material subtotal</strong>
                                         <strong>@analysis.MaterialSubtotal.ToString("C2")</strong>
                                     </div>
+                                    @if (analysis.Materials.Any(x => x.IsRemoved))
+                                    {
+                                        <details class="mt-2">
+                                            <summary class="text-muted">Removed materials (@analysis.Materials.Count(x => x.IsRemoved))</summary>
+                                            <ul class="mb-0 mt-2">
+                                                @foreach (var removed in analysis.Materials.Where(x => x.IsRemoved).OrderBy(x => x.SortOrder))
+                                                {
+                                                    <li>@removed.Description</li>
+                                                }
+                                            </ul>
+                                        </details>
+                                    }
                                     @if (analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview && editingAnalysisIds.Contains(analysis.Id))
                                     {
                                         <button type="button" class="btn btn-sm btn-outline-primary mt-2" @onclick="() => AddManualMaterialLine(analysis)">Add material manually</button>
@@ -496,9 +629,9 @@ else
                             <div class="d-flex gap-2 flex-wrap mt-3">
                                 <button type="button"
                                         class="btn btn-outline-primary"
-                                        disabled="@(!CanSubmitAnalysis(analysis))"
-                                        @onclick="() => SubmitTaskAnalysisAsync(task)">
-                                    @(analysis is null ? "Analyze" : "Reanalyze")
+                                        disabled="@(!CanSubmitOrReanalyze(analysis))"
+                                        @onclick="() => SubmitOrReanalyzeAsync(task, analysis)">
+                                    @(analysis is null ? "Analyze" : analysis.ReviewItems.Count > 0 ? "Reanalyze with resolutions" : "Reanalyze")
                                 </button>
                                 @if (analysis?.Status == QuoteTaskAnalysisStatuses.NeedsReview)
                                 {
@@ -517,11 +650,6 @@ else
                         </details>
                         <div class="project-task-actions">
                             <button type="button"
-                                    class="btn btn-primary"
-                                    @onclick="() => SaveProjectTaskAsync(task)">
-                                Save Project Task
-                            </button>
-                            <button type="button"
                                     class="btn btn-outline-danger"
                                     @onclick="() => DeleteProjectTaskAsync(task)">
                                 Delete Task
@@ -539,7 +667,9 @@ else
             var pricingAnalyses = PricingAnalyses().ToList();
             var hasPreliminaryPricing = pricingAnalyses.Any(x => x.Status != QuoteTaskAnalysisStatuses.Accepted);
         }
-        <section class="activity-panel pricing-workspace job-cost-panel">
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized>
+                <section class="activity-panel pricing-workspace job-cost-panel">
             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
                 <div>
                     <p class="eyebrow">Internal estimating</p>
@@ -572,7 +702,7 @@ else
                     <article class="pricing-input-card">
                         <label class="form-label" for="job-target-margin">Desired gross margin</label>
                         <div class="input-group input-group-lg">
-                            <InputNumber id="job-target-margin" class="form-control" min="1" max="99" step="1" @bind-Value="pricingTargetMargin" @bind-Value:event="oninput" />
+                            <input id="job-target-margin" type="number" class="form-control" min="1" max="99" step="1" value="@pricingTargetMargin" @oninput="OnTargetMarginInput" />
                             <span class="input-group-text">%</span>
                         </div>
                         <small>Company policy: @currentCostSnapshot.CostingPolicyVersion.DefaultTargetMarginPercent.ToString("N2")%</small>
@@ -623,7 +753,58 @@ else
                 </details>
                 <small class="text-muted d-block mt-3">@(hasPreliminaryPricing ? "Preliminary totals — updates automatically as task pricing changes" : $"Cost snapshot r{currentCostSnapshot.RevisionNumber}") · @currentCostSnapshot.CostingPolicyVersion.Name r@(currentCostSnapshot.CostingPolicyVersion.RevisionNumber)</small>
             }
-        </section>
+                </section>
+            </Authorized>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized>
+                @if (currentCostSnapshot is not null)
+                {
+                    var policyAuditRows = PolicyAuditRows()
+                        .Where(IsVisiblePolicyAuditRow)
+                        .ToList();
+                    <section class="activity-panel policy-audit-panel">
+                        <details>
+                            <summary class="d-flex justify-content-between align-items-center gap-3">
+                                <span>
+                                    <span class="eyebrow d-block">Administrator only</span>
+                                    <strong>Policy &amp; CENTCOM Audit</strong>
+                                    <small class="d-block text-muted">Applied dollar impacts and priced material decisions only. Zero-value and unconfigured entries are hidden.</small>
+                                </span>
+                                <span class="badge text-bg-dark">@policyAuditRows.Count audit entries</span>
+                            </summary>
+                            <div class="mt-3">
+                                <div class="alert alert-light border">
+                                    <strong>@currentCostSnapshot.CostingPolicyVersion.Name revision @currentCostSnapshot.CostingPolicyVersion.RevisionNumber</strong>
+                                    · effective @currentCostSnapshot.CostingPolicyVersion.EffectiveDate.ToString("MM/dd/yyyy")
+                                    · cost snapshot revision @currentCostSnapshot.RevisionNumber created @currentCostSnapshot.PricedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")
+                                </div>
+                                @foreach (var auditGroup in policyAuditRows.GroupBy(AuditSection).OrderBy(group => AuditSectionOrder(group.Key)))
+                                {
+                                    <h3 class="h5 mt-4">@auditGroup.Key</h3>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle policy-audit-table">
+                                            <thead><tr><th>Task</th><th>Category</th><th>Rule / decision</th><th>Scope</th><th>Result</th><th>Status</th><th>Reason</th><th>Cost impact</th></tr></thead>
+                                            <tbody>
+                                                @foreach (var row in auditGroup)
+                                                {
+                                                    <tr class="@(row.Status == "Applied" ? null : row.Status == "Override" ? "table-info" : row.Status == "Warning" ? "table-warning" : "text-muted")">
+                                                        <td>@row.Task</td><td>@row.Category</td><td>@row.Rule</td><td>@row.Scope</td><td>@row.Result</td>
+                                                        <td><span class="badge @AuditStatusClass(row.Status)">@row.Status</span></td>
+                                                        <td>@row.Reason</td><td>@AuditImpact(row)</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                        </details>
+                    </section>
+                }
+            </Authorized>
+        </AuthorizeView>
 
         @if (currentCostSnapshot is not null)
         {
@@ -635,12 +816,12 @@ else
                 <div class="row g-3 customer-price-controls">
                     <div class="col-md-3">
                         <label class="form-label" for="job-discount-percent">Promotional Discounts</label>
-                        <div class="input-group input-group-lg"><InputNumber id="job-discount-percent" class="form-control" min="0" max="100" step="1" @bind-Value="discountValue" @bind-Value:event="oninput" /><span class="input-group-text">%</span></div>
+                        <div class="input-group input-group-lg"><input id="job-discount-percent" type="number" class="form-control" min="0" max="100" step="1" value="@discountValue" @oninput="OnDiscountInput" /><span class="input-group-text">%</span></div>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label" for="job-tax-rate">Tax rate</label>
                         <div class="input-group input-group-lg">
-                            <InputNumber id="job-tax-rate" class="form-control" min="0" max="100" step="0.01" @bind-Value="pricingTaxRate" @bind-Value:event="oninput" />
+                            <input id="job-tax-rate" type="number" class="form-control" min="0" max="100" step="0.01" value="@pricingTaxRate" @oninput="OnTaxRateInput" />
                             <span class="input-group-text">%</span>
                         </div>
                         <small class="text-muted">Enter the rate for @(quote?.CustomerAddress ?? "the customer service address").</small>
@@ -742,6 +923,8 @@ else
     private QuoteCase? quote;
     private QuoteVersion? version;
     private QuoteCostSnapshot? currentCostSnapshot;
+    private QuoteCostSnapshot? auditCostSnapshot;
+    private bool isAdministrator;
     private int pricingTargetMargin;
     private int discountValue;
     private decimal pricingTaxRate;
@@ -751,7 +934,8 @@ else
     private bool projectTasksExpanded = true;
     private readonly HashSet<int> expandedTaskIds = [];
     private readonly HashSet<int> editingAnalysisIds = [];
-    private readonly Dictionary<int, int> replacementCatalogSelections = [];
+    private readonly HashSet<int> replacingMaterialIds = [];
+    private readonly Dictionary<int, int> reviewCatalogSelections = [];
     private List<VendorProduct> reviewCatalogItems = [];
     private readonly Dictionary<string, string?> dictationMessages = [];
     private bool savingEstimate;
@@ -811,8 +995,50 @@ else
 
     private async Task ReloadAsync()
     {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        isAdministrator = principal.IsInRole(ApplicationRoles.Administrator);
         var allowed = (await OperationAccess.GetAccessibleOperationsAsync()).Select(x => x.Id).ToList();
         await using var db = await DbFactory.CreateDbContextAsync();
+        var legacyAnalyses = await db.QuoteTaskAnalyses
+            .Include(x => x.ReviewItems)
+            .Where(x => x.QuoteProjectTask.QuoteCaseId == QuoteId && allowed.Contains(x.QuoteProjectTask.QuoteCase.LocalOperationId)
+                && (((x.Assumptions != null && x.Assumptions != "") && !x.ReviewItems.Any(item => item.ReviewKind == AnalysisReviewKinds.Assumption))
+                    || ((x.QuestionsAndWarnings != null && x.QuestionsAndWarnings != "") && !x.ReviewItems.Any(item => item.ReviewKind == AnalysisReviewKinds.Warning))))
+            .ToListAsync();
+        foreach (var legacyAnalysis in legacyAnalyses)
+        {
+            var order = 1;
+            if (!legacyAnalysis.ReviewItems.Any(item => item.ReviewKind == AnalysisReviewKinds.Assumption))
+            {
+                foreach (var item in AnalysisNoteItems(legacyAnalysis.Assumptions, "Assumption"))
+                {
+                    legacyAnalysis.ReviewItems.Add(new QuoteTaskAnalysisReviewItem
+                    {
+                        SortOrder = order,
+                        ItemKey = $"a{order++:D2}",
+                        ReviewKind = AnalysisReviewKinds.Assumption,
+                        Category = item.Label,
+                        Description = item.Body
+                    });
+                }
+            }
+            order = 1;
+            if (!legacyAnalysis.ReviewItems.Any(item => item.ReviewKind == AnalysisReviewKinds.Warning))
+            {
+                foreach (var item in AnalysisNoteItems(legacyAnalysis.QuestionsAndWarnings, "Review item"))
+                {
+                    legacyAnalysis.ReviewItems.Add(new QuoteTaskAnalysisReviewItem
+                    {
+                        SortOrder = order,
+                        ItemKey = $"r{order++:D2}",
+                        ReviewKind = AnalysisReviewKinds.Warning,
+                        Category = item.Label,
+                        Description = item.Body
+                    });
+                }
+            }
+        }
+        if (legacyAnalyses.Count > 0) await db.SaveChangesAsync();
         quote = await db.QuoteCases.AsNoTracking().AsSplitQuery()
             .Include(x => x.LocalOperation)
             .Include(x => x.Versions).ThenInclude(x => x.Lines)
@@ -822,6 +1048,7 @@ else
             .Include(x => x.ProjectTasks).ThenInclude(x => x.Photos)
             .Include(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.Materials)
             .Include(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.Exclusions)
+            .Include(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.ReviewItems)
             .Include(x => x.AuditEvents)
             .SingleOrDefaultAsync(x => x.Id == QuoteId && allowed.Contains(x.LocalOperationId));
         reviewCatalogItems = await db.VendorProducts.AsNoTracking()
@@ -831,6 +1058,20 @@ else
             .ToListAsync();
         version = quote?.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
         currentCostSnapshot = version?.CostSnapshots.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
+        auditCostSnapshot = null;
+        if (isAdministrator && currentCostSnapshot is not null)
+        {
+            auditCostSnapshot = await db.QuoteCostSnapshots.IgnoreQueryFilters().AsNoTracking().AsSplitQuery()
+                .Include(x => x.CostingPolicyVersion).ThenInclude(x => x.Rules)
+                .Include(x => x.CostingPolicyVersion).ThenInclude(x => x.CrewRates)
+                .Include(x => x.CostingPolicyVersion).ThenInclude(x => x.MarginRules)
+                .Include(x => x.CostingPolicyVersion).ThenInclude(x => x.SupplyKits).ThenInclude(x => x.Items).ThenInclude(x => x.VendorProduct).ThenInclude(x => x.Product)
+                .Include(x => x.Tasks).ThenInclude(x => x.QuoteProjectTask).ThenInclude(x => x.Analyses).ThenInclude(x => x.Materials)
+                .Include(x => x.Tasks).ThenInclude(x => x.QuoteProjectTask).ThenInclude(x => x.Analyses).ThenInclude(x => x.Exclusions)
+                .Include(x => x.Tasks).ThenInclude(x => x.RequiredSupplies)
+                .SingleAsync(x => x.Id == currentCostSnapshot.Id);
+            currentCostSnapshot.CostingPolicyVersion = auditCostSnapshot.CostingPolicyVersion;
+        }
         var defaultTaxRate = await db.QuotePricingRules.AsNoTracking()
             .Where(x => quote != null && x.LocalOperationId == quote.LocalOperationId)
             .Select(x => (decimal?)x.DefaultTaxRate)
@@ -857,6 +1098,30 @@ else
     }
 
     private decimal PricingTargetMargin => Math.Clamp(pricingTargetMargin, 1, 99);
+
+    private void OnTargetMarginInput(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var value))
+            pricingTargetMargin = Math.Clamp(value, 1, 99);
+        StateHasChanged();
+    }
+
+    private void OnDiscountInput(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out var value))
+            discountValue = Math.Clamp(value, 0, 100);
+        StateHasChanged();
+    }
+
+    private void OnTaxRateInput(ChangeEventArgs args)
+    {
+        var input = args.Value?.ToString();
+        if (decimal.TryParse(input, out var value)
+            || decimal.TryParse(input, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out value))
+            pricingTaxRate = decimal.Round(Math.Clamp(value, 0, 100), 2);
+        StateHasChanged();
+    }
+
     private decimal PricingBasePrice => currentCostSnapshot is null
         ? 0
         : decimal.Round(currentCostSnapshot.TotalCost / (1 - PricingTargetMargin / 100m), 2);
@@ -871,6 +1136,133 @@ else
     private bool IsPricingBelowPolicyMargin => currentCostSnapshot is not null
         && PricingEffectiveMargin < currentCostSnapshot.CostingPolicyVersion.DefaultTargetMarginPercent;
 
+    private IEnumerable<PolicyAuditRow> PolicyAuditRows()
+    {
+        if (!isAdministrator || quote is null || auditCostSnapshot is null) yield break;
+        var snapshot = auditCostSnapshot;
+        var policy = snapshot.CostingPolicyVersion;
+        yield return new("Project", "Whole project", "Policy revision", policy.Name, "Project",
+            $"Revision {policy.RevisionNumber}, effective {policy.EffectiveDate:MM/dd/yyyy}", "Applied",
+            policy.LocalOperationId == quote.LocalOperationId ? "Location-specific policy took precedence." : "Company-wide policy applied because no location-specific policy superseded it.", null);
+        yield return new("Project", "Whole project", "General overhead", "Overhead allocation", "Project",
+            $"Fixed {policy.GeneralOverheadFixed:C2}; {policy.GeneralOverheadPerProjectDay:C2}/day; {policy.CalculatedOverheadPerCrewDay:C2}/crew-day; {policy.GeneralOverheadPercent:N2}% direct cost",
+            "Applied", "Calculated and allocated proportionally across priced tasks.", snapshot.ProjectOverhead);
+        yield return new("Project", "Whole project", "Default target margin", "Default margin", "Project",
+            $"{policy.DefaultTargetMarginPercent:N2}%", snapshot.TargetMarginPercent == policy.DefaultTargetMarginPercent ? "Applied" : "Override",
+            snapshot.TargetMarginPercent == policy.DefaultTargetMarginPercent ? "No more-specific pricing override changed the snapshot margin." : "Task rules or estimator pricing changed the effective snapshot margin.", null);
+        yield return new("Project", "Whole project", "Cost snapshot", "Direct cost", "Persisted snapshot", "Materials, required supplies, labor, and task overhead", "Applied", "Stored when this pricing revision was calculated.", snapshot.DirectCost);
+        yield return new("Project", "Whole project", "Cost snapshot", "Contingency", "Persisted snapshot", "Sum of task contingency calculations", "Applied", "Stored when this pricing revision was calculated.", snapshot.Contingency);
+        yield return new("Project", "Whole project", "Cost snapshot", "Project overhead", "Persisted snapshot", "General and project-level overhead", "Applied", "Stored and allocated across task snapshots.", snapshot.ProjectOverhead);
+        yield return new("Project", "Whole project", "Cost snapshot", "Fully burdened job cost", "Persisted snapshot", "Direct cost + contingency + project overhead", "Applied", "Authoritative internal job-cost total for this revision.", snapshot.TotalCost);
+        yield return new("Project", "Whole project", "Customer pricing", "Suggested price before discounts", "Persisted snapshot", $"Target margin {snapshot.TargetMarginPercent:N2}%", "Applied", "Calculated from fully burdened job cost and effective margin.", snapshot.SuggestedCustomerPrice);
+
+        var projectTaskTypes = quote.ProjectTasks.Select(task => task.TaskType).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in policy.Rules.Where(rule => rule.Scope == CostRuleScopes.Project))
+        {
+            var applies = rule.IsActive && (rule.TaskType is null || projectTaskTypes.Contains(rule.TaskType));
+            var impact = applies ? CalculateRule(rule, snapshot.Tasks.Sum(task => task.TotalCost - task.AllocatedProjectOverhead), snapshot.Tasks.Sum(task => task.EstimatedDays)) : (decimal?)null;
+            yield return new("Project", "Whole project", "Additional cost", rule.Name, "Project",
+                FormatRuleForSnapshot(rule), applies ? "Applied" : "Not applied",
+                !rule.IsActive ? "Rule was inactive." : applies ? "Project contains a matching task type." : $"No {rule.TaskType} task was present.", impact);
+        }
+
+        if (policy.Rules.Count == 0)
+            yield return new("Project", "Whole project", "Additional costs", "No saved cost rules", "Policy revision", "No task or project cost rules are configured.", "Not configured", "Values in the entry form are not saved until Add cost is selected.", null);
+        if (policy.SupplyKits.Count == 0)
+            yield return new("Project", "Whole project", "Supply kits", "No standard supply kits", "Policy revision", "No automatic consumable or accessory kits are configured.", "Not configured", "Create a kit and add catalog items under Costing Policies.", null);
+        if (policy.CrewRates.Count == 0)
+            yield return new("Project", "Whole project", "Crew rates", "Policy fallback only", "Policy revision", $"{policy.DefaultCrewSize:N2} crew at {policy.DefaultDailyCrewCost:C2}/day", "Applied", "No task-specific crew-rate cards are configured.", null);
+        if (policy.MarginRules.Count == 0)
+            yield return new("Project", "Whole project", "Margins", "Policy fallback only", "Policy revision", $"{policy.DefaultTargetMarginPercent:N2}%", "Applied", "No task-specific margin rules are configured.", null);
+
+        foreach (var taskCost in snapshot.Tasks.OrderBy(item => item.QuoteProjectTask.SortOrder))
+        {
+            var task = taskCost.QuoteProjectTask;
+            var label = $"Task {task.SortOrder} - {task.TaskType}";
+            var direct = taskCost.MaterialCost + taskCost.RequiredSupplyCost + taskCost.LaborCost;
+            yield return new("Task", label, "Cost breakdown", "CENTCOM materials", "Persisted task snapshot", "Accepted and provisionally priced analysis materials", "Applied", "Material subtotal captured for this cost revision.", taskCost.MaterialCost);
+            yield return new("Task", label, "Cost breakdown", "Standard supply kits", "Persisted task snapshot", $"{taskCost.RequiredSupplies.Count} supply item(s)", taskCost.RequiredSupplies.Count > 0 ? "Applied" : "Not configured", taskCost.RequiredSupplies.Count > 0 ? string.Join("; ", taskCost.RequiredSupplies.Select(item => $"{item.KitName}: {item.Description}")) : "No matching saved supply kit added items to this task.", taskCost.RequiredSupplyCost);
+            yield return new("Task", label, "Cost breakdown", "Labor", "Persisted task snapshot", $"{taskCost.EstimatedDays:N2} day(s) × {taskCost.DailyCrewCost:C2}/day; {taskCost.CrewSize:N2} crew", "Applied", "Uses a task override, matching rate card, or policy fallback in that precedence order.", taskCost.LaborCost);
+            yield return new("Task", label, "Cost breakdown", "Task overhead", "Persisted task snapshot", "Applied task-level additional-cost rules", "Applied", "Zero is valid when no matching task cost rules are configured.", taskCost.TaskOverhead);
+            yield return new("Task", label, "Cost breakdown", "Contingency", "Persisted task snapshot", "Applied to task direct cost and task overhead", "Applied", "Uses a task override when present; otherwise the policy default.", taskCost.Contingency);
+            yield return new("Task", label, "Cost breakdown", "Allocated project overhead", "Persisted task snapshot", "Proportional share of project overhead", "Applied", "Allocated according to the task share of total task cost.", taskCost.AllocatedProjectOverhead);
+            yield return new("Task", label, "Cost breakdown", "Fully burdened task cost", "Persisted task snapshot", $"Suggested price {taskCost.SuggestedCustomerPrice:C2} at {taskCost.TargetMarginPercent:N2}% margin", "Applied", "Authoritative task cost for this pricing revision.", taskCost.TotalCost);
+            foreach (var rate in policy.CrewRates.Where(rate => rate.TaskType == task.TaskType))
+            {
+                var matchesWork = rate.WorkType is null || rate.WorkType == task.WorkType;
+                var selected = rate.IsActive && matchesWork && task.CrewSizeOverride is null && task.DailyCrewCostOverride is null &&
+                    taskCost.CrewSize == rate.CrewSize && taskCost.DailyCrewCost == rate.DailyCrewCost;
+                yield return new("Task", label, "Crew rate", $"{rate.TaskType}/{rate.WorkType ?? "All work types"}", "Task/work type",
+                    $"{rate.CrewSize:N2} crew at {rate.DailyCrewCost:C2}/day", selected ? "Applied" : "Not applied",
+                    !rate.IsActive ? "Rate was inactive." : !matchesWork ? "Work type did not match." : task.CrewSizeOverride is not null || task.DailyCrewCostOverride is not null ? "Task-level override took precedence." : "A more-specific matching crew rate took precedence.", selected ? taskCost.LaborCost : null);
+            }
+            if (task.CrewSizeOverride is not null || task.DailyCrewCostOverride is not null)
+                yield return new("Task", label, "Crew override", "Task override", "Task", $"{taskCost.CrewSize:N2} crew at {taskCost.DailyCrewCost:C2}/day", "Override", "Estimator-entered task values took precedence over policy rates.", taskCost.LaborCost);
+
+            foreach (var kit in policy.SupplyKits)
+            {
+                var applies = kit.IsActive && (kit.TaskType is null || kit.TaskType == task.TaskType) && (kit.WorkType is null || kit.WorkType == task.WorkType);
+                var impact = applies ? taskCost.RequiredSupplies.Where(item => item.KitName == kit.Name).Sum(item => item.ExtendedCost) : (decimal?)null;
+                yield return new("Task", label, "Supply kit", kit.Name, "Task/work type", $"{kit.TaskType ?? "All tasks"}/{kit.WorkType ?? "All work types"} · {kit.Items.Count} item(s)", applies ? "Applied" : "Not applied",
+                    !kit.IsActive ? "Kit was inactive." : applies ? "Task and work type matched." : "Task type or work type did not match.", impact);
+            }
+            foreach (var rule in policy.Rules.Where(rule => rule.Scope == CostRuleScopes.Task))
+            {
+                var applies = rule.IsActive && (rule.TaskType is null || rule.TaskType == task.TaskType);
+                yield return new("Task", label, "Additional cost", rule.Name, "Task", FormatRuleForSnapshot(rule), applies ? "Applied" : "Not applied",
+                    !rule.IsActive ? "Rule was inactive." : applies ? "Task type matched." : "Task type did not match.", applies ? CalculateRule(rule, direct, taskCost.EstimatedDays) : null);
+            }
+            foreach (var margin in policy.MarginRules.Where(margin => margin.TaskType == task.TaskType))
+            {
+                var matchesWork = margin.WorkType is null || margin.WorkType == task.WorkType;
+                var selected = margin.IsActive && matchesWork && task.TargetMarginPercentOverride is null && taskCost.TargetMarginPercent == margin.TargetMarginPercent;
+                yield return new("Task", label, "Margin", $"{margin.TaskType}/{margin.WorkType ?? "All work types"}", "Task/work type", $"{margin.TargetMarginPercent:N2}%", selected ? "Applied" : "Not applied",
+                    !margin.IsActive ? "Rule was inactive." : !matchesWork ? "Work type did not match." : task.TargetMarginPercentOverride is not null ? "Task-level margin override took precedence." : "A more-specific rule or current job margin took precedence.", null);
+            }
+            if (task.TargetMarginPercentOverride is not null)
+                yield return new("Task", label, "Margin override", "Task override", "Task", $"{task.TargetMarginPercentOverride:N2}%", "Override", "Estimator-entered task margin took precedence.", null);
+
+            var analysis = task.Analyses.OrderByDescending(item => item.RevisionNumber).FirstOrDefault();
+            if (analysis is null) continue;
+            foreach (var material in analysis.Materials.OrderBy(item => item.SortOrder))
+                yield return new("Task", label, "Material resolution", material.OriginalDescription ?? material.Description,
+                    material.SourceType ?? "No source", $"{material.Description} · {material.Quantity:N2} {material.Unit} at {material.UnitCost:C2}",
+                    material.IsUnmatched ? "Warning" : material.ReviewDecision == MaterialReviewDecisions.Pending ? "Warning" : "Applied",
+                    $"{material.MatchKind}; {material.MatchConfidence:P0} confidence; review {material.ReviewDecision}.", material.ExtendedCost);
+            foreach (var exclusion in analysis.Exclusions)
+                yield return new("Task", label, "Material exclusion", exclusion.Description, "CENTCOM analysis", exclusion.Reason, "Applied", "An active exclusion policy removed this recommendation from material pricing.", 0);
+        }
+    }
+
+    private static string AuditStatusClass(string status) => status switch
+    {
+        "Applied" => "text-bg-success",
+        "Override" => "text-bg-info",
+        "Warning" => "text-bg-warning",
+        _ => "text-bg-secondary"
+    };
+
+    private static string AuditImpact(PolicyAuditRow row) => row.Impact.HasValue
+        ? row.Impact.Value.ToString("C2")
+        : row.Category is "Policy revision" or "Default target margin" or "Margins" or "Margin" or "Margin override"
+            ? "Non-cost setting"
+            : row.Status == "Not configured" ? "N/A" : "No direct cost";
+
+    private static bool IsVisiblePolicyAuditRow(PolicyAuditRow row) =>
+        row.Status != "Not configured" && row.Impact is not null && row.Impact != 0;
+
+    private static string AuditSection(PolicyAuditRow row) => row.Category switch
+    {
+        "Cost snapshot" or "Customer pricing" => "1. Job Cost Summary",
+        "Material resolution" or "Material exclusion" => "4. Material Matching Audit",
+        "Cost breakdown" => "3. Task Cost Breakdown",
+        _ => "2. Applied Costing Rules"
+    };
+
+    private static int AuditSectionOrder(string section) => section[0] - '0';
+
+    private sealed record PolicyAuditRow(string Level, string Task, string Category, string Rule, string Scope, string Result, string Status, string Reason, decimal? Impact);
+
     private bool PricingSnapshotNeedsRefresh()
     {
         if (currentCostSnapshot is null || quote is null) return true;
@@ -879,6 +1271,7 @@ else
             var taskCost = currentCostSnapshot.Tasks.SingleOrDefault(x => x.QuoteProjectTaskId == analysis.QuoteProjectTaskId);
             if (taskCost is null || taskCost.MaterialCost != analysis.MaterialSubtotal) return true;
             if (analysis.CompletedAt > currentCostSnapshot.PricedAt) return true;
+            if (analysis.ReviewItems.Any(item => item.ResolvedAt > currentCostSnapshot.PricedAt)) return true;
             var task = quote.ProjectTasks.Single(x => x.Id == analysis.QuoteProjectTaskId);
             if (task.UpdatedAt > currentCostSnapshot.PricedAt) return true;
         }
@@ -909,6 +1302,10 @@ else
     private static bool CanSubmitAnalysis(QuoteTaskAnalysis? analysis) =>
         analysis?.Status is not QuoteTaskAnalysisStatuses.Queued and not QuoteTaskAnalysisStatuses.Processing;
 
+    private static bool CanSubmitOrReanalyze(QuoteTaskAnalysis? analysis) =>
+        CanSubmitAnalysis(analysis)
+        && (analysis is null || analysis.ReviewItems.Count == 0 || AllReviewItemsResolved(analysis));
+
     private static string AnalysisStatusClass(string? status) => status switch
     {
         QuoteTaskAnalysisStatuses.Accepted => "text-bg-success",
@@ -917,6 +1314,34 @@ else
         QuoteTaskAnalysisStatuses.Queued or QuoteTaskAnalysisStatuses.Processing => "text-bg-primary",
         _ => "text-bg-secondary"
     };
+
+    private static IReadOnlyList<AnalysisNoteItem> AnalysisNoteItems(string? content, string defaultLabel)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return [];
+
+        var separated = System.Text.RegularExpressions.Regex.Replace(
+            content.Trim(),
+            @"(?<!^)(?=\[[^\]\r\n]+\])",
+            System.Environment.NewLine);
+        var lines = separated.Split(["\r\n", "\n", "\r"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var items = new List<AnalysisNoteItem>(lines.Length);
+        foreach (var line in lines)
+        {
+            var marker = System.Text.RegularExpressions.Regex.Match(line, @"^\[(?<label>[^\]]+)\]\s*(?<body>.*)$");
+            var label = marker.Success
+                ? HumanizeAnalysisLabel(marker.Groups["label"].Value)
+                : $"{defaultLabel} {items.Count + 1}";
+            var body = marker.Success ? marker.Groups["body"].Value.Trim() : line.Trim();
+            if (!string.IsNullOrWhiteSpace(body)) items.Add(new(label, body));
+        }
+        return items;
+    }
+
+    private static string HumanizeAnalysisLabel(string label) =>
+        System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(
+            label.Replace('_', ' ').Trim().ToLowerInvariant());
+
+    private sealed record AnalysisNoteItem(string Label, string Body);
 
     private static string MaterialMatchClass(string matchKind) => matchKind switch
     {
@@ -953,11 +1378,6 @@ else
         _ => 50
     };
 
-    private int ReplacementSelection(int materialId) => replacementCatalogSelections.GetValueOrDefault(materialId);
-
-    private void SetReplacementSelection(int materialId, string? value) =>
-        replacementCatalogSelections[materialId] = int.TryParse(value, out var selected) ? selected : 0;
-
     private void AddManualMaterialLine(QuoteTaskAnalysis analysis)
     {
         analysis.Materials.Add(new QuoteTaskAnalysisMaterial
@@ -974,6 +1394,212 @@ else
         });
     }
 
+    private static int ResolvedReviewCount(QuoteTaskAnalysis analysis) =>
+        analysis.ReviewItems.Count(item => item.Status != AnalysisReviewStatuses.NeedsReview);
+
+    private static bool IsReviewItemOutstanding(QuoteTaskAnalysisReviewItem item) =>
+        item.Status is AnalysisReviewStatuses.NeedsReview or AnalysisReviewStatuses.FieldVerification;
+
+    private static bool AllReviewItemsResolved(QuoteTaskAnalysis analysis) =>
+        analysis.ReviewItems.Count > 0 && analysis.ReviewItems.All(item => !IsReviewItemOutstanding(item));
+
+    private static string ReviewStatusClass(string status) => status switch
+    {
+        AnalysisReviewStatuses.Accepted => "text-bg-success",
+        AnalysisReviewStatuses.Resolved => "text-bg-primary",
+        AnalysisReviewStatuses.NotApplicable => "text-bg-secondary",
+        AnalysisReviewStatuses.FieldVerification => "text-bg-warning",
+        _ => "text-bg-warning"
+    };
+
+    private int ReviewCatalogSelection(int reviewItemId) => reviewCatalogSelections.GetValueOrDefault(reviewItemId);
+
+    private void SetReviewCatalogSelection(int reviewItemId, string? value) =>
+        reviewCatalogSelections[reviewItemId] = int.TryParse(value, out var selected) ? selected : 0;
+
+    private async Task SaveReviewDispositionAsync(QuoteTaskAnalysisReviewItem item, string status)
+    {
+        if (quote is null || !AnalysisReviewStatuses.All.Contains(status)) return;
+        if (status is AnalysisReviewStatuses.Resolved or AnalysisReviewStatuses.NotApplicable && string.IsNullOrWhiteSpace(item.EstimatorResponse))
+        {
+            message = "Enter an estimator response explaining how this item was resolved or why it is not applicable.";
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteTaskAnalysisReviewItems
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+            .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+        if (tracked is null) return;
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        tracked.Status = status;
+        tracked.EstimatorResponse = item.EstimatorResponse?.Trim();
+        tracked.ResolutionAction = item.ReviewKind == AnalysisReviewKinds.Assumption && status == AnalysisReviewStatuses.Accepted
+            ? "Assumption accepted"
+            : "Estimator disposition";
+        tracked.ResolvedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        tracked.ResolvedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        message = $"Review item marked {status.ToLowerInvariant()}.";
+        await ReloadAsync();
+    }
+
+    private async Task ResolveAssumptionAsync(QuoteTaskAnalysisReviewItem item)
+    {
+        if (quote is null || item.ReviewKind != AnalysisReviewKinds.Assumption
+            || !AssumptionResolutionActions.All.Contains(item.ResolutionAction ?? string.Empty)) return;
+        if (string.IsNullOrWhiteSpace(item.EstimatorResponse))
+        {
+            message = "Enter the corrected condition, decision, or field-verification requirement before rejecting this assumption.";
+            return;
+        }
+        if (item.ResolutionAction is AssumptionResolutionActions.ChangeMaterials or AssumptionResolutionActions.AddTaskFee)
+        {
+            message = "Use the product or fee controls for the selected assumption resolution.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteTaskAnalysisReviewItems
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+            .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+        if (tracked is null) return;
+        var response = item.EstimatorResponse.Trim();
+        if (item.ResolutionAction == AssumptionResolutionActions.UpdateTaskScope)
+        {
+            var addition = $"[Estimator assumption correction] {response}";
+            if (!tracked.QuoteTaskAnalysis.QuoteProjectTask.ScopeOfWork.Contains(addition, StringComparison.OrdinalIgnoreCase))
+            {
+                var revisedScope = $"{tracked.QuoteTaskAnalysis.QuoteProjectTask.ScopeOfWork.Trim()}\n{addition}".Trim();
+                tracked.QuoteTaskAnalysis.QuoteProjectTask.ScopeOfWork = revisedScope[..Math.Min(4000, revisedScope.Length)];
+            }
+        }
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        tracked.Status = item.ResolutionAction switch
+        {
+            AssumptionResolutionActions.NotPartOfJob => AnalysisReviewStatuses.NotApplicable,
+            AssumptionResolutionActions.FieldVerification => AnalysisReviewStatuses.FieldVerification,
+            _ => AnalysisReviewStatuses.Resolved
+        };
+        tracked.EstimatorResponse = response;
+        tracked.ResolutionAction = item.ResolutionAction;
+        tracked.ResolvedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        tracked.ResolvedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        message = tracked.Status == AnalysisReviewStatuses.FieldVerification
+            ? "Assumption is awaiting field verification; reanalysis will remain unavailable until it is corrected or accepted."
+            : "Assumption correction saved.";
+        await ReloadAsync();
+    }
+
+    private async Task AddReviewCatalogProductAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisReviewItem item)
+    {
+        if (quote is null) return;
+        if (item.ReviewKind == AnalysisReviewKinds.Assumption && string.IsNullOrWhiteSpace(item.EstimatorResponse))
+        {
+            message = "Enter the assumption correction explaining this material change.";
+            return;
+        }
+        var productId = ReviewCatalogSelection(item.Id);
+        if (productId == 0 || item.AddedProductQuantity <= 0)
+        {
+            message = "Select a catalog product and enter a positive quantity.";
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var trackedReview = await db.QuoteTaskAnalysisReviewItems
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.Materials)
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+            .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+        var product = await db.VendorProducts.Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
+            .SingleOrDefaultAsync(x => x.Id == productId && x.IsActive && x.SupplyVendor.IsActive);
+        var price = product is null ? null : CurrentCatalogPrice(product);
+        if (trackedReview is null || product is null || price is null)
+        {
+            message = "The selected catalog product or its active price is no longer available.";
+            return;
+        }
+        var existing = trackedReview.QuoteTaskAnalysis.Materials.FirstOrDefault(x => x.VendorProductId == product.Id && !x.IsRemoved);
+        if (existing is null)
+        {
+            trackedReview.QuoteTaskAnalysis.Materials.Add(new QuoteTaskAnalysisMaterial
+            {
+                SortOrder = trackedReview.QuoteTaskAnalysis.Materials.Count == 0 ? 1 : trackedReview.QuoteTaskAnalysis.Materials.Max(x => x.SortOrder) + 1,
+                VendorProductId = product.Id, VendorSku = product.VendorSku,
+                Description = product.VendorDescription ?? product.Product.Name,
+                OriginalDescription = $"Resolution for {trackedReview.Category}: {trackedReview.Description}",
+                Quantity = item.AddedProductQuantity, Unit = product.PurchaseUnit, UnitCost = price.UnitPrice,
+                MatchConfidence = 1, MatchKind = MaterialMatchKinds.Catalog, ReviewDecision = MaterialReviewDecisions.Accepted,
+                SourceType = product.SupplyVendor.Name, SourceReference = price.SourceReference ?? price.SourceType,
+                SourcePriceDate = price.EffectiveDate, IsEstimatorLocked = true,
+                Notes = "Added and locked by the estimator while resolving a CENTCOM review item."
+            });
+        }
+        else
+        {
+            existing.Quantity += item.AddedProductQuantity;
+            existing.IsEstimatorLocked = true;
+        }
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        trackedReview.Status = AnalysisReviewStatuses.Resolved;
+        trackedReview.EstimatorResponse = item.EstimatorResponse?.Trim();
+        trackedReview.ResolutionAction = "Catalog product added";
+        trackedReview.AddedVendorProductId = product.Id;
+        trackedReview.AddedProductQuantity = item.AddedProductQuantity;
+        trackedReview.ResolvedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        trackedReview.ResolvedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        reviewCatalogSelections.Remove(item.Id);
+        message = $"Added {item.AddedProductQuantity:N2} {product.PurchaseUnit} of {product.Product.Name} and resolved the review item.";
+        await ReloadAsync();
+    }
+
+    private async Task AddReviewFeeAsync(QuoteTaskAnalysisReviewItem item)
+    {
+        if (item.ReviewKind == AnalysisReviewKinds.Assumption && string.IsNullOrWhiteSpace(item.EstimatorResponse))
+        {
+            message = "Enter the assumption correction explaining this additional fee.";
+            return;
+        }
+        if (quote is null || string.IsNullOrWhiteSpace(item.AdditionalFeeName) || item.AdditionalFeeAmount <= 0)
+        {
+            message = "Enter a fee name and a positive amount.";
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tracked = await db.QuoteTaskAnalysisReviewItems
+            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+            .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+        if (tracked is null) return;
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        tracked.Status = AnalysisReviewStatuses.Resolved;
+        tracked.EstimatorResponse = item.EstimatorResponse?.Trim();
+        tracked.ResolutionAction = "Task fee added";
+        tracked.AdditionalFeeName = item.AdditionalFeeName.Trim();
+        tracked.AdditionalFeeAmount = item.AdditionalFeeAmount;
+        tracked.ResolvedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        tracked.ResolvedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        message = $"Added {tracked.AdditionalFeeName} ({tracked.AdditionalFeeAmount:C2}) and resolved the review item.";
+        await ReloadAsync();
+    }
+
+    private async Task ReanalyzeWithResolutionsAsync(QuoteProjectTask task, QuoteTaskAnalysis analysis)
+    {
+        if (!AllReviewItemsResolved(analysis))
+        {
+            message = "Accept, resolve, or mark every review item not applicable before reanalyzing.";
+            return;
+        }
+        await SubmitTaskAnalysisAsync(task);
+    }
+
+    private Task SubmitOrReanalyzeAsync(QuoteProjectTask task, QuoteTaskAnalysis? analysis) =>
+        analysis is not null && analysis.ReviewItems.Count > 0
+            ? ReanalyzeWithResolutionsAsync(task, analysis)
+            : SubmitTaskAnalysisAsync(task);
+
     private async Task SetMaterialDecisionAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material, string decision)
     {
         if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview || material.Id == 0) return;
@@ -984,43 +1610,94 @@ else
         if (tracked is null) return;
         tracked.ReviewDecision = decision;
         tracked.IsRemoved = decision == MaterialReviewDecisions.Removed;
+        if (decision == MaterialReviewDecisions.Accepted && tracked.MatchKind == MaterialMatchKinds.Unresolved)
+        {
+            tracked.MatchKind = MaterialMatchKinds.OneOff;
+            tracked.IsUnmatched = false;
+            tracked.SourceType = "Estimator accepted one-off";
+            tracked.SourceReference = null;
+            tracked.SourcePriceDate = DateOnly.FromDateTime(DateTime.Today);
+        }
         await db.SaveChangesAsync();
         message = tracked.IsRemoved ? $"Removed '{tracked.Description}' from this estimate." : $"Accepted '{tracked.Description}'.";
         await ReloadAsync();
     }
 
-    private async Task ReplaceMaterialFromCatalogAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material)
+    private async Task SelectReplacementFromCatalogAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material, string? value)
     {
         if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview || material.Id == 0) return;
-        var replacementId = ReplacementSelection(material.Id);
+        var replacementId = int.TryParse(value, out var selected) ? selected : 0;
         if (replacementId == 0) return;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var tracked = await db.QuoteTaskAnalysisMaterials
-            .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
-            .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
-        var replacement = await db.VendorProducts.Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
-            .SingleOrDefaultAsync(x => x.Id == replacementId && x.IsActive && x.SupplyVendor.IsActive);
-        if (tracked is null || replacement is null) return;
-        var price = CurrentCatalogPrice(replacement);
-        if (price is null) { message = "The selected catalog item has no active price."; return; }
-        tracked.VendorProductId = replacement.Id;
-        tracked.VendorSku = replacement.VendorSku;
-        tracked.Description = replacement.VendorDescription ?? replacement.Product.Name;
-        tracked.Unit = replacement.PurchaseUnit;
-        tracked.UnitCost = price.UnitPrice;
-        tracked.MatchConfidence = 1;
-        tracked.MatchKind = MaterialMatchKinds.Catalog;
-        tracked.ReviewDecision = MaterialReviewDecisions.Replaced;
-        tracked.IsRemoved = false;
-        tracked.IsUnmatched = false;
-        tracked.SourceType = replacement.SupplyVendor.Name;
-        tracked.SourceReference = price.SourceReference ?? price.SourceType;
-        tracked.SourcePriceDate = price.EffectiveDate;
-        await db.SaveChangesAsync();
-        replacementCatalogSelections.Remove(material.Id);
-        message = $"Replaced the proposed item with {replacement.Product.Name}.";
-        await ReloadAsync();
+        replacingMaterialIds.Add(material.Id);
+        message = "Applying the selected catalog replacement…";
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var tracked = await db.QuoteTaskAnalysisMaterials
+                .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
+                .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
+            var replacement = await db.VendorProducts.Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
+                .SingleOrDefaultAsync(x => x.Id == replacementId && x.IsActive && x.SupplyVendor.IsActive);
+            if (tracked is null) { message = "The estimate material could not be found. Reload the workspace and try again."; return; }
+            if (replacement is null) { message = "The selected catalog item is no longer active."; return; }
+            var price = CurrentCatalogPrice(replacement);
+            if (price is null) { message = "The selected catalog item has no active price and cannot be applied."; return; }
+
+            var replacementDescription = replacement.VendorDescription ?? replacement.Product.Name;
+            tracked.Quantity = ReplacementPurchaseQuantity(tracked, replacementDescription, replacement.PurchaseUnit);
+            tracked.VendorProductId = replacement.Id;
+            tracked.VendorSku = replacement.VendorSku;
+            tracked.Description = replacementDescription;
+            tracked.Unit = replacement.PurchaseUnit;
+            tracked.UnitCost = price.UnitPrice;
+            tracked.MatchConfidence = 1;
+            tracked.MatchKind = MaterialMatchKinds.Catalog;
+            tracked.ReviewDecision = MaterialReviewDecisions.Replaced;
+            tracked.IsRemoved = false;
+            tracked.IsUnmatched = false;
+            tracked.IsEstimatorLocked = true;
+            tracked.SourceType = replacement.SupplyVendor.Name;
+            tracked.SourceReference = price.SourceReference ?? price.SourceType;
+            tracked.SourcePriceDate = price.EffectiveDate;
+            await db.SaveChangesAsync();
+            message = $"Replaced the proposed item with {replacement.Product.Name}; quantity and pricing were recalculated.";
+            await ReloadAsync();
+        }
+        finally
+        {
+            replacingMaterialIds.Remove(material.Id);
+        }
     }
+
+    private static decimal ReplacementPurchaseQuantity(QuoteTaskAnalysisMaterial material, string replacementDescription, string purchaseUnit)
+    {
+        if (!purchaseUnit.Equals("Each", StringComparison.OrdinalIgnoreCase) &&
+            !purchaseUnit.Equals("Piece", StringComparison.OrdinalIgnoreCase))
+            return material.Quantity;
+
+        var lengthMatch = System.Text.RegularExpressions.Regex.Match(
+            replacementDescription,
+            @"\b\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*x\s*(?<length>\d+(?:\.\d+)?)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!lengthMatch.Success ||
+            !decimal.TryParse(lengthMatch.Groups["length"].Value, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var boardLength) || boardLength <= 0)
+            return material.Quantity;
+
+        var wasLinearDemand = material.Unit.Contains("linear", StringComparison.OrdinalIgnoreCase);
+        var recoveredDeckingDemand = material.Quantity >= 100 &&
+            (material.OriginalDescription?.Contains("decking", StringComparison.OrdinalIgnoreCase) == true) &&
+            (material.Description.Contains("screw", StringComparison.OrdinalIgnoreCase) ||
+             material.Description.Contains("fastener", StringComparison.OrdinalIgnoreCase) ||
+             material.Description.Contains("plug", StringComparison.OrdinalIgnoreCase));
+
+        return wasLinearDemand || recoveredDeckingDemand
+            ? decimal.Ceiling(material.Quantity / boardLength)
+            : material.Quantity;
+    }
+
+    private static string ReplacementSelectKey(QuoteTaskAnalysisMaterial material) =>
+        $"replacement-{material.Id}-{material.VendorProductId}-{material.ReviewDecision}";
 
     private async Task MarkMaterialOneOffAsync(QuoteTaskAnalysis analysis, QuoteTaskAnalysisMaterial material)
     {
@@ -1110,6 +1787,14 @@ else
         }
 
         await using var db = await DbFactory.CreateDbContextAsync();
+        var trackedTask = await db.QuoteProjectTasks
+            .SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
+        if (trackedTask is null)
+        {
+            message = "The project task could not be found. Reload the estimate and try again.";
+            return;
+        }
+        ApplyProjectTaskEdits(trackedTask, task);
         var revision = (await db.QuoteTaskAnalyses
             .Where(x => x.QuoteProjectTaskId == task.Id)
             .Select(x => (int?)x.RevisionNumber)
@@ -1119,24 +1804,27 @@ else
         {
             QuoteProjectTaskId = task.Id,
             RevisionNumber = revision,
-            Status = QuoteTaskAnalysisStatuses.Queued,
+            Status = QuoteTaskAnalysisStatuses.Processing,
             SubmittedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier)
         };
         db.QuoteTaskAnalyses.Add(analysis);
-        db.QuoteProcessingJobs.Add(new QuoteProcessingJob
+        var processingJob = new QuoteProcessingJob
         {
             QuoteCaseId = quote.Id,
             QuoteProjectTaskId = task.Id,
             JobType = "CentCom Task Analysis",
-            Status = "Queued",
-            Message = $"Project Task {task.SortOrder} ({task.TaskType}) analysis revision {revision} queued."
-        });
+            // Reserve this job before saving so another application instance that shares
+            // the database cannot claim it with an older material-matching implementation.
+            Status = "Processing",
+            Message = $"Project Task {task.SortOrder} ({task.TaskType}) analysis revision {revision} is processing."
+        };
+        db.QuoteProcessingJobs.Add(processingJob);
         await AddAuditEventAsync(db, quote, $"CentCom analysis revision {revision} submitted for Project Task {task.SortOrder} ({task.TaskType}).");
         await db.SaveChangesAsync();
-        await PublishEstimateEventAsync("CentComAnalysis", "Submit", "Queued", $"Task {task.SortOrder} analysis revision {revision} queued.");
-        message = $"Project Task {task.SortOrder} was queued for CentCom analysis.";
+        await PublishEstimateEventAsync("CentComAnalysis", "Submit", "Processing", $"Task {task.SortOrder} analysis revision {revision} reserved for this application instance.");
+        message = $"Project Task {task.SortOrder} is being analyzed by CentCom.";
+        await CentComTaskAnalysis.ProcessAsync(processingJob.Id, CancellationToken.None);
         await ReloadAsync();
-        StartAnalysisMonitoringIfNeeded();
     }
 
     private void StartAnalysisMonitoringIfNeeded()
@@ -1309,8 +1997,8 @@ else
                 trackedTask.EstimatedDays = Math.Max(0, editedTask.EstimatedDays);
                 trackedTask.CrewSizeOverride = editedTask.CrewSizeOverride is > 0 ? editedTask.CrewSizeOverride : null;
                 trackedTask.DailyCrewCostOverride = editedTask.DailyCrewCostOverride is >= 0 ? editedTask.DailyCrewCostOverride : null;
-                trackedTask.ContingencyPercentOverride = editedTask.ContingencyPercentOverride is >= 0 ? editedTask.ContingencyPercentOverride : null;
-                trackedTask.TargetMarginPercentOverride = editedTask.TargetMarginPercentOverride is > 0 and < 100 ? editedTask.TargetMarginPercentOverride : null;
+                trackedTask.ContingencyPercentOverride = null;
+                trackedTask.TargetMarginPercentOverride = null;
                 trackedTask.UpdatedAt = DateTimeOffset.UtcNow;
             }
 
@@ -1339,10 +2027,69 @@ else
                     ? "Estimate saved, including Project Overview Notes and project-task scopes."
                     : $"Estimate saved with task details and pricing: {PricingTargetMargin:N0}% target margin, {discountValue}% promotional discount, {pricingTaxRate:N2}% tax, {PricingFinalPrice:C2} customer total.");
             await db.SaveChangesAsync();
+            var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+            var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+            var recipient = string.IsNullOrWhiteSpace(userId)
+                ? principal.FindFirstValue(ClaimTypes.Email) ?? principal.Identity?.Name
+                : await db.Users.Where(user => user.Id == userId).Select(user => user.Email).SingleOrDefaultAsync();
+            EstimateMaterialEmailResult? emailResult = null;
+            string? emailFailure = null;
+            try
+            {
+                emailResult = await EstimateMaterialEmails.SendAsync(tracked.Id, recipient ?? string.Empty);
+                if (emailResult.MaterialListChanged)
+                {
+                    await AddAuditEventAsync(db, quote,
+                        emailResult.EmailCount == 0
+                            ? "Material list changed to contain no active vendor material lines; no email was required."
+                            : $"{emailResult.EmailCount} changed vendor material-list email(s) sent to the logged-in estimator at {recipient}: {string.Join(", ", emailResult.Vendors)}.");
+                    await db.SaveChangesAsync();
+                }
+            }
+            catch (Exception exception)
+            {
+                emailFailure = exception.Message;
+                await PublishEstimateEventAsync("EstimateWorkspace", "EmailVendorMaterialLists", "Failed", $"Estimate saved, but vendor material-list email delivery failed: {exception.Message}");
+            }
+
+            EstimateAdminAuditEmailResult? adminEmailResult = null;
+            string? adminEmailFailure = null;
+            if (currentCostSnapshot is not null)
+            {
+                try
+                {
+                    adminEmailResult = await EstimateAdminAuditEmails.SendInitialCompletionAsync(tracked.Id);
+                    if (adminEmailResult.Sent)
+                    {
+                        await AddAuditEventAsync(db, quote,
+                            $"Initial completed-estimate audit and costing report emailed to {adminEmailResult.EmailCount} administrator(s): {string.Join(", ", adminEmailResult.Recipients)}.");
+                        await db.SaveChangesAsync();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    adminEmailFailure = exception.Message;
+                    await PublishEstimateEventAsync("EstimateWorkspace", "EmailAdministratorAuditReport", "Failed",
+                        $"Estimate saved, but the administrator audit report could not be delivered: {exception.Message}");
+                }
+            }
+
             await PublishEstimateEventAsync("EstimateWorkspace", "SaveEstimate", "Completed", "Estimate overview, project tasks, and pricing saved.");
-            message = currentCostSnapshot is null
+            var saveSummary = currentCostSnapshot is null
                 ? "Estimate saved."
                 : $"Estimate and pricing saved. Customer total is {PricingFinalPrice:C2}.";
+            var materialSummary = emailFailure is not null
+                ? $"{saveSummary} Material emails were not sent: {emailFailure}"
+                : emailResult?.MaterialListChanged == false
+                    ? $"{saveSummary} Material lists have not changed; no emails were sent."
+                    : emailResult?.EmailCount > 0
+                    ? $"{saveSummary} {emailResult.EmailCount} vendor material-list email(s) sent to {recipient}."
+                    : $"{saveSummary} No active vendor material lines were available to email.";
+            message = adminEmailFailure is not null
+                ? $"{materialSummary} Administrator audit email was not sent: {adminEmailFailure}"
+                : adminEmailResult?.Sent == true
+                    ? $"{materialSummary} The completed-estimate audit report was sent to {adminEmailResult.EmailCount} administrator(s)."
+                    : materialSummary;
             await ReloadAsync();
         }
         finally
@@ -1417,25 +2164,27 @@ else
         await ReloadAsync();
     }
 
-    private async Task SaveProjectTaskAsync(QuoteProjectTask task)
+    private async Task AutoSaveProjectTaskAsync(QuoteProjectTask task)
     {
         if (quote is null || !ProjectTaskTypes.All.Contains(task.TaskType)) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var tracked = await db.QuoteProjectTasks.SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (tracked is null) return;
-        tracked.ScopeOfWork = task.ScopeOfWork?.Trim() ?? string.Empty;
-        tracked.WorkType = string.IsNullOrWhiteSpace(task.WorkType) ? null : task.WorkType;
-        tracked.EstimatedDays = Math.Max(0, task.EstimatedDays);
-        tracked.CrewSizeOverride = task.CrewSizeOverride is > 0 ? task.CrewSizeOverride : null;
-        tracked.DailyCrewCostOverride = task.DailyCrewCostOverride is >= 0 ? task.DailyCrewCostOverride : null;
-        tracked.ContingencyPercentOverride = task.ContingencyPercentOverride is >= 0 ? task.ContingencyPercentOverride : null;
-        tracked.TargetMarginPercentOverride = task.TargetMarginPercentOverride is > 0 and < 100 ? task.TargetMarginPercentOverride : null;
-        tracked.UpdatedAt = DateTimeOffset.UtcNow;
-        await AddAuditEventAsync(db, quote, $"Project Task {tracked.SortOrder} scope updated.");
+        ApplyProjectTaskEdits(tracked, task);
         await db.SaveChangesAsync();
-        await PublishEstimateEventAsync("EstimateWorkspace", "SaveProjectTask", "Completed", $"Project Task {tracked.SortOrder} saved.");
-        message = $"Project Task {tracked.SortOrder} saved.";
-        await ReloadAsync();
+        message = $"Project Task {tracked.SortOrder} saved automatically.";
+    }
+
+    private static void ApplyProjectTaskEdits(QuoteProjectTask tracked, QuoteProjectTask edited)
+    {
+        tracked.ScopeOfWork = edited.ScopeOfWork?.Trim() ?? string.Empty;
+        tracked.WorkType = string.IsNullOrWhiteSpace(edited.WorkType) ? null : edited.WorkType;
+        tracked.EstimatedDays = Math.Max(0, edited.EstimatedDays);
+        tracked.CrewSizeOverride = edited.CrewSizeOverride is > 0 ? edited.CrewSizeOverride : null;
+        tracked.DailyCrewCostOverride = edited.DailyCrewCostOverride is >= 0 ? edited.DailyCrewCostOverride : null;
+        tracked.ContingencyPercentOverride = null;
+        tracked.TargetMarginPercentOverride = null;
+        tracked.UpdatedAt = DateTimeOffset.UtcNow;
     }
 
     private async Task CreateCostSnapshotAsync()
@@ -1462,6 +2211,7 @@ else
 
         var trackedVersion = await db.QuoteVersions
             .Include(x => x.QuoteCase).ThenInclude(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.Materials)
+            .Include(x => x.QuoteCase).ThenInclude(x => x.ProjectTasks).ThenInclude(x => x.Analyses).ThenInclude(x => x.ReviewItems)
             .SingleOrDefaultAsync(x => x.Id == version.Id);
         if (trackedVersion is null) return;
         var pricingCandidates = trackedVersion.QuoteCase.ProjectTasks
@@ -1508,8 +2258,9 @@ else
             var labor = decimal.Round(days * dailyCrew, 2);
             var direct = material + supplyCost + labor;
             var applicable = policy.Rules.Where(x => x.IsActive && x.Scope == CostRuleScopes.Task && (x.TaskType == null || x.TaskType == task.TaskType)).ToList();
-            var overhead = applicable.Sum(rule => CalculateRule(rule, direct, days));
-            var contingencyPercent = task.ContingencyPercentOverride ?? policy.DefaultContingencyPercent;
+            var resolutionFees = analysis.ReviewItems.Sum(item => item.AdditionalFeeAmount);
+            var overhead = applicable.Sum(rule => CalculateRule(rule, direct, days)) + resolutionFees;
+            var contingencyPercent = policy.DefaultContingencyPercent;
             var contingency = decimal.Round((direct + overhead) * contingencyPercent / 100m, 2);
             var total = direct + overhead + contingency;
             var taskSnapshot = new QuoteTaskCostSnapshot
@@ -1518,6 +2269,7 @@ else
                 DailyCrewCost = dailyCrew, LaborCost = labor, TaskOverhead = overhead, Contingency = contingency,
                 TotalCost = total,
                 AppliedRules = string.Join("; ", applicable.Select(x => $"{x.Name}: {FormatRuleForSnapshot(x)}")
+                    .Concat(analysis.ReviewItems.Where(x => x.AdditionalFeeAmount > 0).Select(x => $"Estimator fee: {x.AdditionalFeeName} {x.AdditionalFeeAmount:C2}"))
                     .Concat(applicableKits.Select(x => $"Supply kit: {x.Name}"))
                     .Concat(crewRate is null ? Enumerable.Empty<string>() : [$"Crew rate: {crewRate.TaskType}/{crewRate.WorkType ?? "All"}"]))
             };
@@ -1537,11 +2289,12 @@ else
         var projectTaskTypes = trackedVersion.QuoteCase.ProjectTasks.Select(x => x.TaskType).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var projectRules = policy.Rules.Where(x => x.IsActive && x.Scope == CostRuleScopes.Project
             && (x.TaskType == null || projectTaskTypes.Contains(x.TaskType))).ToList();
+        var projectDirectCost = snapshot.Tasks.Sum(x => x.MaterialCost + x.RequiredSupplyCost + x.LaborCost + x.TaskOverhead);
         var generalOverhead = policy.GeneralOverheadFixed
             + (policy.GeneralOverheadPerProjectDay + policy.CalculatedOverheadPerCrewDay) * projectDays
-            + totalTaskCost * policy.GeneralOverheadPercent / 100m
-            + projectRules.Sum(rule => CalculateRule(rule, totalTaskCost, projectDays));
-        snapshot.DirectCost = snapshot.Tasks.Sum(x => x.MaterialCost + x.RequiredSupplyCost + x.LaborCost + x.TaskOverhead);
+            + projectDirectCost * policy.GeneralOverheadPercent / 100m
+            + projectRules.Sum(rule => CalculateRule(rule, projectDirectCost, projectDays));
+        snapshot.DirectCost = projectDirectCost;
         snapshot.Contingency = snapshot.Tasks.Sum(x => x.Contingency);
         snapshot.ProjectOverhead = decimal.Round(generalOverhead, 2);
         foreach (var taskCost in snapshot.Tasks)
@@ -1555,7 +2308,7 @@ else
                 .OrderByDescending(x => x.WorkType != null).FirstOrDefault();
             taskCost.TargetMarginPercent = currentCostSnapshot is not null
                 ? PricingTargetMargin
-                : task.TargetMarginPercentOverride ?? marginRule?.TargetMarginPercent ?? policy.DefaultTargetMarginPercent;
+                : marginRule?.TargetMarginPercent ?? policy.DefaultTargetMarginPercent;
             taskCost.SuggestedCustomerPrice = taskCost.TargetMarginPercent >= 100
                 ? taskCost.TotalCost
                 : decimal.Round(taskCost.TotalCost / (1 - taskCost.TargetMarginPercent / 100m), 2);

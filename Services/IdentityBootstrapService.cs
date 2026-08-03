@@ -52,7 +52,7 @@ public static class IdentityBootstrapService
         var administrator = await userManager.FindByEmailAsync(email);
         if (administrator is null)
         {
-            administrator = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true };
+            administrator = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, AdminAuditEmail = false };
             EnsureSucceeded(await userManager.CreateAsync(administrator, password), "creating bootstrap administrator");
         }
 

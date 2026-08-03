@@ -35,10 +35,26 @@ public sealed class CentComTaskAnalysisService(
         var analysis = await db.QuoteTaskAnalyses
             .Include(item => item.Materials)
             .Include(item => item.Exclusions)
+            .Include(item => item.ReviewItems)
             .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId)
             .OrderByDescending(item => item.RevisionNumber)
             .FirstOrDefaultAsync(cancellationToken);
         if (analysis is null) return;
+        var priorAnalysis = await db.QuoteTaskAnalyses.AsNoTracking()
+            .Include(item => item.Materials)
+            .Include(item => item.ReviewItems)
+            .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId && item.RevisionNumber < analysis.RevisionNumber)
+            .OrderByDescending(item => item.RevisionNumber)
+            .FirstOrDefaultAsync(cancellationToken);
+        var resolvedReviewHistory = await db.QuoteTaskAnalysisReviewItems.AsNoTracking()
+            .Include(item => item.QuoteTaskAnalysis)
+            .Where(item => item.QuoteTaskAnalysis.QuoteProjectTaskId == job.QuoteProjectTaskId
+                && item.QuoteTaskAnalysis.RevisionNumber < analysis.RevisionNumber
+                && item.Status != AnalysisReviewStatuses.NeedsReview
+                && item.Status != AnalysisReviewStatuses.FieldVerification)
+            .OrderBy(item => item.QuoteTaskAnalysis.RevisionNumber)
+            .ThenBy(item => item.SortOrder)
+            .ToListAsync(cancellationToken);
 
         job.Status = "Processing";
         job.Message = "CentCom is generating a material plan.";
@@ -61,7 +77,7 @@ public sealed class CentComTaskAnalysisService(
             var requestMessages = new CentComChatClient.RequestMessage[]
             {
                 new("system", BuildSystemPrompt()),
-                new("user", BuildTaskPrompt(job.QuoteProjectTask))
+                new("user", BuildTaskPrompt(job.QuoteProjectTask, resolvedReviewHistory))
             };
             var response = await centCom.CompleteJsonAsync(requestMessages, cancellationToken);
             AnalysisResponse result;
@@ -85,10 +101,40 @@ public sealed class CentComTaskAnalysisService(
                 result = ParseResponse(response);
             }
 
+            if (result.Materials.Count == 0)
+            {
+                logger.LogWarning(
+                    "CentCom returned no materials for job {JobId}; requesting one complete material-plan repair.",
+                    jobId);
+                response = await centCom.CompleteJsonAsync(
+                [
+                    .. requestMessages,
+                    new("user",
+                        "The previous answer contained no material line items. Regenerate the FULL JSON answer with a practical " +
+                        "material plan derived from the task scope. Treat brand names and general product descriptions as search " +
+                        "intents; do not require an exact catalog description. Include requested decking and railing products when " +
+                        "they appear in the scope, use the supplied dimensions for planning quantities, and identify assumptions. " +
+                        "Return JSON only.")
+                ], cancellationToken);
+                result = ParseResponse(response);
+            }
+
+            if (result.Materials.Count == 0)
+            {
+                logger.LogWarning(
+                    "CentCom repair still returned no materials for job {JobId}; deriving safe search intents from the saved task scope.",
+                    jobId);
+                result = BuildScopeFallback(job.QuoteProjectTask);
+            }
+
+            NormalizeDeckMaterialPlan(job.QuoteProjectTask, result);
+
             db.QuoteTaskAnalysisMaterials.RemoveRange(analysis.Materials);
             db.QuoteTaskAnalysisExclusions.RemoveRange(analysis.Exclusions);
+            db.QuoteTaskAnalysisReviewItems.RemoveRange(analysis.ReviewItems);
             analysis.Materials.Clear();
             analysis.Exclusions.Clear();
+            analysis.ReviewItems.Clear();
             var sortOrder = 1;
             foreach (var proposed in result.Materials)
             {
@@ -115,7 +161,7 @@ public sealed class CentComTaskAnalysisService(
                         catalog.Add(match);
                     }
                 }
-                var quantity = Math.Max(0, proposed.Quantity);
+                var (quantity, resolvedUnit) = ResolvePurchaseQuantity(proposed, match);
                 var wastePercent = proposed.WastePercent is > 0 and <= 1
                     ? proposed.WastePercent * 100
                     : proposed.WastePercent;
@@ -124,12 +170,14 @@ public sealed class CentComTaskAnalysisService(
                     SortOrder = sortOrder++,
                     VendorProductId = match?.VendorProductId,
                     VendorSku = match?.Sku ?? (remoteMatch?.MatchKind == HomeDepotMatchKinds.Similar ? RemoteSku(remoteMatch) : proposed.VendorSku?.Trim()),
-                    Description = remoteMatch?.MatchKind == HomeDepotMatchKinds.Similar
+                    Description = match is not null
+                        ? match.Description
+                        : remoteMatch?.MatchKind == HomeDepotMatchKinds.Similar
                         ? Trim(remoteMatch.Title, 500) ?? "Unspecified Home Depot alternative"
                         : Trim(proposed.Description, 500) ?? "Unspecified material",
                     OriginalDescription = Trim(proposed.Description, 500) ?? "Unspecified material",
                     Quantity = quantity,
-                    Unit = Trim(proposed.Unit, 40) ?? match?.Unit ?? "Each",
+                    Unit = resolvedUnit,
                     UnitCost = match?.UnitPrice ?? remoteMatch?.UnitPrice ?? 0,
                     WastePercent = Math.Clamp(wastePercent, 0, 100),
                     MatchConfidence = match is not null ? 1 : remoteMatch?.Confidence ?? 0,
@@ -148,11 +196,35 @@ public sealed class CentComTaskAnalysisService(
                 });
             }
 
+            if (priorAnalysis is not null)
+            {
+                foreach (var locked in priorAnalysis.Materials.Where(item => item.IsEstimatorLocked && !item.IsRemoved && item.VendorProductId is not null))
+                {
+                    if (analysis.Materials.Any(item => item.VendorProductId == locked.VendorProductId)) continue;
+                    analysis.Materials.Add(new QuoteTaskAnalysisMaterial
+                    {
+                        SortOrder = sortOrder++, VendorProductId = locked.VendorProductId, VendorSku = locked.VendorSku,
+                        Description = locked.Description, OriginalDescription = locked.OriginalDescription,
+                        Quantity = locked.Quantity, Unit = locked.Unit, UnitCost = locked.UnitCost,
+                        WastePercent = locked.WastePercent, MatchConfidence = 1, SourceType = locked.SourceType,
+                        SourceReference = locked.SourceReference, SourcePriceDate = locked.SourcePriceDate,
+                        MatchKind = MaterialMatchKinds.Catalog, ReviewDecision = MaterialReviewDecisions.Accepted,
+                        IsEstimatorLocked = true,
+                        Notes = "Carried forward from an estimator-locked decision in the prior revision."
+                    });
+                }
+            }
+
             analysis.Status = QuoteTaskAnalysisStatuses.NeedsReview;
             analysis.ModelVersion = Trim(options.Value.Model, 120);
-            analysis.Assumptions = Trim(string.Join(Environment.NewLine, result.Assumptions), 4000);
+            var generatedAssumptionItems = result.Assumptions
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => (Label: "Assumption", Body: item.Trim()))
+                .Where(item => !WasPreviouslyResolved(item, AnalysisReviewKinds.Assumption, resolvedReviewHistory))
+                .ToList();
+            analysis.Assumptions = Trim(string.Join(Environment.NewLine, generatedAssumptionItems.Select(item => item.Body)), 4000);
             var validationWarnings = ValidateDeckAnalysis(job.QuoteProjectTask, analysis.Materials, analysis.Exclusions);
-            analysis.QuestionsAndWarnings = Trim(
+            var generatedReviewItems = ParseReviewItems(
                 string.Join(Environment.NewLine, result.Warnings
                     .Concat(validationWarnings)
                     .Concat(analysis.Exclusions.Select(item =>
@@ -166,8 +238,36 @@ public sealed class CentComTaskAnalysisService(
                     .Concat(analysis.Materials.Where(item => item.MatchKind == MaterialMatchKinds.HomeDepotSimilar)
                         .Select(item => $"[SIMILAR PRODUCT] Requested '{item.OriginalDescription}'; proposed '{item.Description}'. Review before accepting."))
                     .Concat(analysis.Materials.Where(item => item.IsUnmatched)
-                        .Select(item => $"[UNRESOLVED MATERIAL] {item.OriginalDescription ?? item.Description}: enter a catalog item or one-off price."))),
+                        .Select(item => $"[UNRESOLVED MATERIAL] {item.OriginalDescription ?? item.Description}: enter a catalog item or one-off price."))))
+                .Where(item => !WasPreviouslyResolved(item, AnalysisReviewKinds.Warning, resolvedReviewHistory))
+                .ToList();
+            analysis.QuestionsAndWarnings = Trim(
+                string.Join(Environment.NewLine, generatedReviewItems.Select(item => $"[{item.Label.ToUpperInvariant()}] {item.Body}")),
                 4000);
+            var reviewNumber = 1;
+            foreach (var assumption in generatedAssumptionItems)
+            {
+                analysis.ReviewItems.Add(new QuoteTaskAnalysisReviewItem
+                {
+                    SortOrder = reviewNumber,
+                    ItemKey = $"a{reviewNumber++:D2}",
+                    ReviewKind = AnalysisReviewKinds.Assumption,
+                    Category = assumption.Label,
+                    Description = assumption.Body
+                });
+            }
+            reviewNumber = 1;
+            foreach (var review in generatedReviewItems)
+            {
+                analysis.ReviewItems.Add(new QuoteTaskAnalysisReviewItem
+                {
+                    SortOrder = reviewNumber,
+                    ItemKey = $"r{reviewNumber++:D2}",
+                    ReviewKind = AnalysisReviewKinds.Warning,
+                    Category = review.Label,
+                    Description = review.Body
+                });
+            }
             analysis.DeliveryAllowance = Math.Max(0, result.DeliveryAllowance);
             analysis.TaxAllowance = Math.Max(0, result.TaxAllowance);
             analysis.OtherAllowance = Math.Max(0, result.OtherAllowance);
@@ -254,6 +354,7 @@ public sealed class CentComTaskAnalysisService(
         }
         await db.SaveChangesAsync(cancellationToken);
         return new CatalogItem(item.Id, vendor.Name, sku, item.VendorDescription ?? item.Product.Name,
+            item.Product.Category, item.ProductSystem, item.IsPreferred, item.PreferencePriority,
             item.PurchaseUnit, result.UnitPrice, today, price.SourceType, price.SourceReference);
     }
 
@@ -275,6 +376,7 @@ public sealed class CentComTaskAnalysisService(
         var products = await db.VendorProducts
             .AsNoTracking()
             .Include(item => item.SupplyVendor)
+            .Include(item => item.Product)
             .Include(item => item.Prices)
             .Where(item => item.IsActive && item.SupplyVendor.IsActive)
             .ToListAsync(cancellationToken);
@@ -292,13 +394,19 @@ public sealed class CentComTaskAnalysisService(
                 product.SupplyVendor.Name,
                 product.VendorSku,
                 product.VendorDescription ?? product.Product.Name,
+                product.Product.Category,
+                product.ProductSystem,
+                product.IsPreferred,
+                product.PreferencePriority,
                 product.PurchaseUnit,
                 price?.UnitPrice ?? 0,
                 price?.EffectiveDate,
                 price?.SourceType,
                 price?.SourceReference);
         }).Where(item => item.UnitPrice > 0)
-            .OrderByDescending(item => IsPreferredVendor(item.VendorName))
+            .OrderByDescending(item => item.IsPreferred)
+            .ThenBy(item => item.PreferencePriority)
+            .ThenByDescending(item => IsPreferredVendor(item.VendorName))
             .ThenBy(item => item.VendorName)
             .ThenBy(item => item.Sku)
             .ToList();
@@ -307,6 +415,13 @@ public sealed class CentComTaskAnalysisService(
     private static string BuildSystemPrompt() => """
         You are CentCom, a construction estimating assistant. Return JSON only, without markdown.
         Create a COMPLETE but consolidated proposed supply list for the described project.
+        Interpret likely speech-to-text substitutions in construction context (for example, "truck" may mean
+        "Trex" when describing composite decking or railing). When a brand or product family is requested,
+        preserve it in each compatible material description. Specify searchable component categories and include
+        every accessory required for a complete install rather than using vague allowances.
+        For a railing system, return separate searchable lines for level and stair panels or rails,
+        level and stair posts, caps/skirts, brackets, balusters or infill, and manufacturer-required
+        fasteners as applicable. Do not collapse a complete railing system into one generic line.
         Include framing, decking, connectors, fasteners, footings,
         guards, stair components, flashing/water management, demolition consumables, and disposal
         when applicable. Set vendorSku to null; the application will match catalogs deterministically.
@@ -347,7 +462,9 @@ public sealed class CentComTaskAnalysisService(
         Keep all descriptive strings concise so the complete JSON response fits within the model output limit.
         """;
 
-    private static string BuildTaskPrompt(QuoteProjectTask task)
+    private static string BuildTaskPrompt(
+        QuoteProjectTask task,
+        IReadOnlyCollection<QuoteTaskAnalysisReviewItem> resolvedReviewHistory)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"TASK TYPE: {task.TaskType}");
@@ -355,12 +472,59 @@ public sealed class CentComTaskAnalysisService(
         builder.AppendLine(task.QuoteCase.WorkDescription);
         builder.AppendLine("TASK SCOPE:");
         builder.AppendLine(task.ScopeOfWork);
+        if (resolvedReviewHistory.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("ESTIMATOR RESOLUTIONS FROM THE PRIOR REVISION (authoritative):");
+            foreach (var item in resolvedReviewHistory)
+                builder.AppendLine($"- {item.ReviewKind} / {item.Category}: {item.Description} | Disposition: {item.Status} | Response: {item.EstimatorResponse ?? "No note"} | Action: {item.ResolutionAction ?? "No added cost"}");
+            builder.AppendLine("Do not repeat any accepted, resolved, or not-applicable item as a question or warning in this or future revisions. Treat the estimator disposition and response as authoritative. Preserve estimator-locked catalog products.");
+        }
         builder.AppendLine();
         builder.AppendLine(
             "Generate conservative planning quantities, consolidate identical products, keep notes short, " +
             "and make every missing measurement or design choice explicit.");
         return builder.ToString();
     }
+
+    private static IReadOnlyList<(string Label, string Body)> ParseReviewItems(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return [];
+        var separated = Regex.Replace(content.Trim(), @"(?<!^)(?=\[[^\]\r\n]+\])", Environment.NewLine);
+        var lines = separated.Split(["\r\n", "\n", "\r"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return lines.Select((line, index) =>
+        {
+            var marker = Regex.Match(line, @"^\[(?<label>[^\]]+)\]\s*(?<body>.*)$");
+            var label = marker.Success
+                ? CultureInfo.InvariantCulture.TextInfo.ToTitleCase(marker.Groups["label"].Value.Replace('_', ' ').Trim().ToLowerInvariant())
+                : $"Review item {index + 1}";
+            return (Label: label, Body: marker.Success ? marker.Groups["body"].Value.Trim() : line.Trim());
+        }).Where(item => !string.IsNullOrWhiteSpace(item.Body)).ToList();
+    }
+
+    private static bool WasPreviouslyResolved(
+        (string Label, string Body) candidate,
+        string reviewKind,
+        IEnumerable<QuoteTaskAnalysisReviewItem> priorItems)
+    {
+        var candidateLabel = NormalizeReviewText(candidate.Label);
+        var candidateBody = NormalizeReviewText(candidate.Body);
+        return priorItems
+            .Where(item => item.Status != AnalysisReviewStatuses.NeedsReview)
+            .Where(item => item.Status != AnalysisReviewStatuses.FieldVerification && item.ReviewKind == reviewKind)
+            .Any(item =>
+            {
+                var priorLabel = NormalizeReviewText(item.Category);
+                var priorBody = NormalizeReviewText(item.Description);
+                if (candidateBody == priorBody) return true;
+                if (candidateLabel != priorLabel) return false;
+                return candidateBody.Contains(priorBody, StringComparison.Ordinal)
+                    || priorBody.Contains(candidateBody, StringComparison.Ordinal);
+            });
+    }
+
+    private static string NormalizeReviewText(string? value) =>
+        Regex.Replace(value?.Trim().ToLowerInvariant() ?? string.Empty, @"[^a-z0-9]+", " ").Trim();
 
     private static AnalysisResponse ParseResponse(string response)
     {
@@ -373,10 +537,160 @@ public sealed class CentComTaskAnalysisService(
                 json = json[(firstNewLine + 1)..lastFence].Trim();
         }
 
-        var result = JsonSerializer.Deserialize<AnalysisResponse>(json, JsonOptions);
-        if (result is null || result.Materials.Count == 0)
-            throw new InvalidOperationException("CentCom returned no material recommendations.");
+        var result = JsonSerializer.Deserialize<AnalysisResponse>(json, JsonOptions)
+            ?? throw new JsonException("CentCom returned an empty JSON response.");
+        result.Materials ??= [];
+        result.Assumptions ??= [];
+        result.Warnings ??= [];
         return result;
+    }
+
+    private static AnalysisResponse BuildScopeFallback(QuoteProjectTask task)
+    {
+        var scope = $"{task.QuoteCase.WorkDescription} {task.ScopeOfWork}";
+        var result = new AnalysisResponse
+        {
+            Assumptions = ["Material search intents were derived from the saved task scope because CentCom returned no line items."],
+            Warnings =
+            [
+                "[FALLBACK MATERIAL PLAN] Review all quantities and any closest-match substitutions before accepting the estimate."
+            ]
+        };
+
+        var dimensions = Regex.Match(
+            scope,
+            @"(?<length>\d+(?:\.\d+)?)\s*(?:[’']?\s*[x×]|\bby\b)\s*(?<width>\d+(?:\.\d+)?)",
+            RegexOptions.IgnoreCase);
+        decimal? length = null;
+        decimal? width = null;
+        if (dimensions.Success &&
+            decimal.TryParse(dimensions.Groups["length"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedLength) &&
+            decimal.TryParse(dimensions.Groups["width"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedWidth))
+        {
+            length = parsedLength;
+            width = parsedWidth;
+        }
+
+        if (ContainsAny(scope, "decking", "deck board", "trex"))
+        {
+            var requestedProduct = scope.Contains("trex", StringComparison.OrdinalIgnoreCase)
+                ? "Trex Enhance composite decking"
+                : "Decking material";
+            result.Materials.Add(new MaterialResponse
+            {
+                Description = requestedProduct,
+                Quantity = length.HasValue && width.HasValue ? length.Value * width.Value : 1,
+                Unit = length.HasValue && width.HasValue ? "Square Foot" : "Each",
+                WastePercent = 10,
+                Notes = length.HasValue && width.HasValue
+                    ? $"Planning coverage from {length:0.##} by {width:0.##} ft dimensions; verify board profile, color, and layout."
+                    : "Quantity requires field verification; use this description to locate the closest catalog product."
+            });
+        }
+
+        if (ContainsAny(scope, "railing", "rail", "guard"))
+        {
+            result.Materials.Add(new MaterialResponse
+            {
+                Description = scope.Contains("trex", StringComparison.OrdinalIgnoreCase)
+                    ? "Trex railing system"
+                    : "Deck railing system",
+                Quantity = length.HasValue && width.HasValue ? 2 * (length.Value + width.Value) : 1,
+                Unit = length.HasValue && width.HasValue ? "Linear Foot" : "Each",
+                Notes = length.HasValue && width.HasValue
+                    ? "Uses the full perimeter only as a planning allowance; verify house attachment, stairs, openings, posts, and actual guarded edges."
+                    : "Quantity and required components must be verified in the field."
+            });
+        }
+
+        if (result.Materials.Count == 0)
+        {
+            result.Materials.Add(new MaterialResponse
+            {
+                Description = Trim(task.ScopeOfWork, 500) ?? $"Materials for {task.TaskType} task",
+                Quantity = 1,
+                Unit = "Each",
+                Notes = "Unresolved scope item retained for catalog search or manual estimator pricing."
+            });
+        }
+
+        return result;
+    }
+
+    private static void NormalizeDeckMaterialPlan(QuoteProjectTask task, AnalysisResponse result)
+    {
+        if (!task.TaskType.Equals("Deck", StringComparison.OrdinalIgnoreCase)) return;
+        var scope = $"{task.QuoteCase.WorkDescription} {task.ScopeOfWork}";
+        var dimensions = Regex.Match(
+            scope,
+            @"(?<length>\d+(?:\.\d+)?)\s*(?:ft\.?\s*)?(?:[’']?\s*[x×]|\bby\b)\s*(?<width>\d+(?:\.\d+)?)",
+            RegexOptions.IgnoreCase);
+        if (!dimensions.Success ||
+            !decimal.TryParse(dimensions.Groups["length"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var length) ||
+            !decimal.TryParse(dimensions.Groups["width"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var width)) return;
+
+        var area = length * width;
+        var deckingLinearFeet = decimal.Ceiling(area * 12m / 5.5m);
+        foreach (var framing in result.Materials.Where(item => MaterialCategory(item.Description) == "Framing" &&
+                     item.Description.Contains("trex", StringComparison.OrdinalIgnoreCase)))
+        {
+            framing.Description = Regex.Replace(framing.Description, @"\bTrex(?:®)?\b", "Pressure-treated", RegexOptions.IgnoreCase);
+            framing.Notes = $"{framing.Notes} Trex applies to the finish system; structural framing is resolved separately.".Trim();
+        }
+        foreach (var decking in result.Materials.Where(item => MaterialCategory(item.Description) == "Decking"))
+        {
+            decking.Quantity = deckingLinearFeet;
+            decking.Unit = "Linear Foot";
+            decking.WastePercent = Math.Max(decking.WastePercent, 10);
+            decking.Notes = $"{decking.Notes} Calculated from {area:0.##} sq ft using a 5.5-inch board face; available catalog board length will determine piece count.".Trim();
+        }
+
+        var railingRequested = ContainsAny(scope, "railing", "rail", "guard");
+        if (!railingRequested) return;
+        var hasDetailedRailing = result.Materials.Any(item =>
+            ContainsAny(item.Description, "railing panel", "rail panel", "railing post", "rail post", "railing bracket", "rail bracket"));
+        if (hasDetailedRailing) return;
+
+        result.Materials.RemoveAll(item => MaterialCategory(item.Description) == "Railing");
+        var perimeter = 2 * (length + width);
+        var panels = decimal.Ceiling(perimeter / 8m);
+        var posts = panels + 1;
+        result.Materials.AddRange(
+        [
+            new MaterialResponse { Description = "Trex Enhance Steel 8 ft horizontal railing panel", Quantity = panels, Unit = "Each", WastePercent = 5, Notes = $"Full {perimeter:0.##} ft perimeter planning allowance; verify actual guarded edges and stair openings." },
+            new MaterialResponse { Description = "Trex Enhance Steel 37 inch horizontal railing post", Quantity = posts, Unit = "Each", WastePercent = 5, Notes = "Planning count is one more than the level panel count; verify corners, ends, and transitions." },
+            new MaterialResponse { Description = "Trex Enhance Steel fixed horizontal railing bracket 4 pack", Quantity = decimal.Ceiling(panels / 2m), Unit = "Each", WastePercent = 5, Notes = "Assumes two brackets per panel and four brackets per package; verify manufacturer instructions." },
+            new MaterialResponse { Description = "Trex Enhance Steel railing post cap and skirt", Quantity = posts, Unit = "Each", WastePercent = 5, Notes = "One cap and skirt set per planned post." }
+        ]);
+        result.Assumptions.Add($"Railing was planned around the full {perimeter:0.##} ft deck perimeter because guarded-edge measurements were not supplied.");
+        result.Warnings.Add("[RAILING ASSUMPTION] Confirm which deck edges require railing and whether stairs are present before accepting quantities.");
+    }
+
+    private static (decimal Quantity, string Unit) ResolvePurchaseQuantity(MaterialResponse proposed, CatalogItem? match)
+    {
+        var requestedQuantity = Math.Max(0, proposed.Quantity);
+        var requestedUnit = Trim(proposed.Unit, 40) ?? "Each";
+        if (match is null) return (requestedQuantity, requestedUnit);
+
+        if (requestedUnit.Contains("linear", StringComparison.OrdinalIgnoreCase) &&
+            (match.Unit.Equals("Each", StringComparison.OrdinalIgnoreCase) || match.Unit.Equals("Piece", StringComparison.OrdinalIgnoreCase)) &&
+            BoardLengthFeet(match.Description) is { } boardLength && boardLength > 0)
+        {
+            return (decimal.Ceiling(requestedQuantity / boardLength), match.Unit);
+        }
+
+        return (requestedQuantity, match.Unit);
+    }
+
+    private static decimal? BoardLengthFeet(string description)
+    {
+        var dimensional = Regex.Match(description, @"\b\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*x\s*(?<length>\d+(?:\.\d+)?)\b", RegexOptions.IgnoreCase);
+        if (dimensional.Success && decimal.TryParse(dimensional.Groups["length"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var dimensionalLength))
+            return dimensionalLength;
+        var explicitLength = Regex.Match(description, @"\b(?<length>\d+(?:\.\d+)?)\s*(?:ft\.?|foot|feet|')\b", RegexOptions.IgnoreCase);
+        return explicitLength.Success && decimal.TryParse(explicitLength.Groups["length"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var length)
+            ? length
+            : null;
     }
 
     private static string? Trim(string? value, int maximum) =>
@@ -398,7 +712,44 @@ public sealed class CentComTaskAnalysisService(
 
         var proposedDimensions = DimensionTokens(proposed.Description);
         var proposedWords = WordTokens(proposed.Description);
-        var candidates = catalog.Select(item =>
+        var requestedCategory = MaterialCategory(proposed.Description);
+        var requestedRole = MaterialRole(proposed.Description);
+        var preferredCategoryMatch = catalog
+            .Where(item => item.IsPreferred && requestedCategory is not null &&
+                MaterialCategory($"{item.Category} {item.Description}") == requestedCategory &&
+                BrandCompatible(proposed.Description, item.Description, item.ProductSystem) &&
+                RoleCompatible(requestedRole, MaterialRole(item.Description)))
+            .OrderByDescending(item => ProductSystemScore(proposed.Description, item.ProductSystem))
+            .ThenByDescending(item => WordTokens(proposed.Description).Intersect(WordTokens(item.Description)).Count())
+            .ThenBy(item => item.PreferencePriority)
+            .ThenByDescending(item => IsPreferredVendor(item.VendorName))
+            .ThenBy(item => item.UnitPrice)
+            .FirstOrDefault();
+        if (preferredCategoryMatch is not null) return preferredCategoryMatch;
+
+        var familyCategoryMatch = catalog
+            .Where(item => requestedCategory is not null &&
+                MaterialCategory($"{item.Category} {item.Description}") == requestedCategory &&
+                BrandCompatible(proposed.Description, item.Description, item.ProductSystem) &&
+                RoleCompatible(requestedRole, MaterialRole(item.Description)))
+            .Select(item => new
+            {
+                Item = item,
+                SharedWords = WordTokens(proposed.Description).Intersect(WordTokens(item.Description)).Count(),
+                SystemScore = ProductSystemScore(proposed.Description, item.ProductSystem)
+            })
+            .Where(candidate => candidate.SharedWords >= 2 || candidate.SystemScore >= 2)
+            .OrderByDescending(candidate => candidate.SystemScore)
+            .ThenByDescending(candidate => candidate.SharedWords)
+            .ThenByDescending(candidate => candidate.Item.Description.Contains("grooved", StringComparison.OrdinalIgnoreCase))
+            .ThenBy(candidate => candidate.Item.UnitPrice)
+            .FirstOrDefault();
+        if (familyCategoryMatch is not null) return familyCategoryMatch.Item;
+
+        var candidates = catalog
+        .Where(item => BrandCompatible(proposed.Description, item.Description, item.ProductSystem) &&
+            RoleCompatible(requestedRole, MaterialRole(item.Description)))
+        .Select(item =>
         {
             var description = $"{item.Description} {item.Sku}";
             var itemDimensions = DimensionTokens(description);
@@ -434,7 +785,7 @@ public sealed class CentComTaskAnalysisService(
         var combinedScope = $"{task.QuoteCase.WorkDescription} {task.ScopeOfWork}";
         var deckDimensions = Regex.Matches(
                 combinedScope,
-                @"(?<length>\d+(?:\.\d+)?)\s*[’']?\s*[x×]\s*(?<width>\d+(?:\.\d+)?)",
+                @"(?<length>\d+(?:\.\d+)?)\s*(?:[’']?\s*[x×]|\bby\b)\s*(?<width>\d+(?:\.\d+)?)",
                 RegexOptions.IgnoreCase)
             .Select(match => (
                 Length: decimal.Parse(match.Groups["length"].Value, CultureInfo.InvariantCulture),
@@ -448,10 +799,10 @@ public sealed class CentComTaskAnalysisService(
             var totalArea = deckDimensions.Sum(size => size.Length * size.Width);
             var minimumDeckingLinearFeet = decimal.Ceiling(totalArea * 12m / 5.5m);
             var proposedDeckingLinearFeet = materials
-                .Where(item => ContainsAny(item.Description, "decking", "deck board"))
+                .Where(item => MaterialCategory(item.Description) == "Decking")
                 .Sum(item => item.Unit.Contains("linear", StringComparison.OrdinalIgnoreCase)
                     ? item.Quantity
-                    : item.Quantity * 12);
+                    : item.Quantity * (BoardLengthFeet(item.Description) ?? 12));
             if (proposedDeckingLinearFeet < minimumDeckingLinearFeet * 0.9m)
             {
                 warnings.Add(
@@ -505,12 +856,48 @@ public sealed class CentComTaskAnalysisService(
 
     private static HashSet<string> WordTokens(string value) =>
         Regex.Matches(value.ToLowerInvariant(), @"[a-z0-9]+")
-            .Select(match => match.Value)
+            .Select(match => match.Value is "enhanced" ? "enhance" : match.Value)
             .Where(word => word.Length >= 3 && word is not "the" and not "for" and not "with" and not "each")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static bool ContainsAny(string value, params string[] terms) =>
         terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static string? MaterialCategory(string value) =>
+        ContainsAny(value, "joist", "beam", "header", "framing lumber") ? "Framing" :
+        ContainsAny(value, "decking", "deck board", "composite board") ||
+            (value.Contains("trex", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(value, @"\b1\s*x\s*6\b", RegexOptions.IgnoreCase)) ? "Decking" :
+        ContainsAny(value, "railing", "guardrail", "guard rail", "baluster", "rail cap") ||
+            (value.Contains("trex enhance steel", StringComparison.OrdinalIgnoreCase) && ContainsAny(value, "panel", "post", "bracket")) ? "Railing" :
+        ContainsAny(value, "footing", "concrete", "pier") ? "Footings" :
+        ContainsAny(value, "hanger", "connector", "bracket", "post base", "anchor") ? "Connectors" :
+        ContainsAny(value, "fastener", "screw", "nail", "bolt", "clip") ? "Fasteners" :
+        ContainsAny(value, "flashing", "waterproof") ? "Flashing" :
+        ContainsAny(value, "fascia", "rim board") ? "Fascia" :
+        ContainsAny(value, "stair", "stringer", "tread") ? "Stairs" : null;
+
+    private static string? MaterialRole(string value) =>
+        ContainsAny(value, "cap and skirt", "post cap", "post skirt") ? "RailingCapSkirt" :
+        ContainsAny(value, "railing bracket", "rail bracket") ||
+            (value.Contains("trex enhance steel", StringComparison.OrdinalIgnoreCase) && value.Contains("bracket", StringComparison.OrdinalIgnoreCase)) ? "RailingBracket" :
+        ContainsAny(value, "railing panel", "rail panel") ||
+            (value.Contains("trex enhance steel", StringComparison.OrdinalIgnoreCase) && value.Contains("panel", StringComparison.OrdinalIgnoreCase)) ? "RailingPanel" :
+        ContainsAny(value, "railing post", "rail post") ||
+            (value.Contains("trex enhance steel", StringComparison.OrdinalIgnoreCase) && value.Contains("post", StringComparison.OrdinalIgnoreCase)) ? "RailingPost" :
+        MaterialCategory(value);
+
+    private static bool RoleCompatible(string? requestedRole, string? candidateRole) =>
+        requestedRole is null || string.Equals(requestedRole, candidateRole, StringComparison.OrdinalIgnoreCase);
+
+    private static bool BrandCompatible(string requested, string candidate, string? productSystem)
+    {
+        if (!requested.Contains("trex", StringComparison.OrdinalIgnoreCase)) return true;
+        return candidate.Contains("trex", StringComparison.OrdinalIgnoreCase) ||
+            (productSystem?.Contains("trex", StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private static int ProductSystemScore(string requested, string? system) =>
+        string.IsNullOrWhiteSpace(system) ? 0 : WordTokens(requested).Intersect(WordTokens(system)).Count();
 
     private static bool IsPreferredVendor(string vendorName) =>
         vendorName.Equals("Decks & Docks", StringComparison.OrdinalIgnoreCase) ||
@@ -521,6 +908,10 @@ public sealed class CentComTaskAnalysisService(
         string VendorName,
         string Sku,
         string Description,
+        string? Category,
+        string? ProductSystem,
+        bool IsPreferred,
+        int PreferencePriority,
         string Unit,
         decimal UnitPrice,
         DateOnly? EffectiveDate,
