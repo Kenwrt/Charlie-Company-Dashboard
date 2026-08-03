@@ -12,6 +12,7 @@ namespace CharleyCompany.Dashboard.Web.Services;
 public sealed class EstimateAdminAuditEmailService(
     IDbContextFactory<ApplicationDbContext> dbFactory,
     UserManager<ApplicationUser> userManager,
+    IConfiguration configuration,
     IOptions<EmailOptions> options,
     ResendEmailClient resend,
     ILogger<EstimateAdminAuditEmailService> logger)
@@ -22,6 +23,12 @@ public sealed class EstimateAdminAuditEmailService(
         int quoteId,
         CancellationToken cancellationToken = default)
     {
+        if (!configuration.GetValue<bool>("AdminAuditEmail"))
+        {
+            logger.LogInformation("Administrator audit email delivery is disabled by configuration for estimate {QuoteId}.", quoteId);
+            return new EstimateAdminAuditEmailResult(0, false, []);
+        }
+
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var quote = await db.QuoteCases.AsSplitQuery()
             .Include(item => item.LocalOperation)
