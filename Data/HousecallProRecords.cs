@@ -27,6 +27,84 @@ public sealed class HousecallProJob
     public DateTimeOffset? SourceUpdatedAt { get; set; }
     public DateTimeOffset LastSyncedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<HousecallProJobFollowUp> FollowUps { get; set; } = [];
+    public HousecallProJobProgress? Progress { get; set; }
+    public ICollection<HousecallProJobBlocker> Blockers { get; set; } = [];
+    public ICollection<HousecallProJobPaymentMilestone> PaymentMilestones { get; set; } = [];
+    public ICollection<HousecallProJobProgressEvent> ProgressEvents { get; set; } = [];
+}
+
+public static class JobProgressOptions
+{
+    public static readonly string[] Phases = ["Deposit", "Permitting", "HOA Approval", "Procurement", "Scheduled", "Construction", "Inspection", "Final Payment", "Complete"];
+    public static readonly string[] BlockerTypes = ["Permit", "HOA", "Weather", "Customer", "Materials", "Inspection", "Crew Scheduling", "Other"];
+    public static readonly string[] MilestoneStatuses = ["Pending", "Earned", "Invoiced", "Paid", "Waived"];
+    public static (int Warning, int Critical) Threshold(string blockerType) => blockerType switch
+    {
+        "HOA" => (14, 30), "Permit" => (10, 21), "Weather" => (3, 7), "Materials" => (5, 14),
+        "Inspection" => (3, 7), "Customer" => (5, 10), "Crew Scheduling" => (5, 10), _ => (7, 14)
+    };
+}
+
+public sealed class HousecallProJobProgress
+{
+    public int Id { get; set; }
+    public int HousecallProJobId { get; set; }
+    public HousecallProJob HousecallProJob { get; set; } = null!;
+    [Required, StringLength(80)] public string CurrentPhase { get; set; } = "Deposit";
+    public DateTimeOffset PhaseEnteredAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateOnly? ExpectedPhaseCompletionDate { get; set; }
+    public DateOnly? RevisedJobCompletionDate { get; set; }
+    [StringLength(500)] public string? NextAction { get; set; }
+    public DateOnly? NextFollowUpDate { get; set; }
+    [StringLength(200)] public string? ResponsibleParty { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    [StringLength(450)] public string? UpdatedBy { get; set; }
+}
+
+public sealed class HousecallProJobBlocker
+{
+    public int Id { get; set; }
+    public int HousecallProJobId { get; set; }
+    public HousecallProJob HousecallProJob { get; set; } = null!;
+    [Required, StringLength(80)] public string BlockerType { get; set; } = "Other";
+    [Required, StringLength(500)] public string Description { get; set; } = string.Empty;
+    public DateOnly StartedOn { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    public DateOnly? ExpectedResolutionDate { get; set; }
+    public DateOnly? ResolvedOn { get; set; }
+    [StringLength(500)] public string? NextAction { get; set; }
+    public DateOnly? NextFollowUpDate { get; set; }
+    [StringLength(200)] public string? ResponsibleParty { get; set; }
+    public decimal RevenueAtRisk { get; set; }
+    [StringLength(2000)] public string? ResolutionNotes { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    [StringLength(450)] public string? CreatedBy { get; set; }
+}
+
+public sealed class HousecallProJobPaymentMilestone
+{
+    public int Id { get; set; }
+    public int HousecallProJobId { get; set; }
+    public HousecallProJob HousecallProJob { get; set; } = null!;
+    [Required, StringLength(160)] public string Name { get; set; } = string.Empty;
+    [Required, StringLength(80)] public string TriggerPhase { get; set; } = "Construction";
+    public decimal Amount { get; set; }
+    public DateOnly? ExpectedPaymentDate { get; set; }
+    [Required, StringLength(40)] public string Status { get; set; } = "Pending";
+    public DateOnly? PaidOn { get; set; }
+    [StringLength(1000)] public string? Notes { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class HousecallProJobProgressEvent
+{
+    public int Id { get; set; }
+    public int HousecallProJobId { get; set; }
+    public HousecallProJob HousecallProJob { get; set; } = null!;
+    [Required, StringLength(80)] public string EventType { get; set; } = string.Empty;
+    [Required, StringLength(500)] public string Summary { get; set; } = string.Empty;
+    [StringLength(2000)] public string? Details { get; set; }
+    public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;
+    [StringLength(450)] public string? EnteredBy { get; set; }
 }
 
 public sealed class HousecallProEstimate

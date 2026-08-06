@@ -122,6 +122,76 @@ else{
             </div>
         </section>
 
+        <section class="activity-panel mb-4 job-progress-panel">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div><p class="eyebrow">Operations control</p><h2>Job progress &amp; revenue risk</h2><p>Track the phase, delays, next action, and payments that depend on job progress.</p></div>
+                <span class="badge @RiskBadgeClass">@RiskLabel</span>
+            </div>
+            <div class="metric-grid finance-metric-grid mb-4">
+                <article class="metric-card accent-jobs"><span>Current phase</span><strong class="progress-metric-text">@(localJob.Progress?.CurrentPhase ?? "Not tracked")</strong><small>@PhaseAgeText</small></article>
+                <article class="metric-card accent-expired"><span>Active blockers</span><strong>@ActiveBlockers.Count</strong><small>@CriticalBlockerCount critical</small></article>
+                <article class="metric-card accent-revenue"><span>Next payment at risk</span><strong>@RevenueAtRisk.ToString("C2")</strong><small>@NextPaymentText</small></article>
+                <article class="metric-card accent-quotes"><span>Next follow-up</span><strong class="progress-metric-text">@NextFollowUpText</strong><small>@(localJob.Progress?.NextAction ?? "No next action recorded")</small></article>
+            </div>
+
+            <h3 class="h5">Update job phase</h3>
+            <div class="row g-2 mb-4">
+                <div class="col-md-3"><label class="form-label">Current phase</label><InputSelect class="form-select" @bind-Value="progressInput.CurrentPhase">@foreach(var phase in JobProgressOptions.Phases){<option value="@phase">@phase</option>}</InputSelect></div>
+                <div class="col-md-2"><label class="form-label">Expected phase completion</label><InputDate class="form-control" @bind-Value="progressInput.ExpectedPhaseCompletionDate" /></div>
+                <div class="col-md-2"><label class="form-label">Revised job completion</label><InputDate class="form-control" @bind-Value="progressInput.RevisedJobCompletionDate" /></div>
+                <div class="col-md-2"><label class="form-label">Follow-up date</label><InputDate class="form-control" @bind-Value="progressInput.NextFollowUpDate" /></div>
+                <div class="col-md-3"><label class="form-label">Responsible party</label><InputText class="form-control" @bind-Value="progressInput.ResponsibleParty" /></div>
+                <div class="col-md-9"><label class="form-label">Next action</label><InputText class="form-control" @bind-Value="progressInput.NextAction" /></div>
+                <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" @onclick="SaveProgressAsync">Save progress</button></div>
+            </div>
+
+            <h3 class="h5">Active blockers</h3>
+            @if(ActiveBlockers.Count==0){<div class="empty-state mb-3">No active job blockers are recorded.</div>}
+            else
+            {
+                <div class="activity-list mb-3">
+                    @foreach(var blocker in ActiveBlockers.OrderByDescending(BlockerSeverity).ThenBy(x=>x.StartedOn))
+                    {
+                        <div class="activity-item blocker-item blocker-@BlockerSeverity(blocker)">
+                            <div><strong>@blocker.BlockerType · @BlockerAge(blocker) days</strong><span>@blocker.Description</span><small>Next: @(blocker.NextAction??"Not recorded") · Follow-up: @FormatDate(blocker.NextFollowUpDate) · Owner: @(blocker.ResponsibleParty??"Not assigned") · Revenue at risk: @blocker.RevenueAtRisk.ToString("C2")</small></div>
+                            <button class="btn btn-sm btn-outline-success" @onclick="()=>ResolveBlockerAsync(blocker.Id)">Resolve</button>
+                        </div>
+                    }
+                </div>
+            }
+            <div class="row g-2 mb-4 progress-entry-box">
+                <div class="col-md-2"><label class="form-label">Blocker type</label><InputSelect class="form-select" @bind-Value="blockerInput.BlockerType">@foreach(var item in JobProgressOptions.BlockerTypes){<option value="@item">@item</option>}</InputSelect></div>
+                <div class="col-md-4"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="blockerInput.Description" /></div>
+                <div class="col-md-2"><label class="form-label">Started</label><InputDate class="form-control" @bind-Value="blockerInput.StartedOn" /></div>
+                <div class="col-md-2"><label class="form-label">Expected resolution</label><InputDate class="form-control" @bind-Value="blockerInput.ExpectedResolutionDate" /></div>
+                <div class="col-md-2"><label class="form-label">Revenue at risk</label><InputNumber class="form-control" @bind-Value="blockerInput.RevenueAtRisk" /></div>
+                <div class="col-md-3"><label class="form-label">Responsible party</label><InputText class="form-control" @bind-Value="blockerInput.ResponsibleParty" /></div>
+                <div class="col-md-5"><label class="form-label">Next action</label><InputText class="form-control" @bind-Value="blockerInput.NextAction" /></div>
+                <div class="col-md-2"><label class="form-label">Follow-up date</label><InputDate class="form-control" @bind-Value="blockerInput.NextFollowUpDate" /></div>
+                <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" @onclick="AddBlockerAsync">Add blocker</button></div>
+            </div>
+
+            <h3 class="h5">Payment milestones</h3>
+            @if(localJob.PaymentMilestones.Count>0)
+            {
+                <div class="table-responsive mb-3"><table class="table"><thead><tr><th>Milestone</th><th>Trigger</th><th>Expected</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>
+                @foreach(var milestone in localJob.PaymentMilestones.OrderBy(x=>x.ExpectedPaymentDate))
+                {<tr><td>@milestone.Name</td><td>@milestone.TriggerPhase</td><td>@FormatDate(milestone.ExpectedPaymentDate)</td><td>@milestone.Amount.ToString("C2")</td><td>@milestone.Status</td><td><button class="btn btn-sm btn-outline-primary" @onclick="()=>AdvanceMilestoneAsync(milestone.Id)">Advance status</button></td></tr>}
+                </tbody></table></div>
+            }
+            <div class="row g-2 progress-entry-box">
+                <div class="col-md-3"><label class="form-label">Milestone name</label><InputText class="form-control" @bind-Value="milestoneInput.Name" /></div>
+                <div class="col-md-2"><label class="form-label">Trigger phase</label><InputSelect class="form-select" @bind-Value="milestoneInput.TriggerPhase">@foreach(var phase in JobProgressOptions.Phases){<option value="@phase">@phase</option>}</InputSelect></div>
+                <div class="col-md-2"><label class="form-label">Expected payment</label><InputDate class="form-control" @bind-Value="milestoneInput.ExpectedPaymentDate" /></div>
+                <div class="col-md-2"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="milestoneInput.Amount" /></div>
+                <div class="col-md-2"><label class="form-label">Status</label><InputSelect class="form-select" @bind-Value="milestoneInput.Status">@foreach(var item in JobProgressOptions.MilestoneStatuses){<option value="@item">@item</option>}</InputSelect></div>
+                <div class="col-md-1 d-flex align-items-end"><button class="btn btn-outline-primary w-100" @onclick="AddMilestoneAsync">Add</button></div>
+            </div>
+            @if(progressMessage is not null){<div class="alert alert-info mt-3">@progressMessage</div>}
+
+            <details class="mt-4"><summary><strong>Progress audit timeline</strong> · @localJob.ProgressEvents.Count event(s)</summary><div class="activity-list mt-3">@foreach(var item in localJob.ProgressEvents.OrderByDescending(x=>x.OccurredAt)){<div class="activity-item"><div><strong>@item.EventType</strong><span>@item.Summary</span><small>@item.EnteredBy</small></div><time>@item.OccurredAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</time></div>}</div></details>
+        </section>
+
         <section class="activity-panel mb-4">
             <h2>Follow Up Status</h2>
             @if(localJob.FollowUps.Count>0)
@@ -166,6 +236,10 @@ else{
     private static readonly string[] FollowUpChoices=[HousecallProEstimateStatuses.FollowUp,HousecallProEstimateStatuses.FollowUpPending,HousecallProEstimateStatuses.FollowUpComplete];
     private string? statusMessage;
     private string? detailMessage;
+    private ProgressInput progressInput=new();
+    private BlockerInput blockerInput=new();
+    private MilestoneInput milestoneInput=new();
+    private string? progressMessage;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -219,10 +293,12 @@ else{
     private async Task ReloadLocalJobAsync()
     {
         await using var db=await DbContextFactory.CreateDbContextAsync();
-        localJob=await db.HousecallProJobs.AsNoTracking().Include(x=>x.FollowUps).Include(x=>x.LocalOperation).SingleOrDefaultAsync(x=>x.ExternalId==ExternalId&&x.LocalOperation.Slug==OperationSlug);
+        localJob=await db.HousecallProJobs.AsNoTracking().Include(x=>x.FollowUps).Include(x=>x.Progress).Include(x=>x.Blockers).Include(x=>x.PaymentMilestones).Include(x=>x.ProgressEvents).Include(x=>x.LocalOperation).SingleOrDefaultAsync(x=>x.ExternalId==ExternalId&&x.LocalOperation.Slug==OperationSlug);
         if(localJob is not null)
         {
             statusInput=new(){Status=localJob.InternalStatus is not null&&FollowUpChoices.Contains(localJob.InternalStatus)?localJob.InternalStatus:HousecallProEstimateStatuses.FollowUp};
+            progressInput=new(){CurrentPhase=localJob.Progress?.CurrentPhase??"Deposit",ExpectedPhaseCompletionDate=localJob.Progress?.ExpectedPhaseCompletionDate,RevisedJobCompletionDate=localJob.Progress?.RevisedJobCompletionDate,NextAction=localJob.Progress?.NextAction,NextFollowUpDate=localJob.Progress?.NextFollowUpDate,ResponsibleParty=localJob.Progress?.ResponsibleParty};
+            blockerInput=new(){StartedOn=DateOnly.FromDateTime(DateTime.Today),RevenueAtRisk=NextPendingMilestone?.Amount??localJob.OutstandingBalance};
         }
     }
 
@@ -298,5 +374,26 @@ else{
     private static string FormatDateTime(DateTimeOffset? value)=>value?.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")??"Not provided";
     private static string FormatPhone(string? value){if(string.IsNullOrWhiteSpace(value))return "Not provided";var digits=new string(value.Where(char.IsDigit).ToArray());if(digits.Length==11&&digits[0]=='1')digits=digits[1..];return digits.Length==10?$"({digits[..3]}) {digits.Substring(3,3)}-{digits[6..]}":value;}
     private decimal NetPayments=>paymentHistory?.Transactions.Sum(x=>x.Amount)??0;
+    private List<HousecallProJobBlocker> ActiveBlockers=>localJob?.Blockers.Where(x=>x.ResolvedOn is null).ToList()??[];
+    private HousecallProJobPaymentMilestone? NextPendingMilestone=>localJob?.PaymentMilestones.Where(x=>x.Status is not("Paid" or "Waived")).OrderBy(x=>x.ExpectedPaymentDate).FirstOrDefault();
+    private decimal RevenueAtRisk=>ActiveBlockers.Count==0?0:Math.Max(ActiveBlockers.Sum(x=>x.RevenueAtRisk),NextPendingMilestone?.Amount??0);
+    private int CriticalBlockerCount=>ActiveBlockers.Count(x=>BlockerSeverity(x)=="critical");
+    private string RiskLabel=>CriticalBlockerCount>0?"Critical delay":ActiveBlockers.Any(x=>BlockerSeverity(x)=="warning")?"Needs attention":ActiveBlockers.Count>0?"Monitored":"On track";
+    private string RiskBadgeClass=>CriticalBlockerCount>0?"text-bg-danger":ActiveBlockers.Any(x=>BlockerSeverity(x)=="warning")?"text-bg-warning":ActiveBlockers.Count>0?"text-bg-info":"text-bg-success";
+    private string PhaseAgeText=>localJob?.Progress is null?"Begin tracking below":$"In phase {(DateTimeOffset.UtcNow-localJob.Progress.PhaseEnteredAt).Days} days";
+    private string NextPaymentText=>NextPendingMilestone is null?"No pending milestone":$"{NextPendingMilestone.Name} · {FormatDate(NextPendingMilestone.ExpectedPaymentDate)}";
+    private string NextFollowUpText=>FormatDate(localJob?.Progress?.NextFollowUpDate);
+    private static int BlockerAge(HousecallProJobBlocker item)=>Math.Max(0,DateOnly.FromDateTime(DateTime.Today).DayNumber-item.StartedOn.DayNumber);
+    private static string BlockerSeverity(HousecallProJobBlocker item){var t=JobProgressOptions.Threshold(item.BlockerType);var age=BlockerAge(item);return age>=t.Critical?"critical":age>=t.Warning?"warning":"monitored";}
+    private static string FormatDate(DateOnly? value)=>value?.ToString("MM/dd/yyyy")??"Not scheduled";
+    private async Task SaveProgressAsync(){if(localJob is null)return;var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;await using var db=await DbContextFactory.CreateDbContextAsync();var progress=await db.HousecallProJobProgress.SingleOrDefaultAsync(x=>x.HousecallProJobId==localJob.Id);var oldPhase=progress?.CurrentPhase;if(progress is null){progress=new(){HousecallProJobId=localJob.Id};db.HousecallProJobProgress.Add(progress);}if(oldPhase!=progressInput.CurrentPhase)progress.PhaseEnteredAt=DateTimeOffset.UtcNow;progress.CurrentPhase=progressInput.CurrentPhase;progress.ExpectedPhaseCompletionDate=progressInput.ExpectedPhaseCompletionDate;progress.RevisedJobCompletionDate=progressInput.RevisedJobCompletionDate;progress.NextAction=Clean(progressInput.NextAction);progress.NextFollowUpDate=progressInput.NextFollowUpDate;progress.ResponsibleParty=Clean(progressInput.ResponsibleParty);progress.UpdatedAt=DateTimeOffset.UtcNow;progress.UpdatedBy=UserName(user);AddProgressEvent(db,localJob.Id,"Phase update",$"Job phase saved as {progress.CurrentPhase}.",user);await db.SaveChangesAsync();progressMessage="Job progress saved.";await ReloadLocalJobAsync();}
+    private async Task AddBlockerAsync(){if(localJob is null||string.IsNullOrWhiteSpace(blockerInput.Description)){progressMessage="Enter a blocker description.";return;}var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;await using var db=await DbContextFactory.CreateDbContextAsync();db.HousecallProJobBlockers.Add(new(){HousecallProJobId=localJob.Id,BlockerType=blockerInput.BlockerType,Description=blockerInput.Description.Trim(),StartedOn=blockerInput.StartedOn,ExpectedResolutionDate=blockerInput.ExpectedResolutionDate,NextAction=Clean(blockerInput.NextAction),NextFollowUpDate=blockerInput.NextFollowUpDate,ResponsibleParty=Clean(blockerInput.ResponsibleParty),RevenueAtRisk=blockerInput.RevenueAtRisk,CreatedBy=UserName(user)});AddProgressEvent(db,localJob.Id,"Blocker opened",$"{blockerInput.BlockerType}: {blockerInput.Description.Trim()}",user);await db.SaveChangesAsync();progressMessage="Blocker added.";await ReloadLocalJobAsync();}
+    private async Task ResolveBlockerAsync(int id){if(localJob is null)return;var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;await using var db=await DbContextFactory.CreateDbContextAsync();var item=await db.HousecallProJobBlockers.SingleOrDefaultAsync(x=>x.Id==id&&x.HousecallProJobId==localJob.Id);if(item is null)return;item.ResolvedOn=DateOnly.FromDateTime(DateTime.Today);item.ResolutionNotes="Marked resolved from the job progress workspace.";AddProgressEvent(db,localJob.Id,"Blocker resolved",$"{item.BlockerType}: {item.Description}",user);await db.SaveChangesAsync();progressMessage="Blocker resolved.";await ReloadLocalJobAsync();}
+    private async Task AddMilestoneAsync(){if(localJob is null||string.IsNullOrWhiteSpace(milestoneInput.Name)||milestoneInput.Amount<=0){progressMessage="Enter a milestone name and an amount greater than zero.";return;}var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;await using var db=await DbContextFactory.CreateDbContextAsync();db.HousecallProJobPaymentMilestones.Add(new(){HousecallProJobId=localJob.Id,Name=milestoneInput.Name.Trim(),TriggerPhase=milestoneInput.TriggerPhase,ExpectedPaymentDate=milestoneInput.ExpectedPaymentDate,Amount=milestoneInput.Amount,Status=milestoneInput.Status});AddProgressEvent(db,localJob.Id,"Payment milestone added",$"{milestoneInput.Name.Trim()} · {milestoneInput.Amount:C2}",user);await db.SaveChangesAsync();milestoneInput=new();progressMessage="Payment milestone added.";await ReloadLocalJobAsync();}
+    private async Task AdvanceMilestoneAsync(int id){if(localJob is null)return;var user=(await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;await using var db=await DbContextFactory.CreateDbContextAsync();var item=await db.HousecallProJobPaymentMilestones.SingleOrDefaultAsync(x=>x.Id==id&&x.HousecallProJobId==localJob.Id);if(item is null)return;var index=Array.IndexOf(JobProgressOptions.MilestoneStatuses,item.Status);item.Status=JobProgressOptions.MilestoneStatuses[Math.Min(index+1,JobProgressOptions.MilestoneStatuses.Length-1)];item.UpdatedAt=DateTimeOffset.UtcNow;if(item.Status=="Paid")item.PaidOn=DateOnly.FromDateTime(DateTime.Today);AddProgressEvent(db,localJob.Id,"Payment milestone updated",$"{item.Name} advanced to {item.Status}.",user);await db.SaveChangesAsync();progressMessage="Payment milestone updated.";await ReloadLocalJobAsync();}
+    private static void AddProgressEvent(ApplicationDbContext db,int jobId,string type,string summary,ClaimsPrincipal user)=>db.HousecallProJobProgressEvents.Add(new(){HousecallProJobId=jobId,EventType=type,Summary=summary,EnteredBy=UserName(user)});
     private sealed class StatusInput{public string Status{get;set;}=HousecallProEstimateStatuses.FollowUp;[StringLength(2000)]public string? Note{get;set;}}
+    private sealed class ProgressInput{public string CurrentPhase{get;set;}="Deposit";public DateOnly? ExpectedPhaseCompletionDate{get;set;}public DateOnly? RevisedJobCompletionDate{get;set;}public string? NextAction{get;set;}public DateOnly? NextFollowUpDate{get;set;}public string? ResponsibleParty{get;set;}}
+    private sealed class BlockerInput{public string BlockerType{get;set;}="Permit";public string? Description{get;set;}public DateOnly StartedOn{get;set;}=DateOnly.FromDateTime(DateTime.Today);public DateOnly? ExpectedResolutionDate{get;set;}public string? NextAction{get;set;}public DateOnly? NextFollowUpDate{get;set;}public string? ResponsibleParty{get;set;}public decimal RevenueAtRisk{get;set;}}
+    private sealed class MilestoneInput{public string? Name{get;set;}public string TriggerPhase{get;set;}="Construction";public DateOnly? ExpectedPaymentDate{get;set;}public decimal Amount{get;set;}public string Status{get;set;}="Pending";}
 }

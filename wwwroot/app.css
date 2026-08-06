@@ -314,6 +314,16 @@ h1:focus {
     margin: 0.25rem 0 1rem;
 }
 
+.job-progress-panel { border-top: 3px solid #0d6efd; }
+.job-risk-panel { border-top: 3px solid #dc3545; }
+.progress-entry-box { background: #f8fafc; border: 1px solid #dbe4ee; border-radius: .65rem; padding: .75rem; margin-left: 0; margin-right: 0; }
+.progress-metric-text { font-size: clamp(1.15rem, 2vw, 1.7rem) !important; line-height: 1.15; }
+.blocker-item { border-left: 4px solid #0dcaf0; padding-left: .85rem; }
+.blocker-warning { border-left-color: #ffc107; background: #fff9e6; }
+.blocker-critical { border-left-color: #dc3545; background: #fff0f1; }
+.risk-row-Critical { background: #fff0f1; }
+.risk-row-Warning { background: #fff9e6; }
+
 .pricing-workspace {
     border-top: 4px solid #2563eb;
 }

@@ -36,6 +36,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<HousecallProEstimateCommunication> HousecallProEstimateCommunications => Set<HousecallProEstimateCommunication>();
     public DbSet<HousecallProEstimateFollowUp> HousecallProEstimateFollowUps => Set<HousecallProEstimateFollowUp>();
     public DbSet<HousecallProJobFollowUp> HousecallProJobFollowUps => Set<HousecallProJobFollowUp>();
+    public DbSet<HousecallProJobProgress> HousecallProJobProgress => Set<HousecallProJobProgress>();
+    public DbSet<HousecallProJobBlocker> HousecallProJobBlockers => Set<HousecallProJobBlocker>();
+    public DbSet<HousecallProJobPaymentMilestone> HousecallProJobPaymentMilestones => Set<HousecallProJobPaymentMilestone>();
+    public DbSet<HousecallProJobProgressEvent> HousecallProJobProgressEvents => Set<HousecallProJobProgressEvent>();
     public DbSet<CentComChatSession> CentComChatSessions => Set<CentComChatSession>();
     public DbSet<CentComChatMessage> CentComChatMessages => Set<CentComChatMessage>();
     public DbSet<CostingPolicyVersion> CostingPolicyVersions => Set<CostingPolicyVersion>();
@@ -154,6 +158,29 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(task => new { task.QuoteCaseId, task.SortOrder }).IsUnique();
             entity.HasQueryFilter(task => !task.IsDeleted);
             entity.HasOne(task => task.QuoteCase).WithMany(quote => quote.ProjectTasks).HasForeignKey(task => task.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<HousecallProJobProgress>(entity =>
+        {
+            entity.HasIndex(x => x.HousecallProJobId).IsUnique();
+            entity.HasOne(x => x.HousecallProJob).WithOne(x => x.Progress).HasForeignKey<HousecallProJobProgress>(x => x.HousecallProJobId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProJobBlocker>(entity =>
+        {
+            entity.HasIndex(x => new { x.HousecallProJobId, x.ResolvedOn });
+            entity.Property(x => x.RevenueAtRisk).HasPrecision(18, 2);
+            entity.HasOne(x => x.HousecallProJob).WithMany(x => x.Blockers).HasForeignKey(x => x.HousecallProJobId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProJobPaymentMilestone>(entity =>
+        {
+            entity.HasIndex(x => new { x.HousecallProJobId, x.Status });
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.HasOne(x => x.HousecallProJob).WithMany(x => x.PaymentMilestones).HasForeignKey(x => x.HousecallProJobId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<HousecallProJobProgressEvent>(entity =>
+        {
+            entity.HasIndex(x => new { x.HousecallProJobId, x.OccurredAt });
+            entity.HasOne(x => x.HousecallProJob).WithMany(x => x.ProgressEvents).HasForeignKey(x => x.HousecallProJobId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<QuoteProjectTaskPhoto>(entity =>
         {

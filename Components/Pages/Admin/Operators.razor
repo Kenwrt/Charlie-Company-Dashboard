@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = ApplicationRoles.Administrator)]
 @using System.ComponentModel.DataAnnotations
+@using System.Security.Cryptography
 @using System.Text
 @using System.Text.Encodings.Web
 @using CharleyCompany.Dashboard.Web.Data
@@ -14,6 +15,7 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject IEmailSender<ApplicationUser> EmailSender
 @inject NavigationManager NavigationManager
+@inject IJSRuntime JS
 
 <PageTitle>User Administration</PageTitle>
 <h1>User administration</h1>
@@ -22,7 +24,7 @@
 
 <section><h2>Create user</h2><EditForm Model="createInput" OnValidSubmit="CreateAsync" FormName="create-user" class="row g-3"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
  <div class="col-md-5"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="createInput.Email" /></div>
- <div class="col-md-3"><label class="form-label">Temporary password</label><InputText type="password" class="form-control" autocomplete="new-password" @bind-Value="createInput.TemporaryPassword" /></div>
+ <div class="col-md-3"><label class="form-label">Temporary password</label><div class="input-group"><InputText type="@(showCreatePassword ? "text" : "password")" class="form-control" autocomplete="new-password" @bind-Value="createInput.TemporaryPassword" /><button type="button" class="btn btn-outline-secondary" @onclick="() => showCreatePassword = !showCreatePassword">@(showCreatePassword ? "Hide" : "Show")</button><button type="button" class="btn btn-outline-secondary" @onclick="GenerateCreatePassword">Generate</button></div><div class="form-text">At least 12 characters with uppercase, lowercase, a number, and a symbol.</div></div>
  <div class="col-md-2"><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="createInput.Role">@foreach (var role in ApplicationRoles.All) { <option value="@role">@role</option> }</InputSelect></div>
  <div class="col-md-2 align-self-end"><button class="btn btn-primary" type="submit">Create user</button></div>
 </EditForm></section>
@@ -41,26 +43,99 @@
   <button class="btn btn-outline-primary mt-3 me-2" @onclick="SendPasswordLinkAsync">Email password reset</button>
   <button class="btn btn-outline-warning mt-3 me-2" @onclick="ToggleDisabledAsync">@(IsDisabled(selectedUser) ? "Enable login" : "Disable login")</button>
   <button class="btn btn-outline-danger mt-3" @onclick="DeleteAsync">Delete user</button>
-  <EditForm Model="temporaryPasswordInput" OnValidSubmit="AssignTemporaryPasswordAsync" FormName="temporary-password" class="row g-3 mt-3"><DataAnnotationsValidator /><ValidationSummary class="text-danger" /><div class="col-md-6"><label class="form-label">New temporary password</label><InputText type="password" class="form-control" autocomplete="new-password" @bind-Value="temporaryPasswordInput.Password" /></div><div class="col-md-4 align-self-end"><button class="btn btn-warning" type="submit">Assign temporary password</button></div></EditForm>
+  <EditForm Model="temporaryPasswordInput" OnValidSubmit="AssignTemporaryPasswordAsync" FormName="temporary-password" class="row g-3 mt-3"><DataAnnotationsValidator /><ValidationSummary class="text-danger" /><div class="col-md-6"><label class="form-label">New temporary password</label><div class="input-group"><InputText type="@(showAssignedPassword ? "text" : "password")" class="form-control" autocomplete="new-password" @bind-Value="temporaryPasswordInput.Password" /><button type="button" class="btn btn-outline-secondary" @onclick="() => showAssignedPassword = !showAssignedPassword">@(showAssignedPassword ? "Hide" : "Show")</button><button type="button" class="btn btn-outline-secondary" @onclick="GenerateAssignedPassword">Generate</button></div><div class="form-text">At least 12 characters with uppercase, lowercase, a number, and a symbol.</div></div><div class="col-md-4 align-self-end"><button class="btn btn-warning" type="submit">Assign temporary password</button></div></EditForm>
+  @if (!string.IsNullOrWhiteSpace(assignedTemporaryPassword)) { <div class="alert alert-success mt-3" role="status"><strong>Temporary password assigned to @assignedTemporaryPasswordEmail</strong><p class="mb-2">Copy this password now and provide it to the user securely. It will disappear when you leave this user.</p><div class="input-group"><input class="form-control font-monospace" value="@assignedTemporaryPassword" readonly /><button type="button" class="btn btn-outline-success" @onclick="CopyAssignedPasswordAsync">Copy password</button><button type="button" class="btn btn-outline-secondary" @onclick="ClearAssignedPassword">Dismiss</button></div></div> }
  </section>
 }
 
 @code {
- private List<ApplicationUser> users = []; private List<LocalOperation> operations = []; private Dictionary<string, List<string>> assignments = []; private Dictionary<string, List<string>> roles = []; private readonly HashSet<int> selectedOperationIds = []; private ApplicationUser? selectedUser; private string selectedRole = ApplicationRoles.LocalOperator; private bool selectedAdminAuditEmail; private CreateInput createInput = new(); private TemporaryPasswordInput temporaryPasswordInput = new(); private string? message; private string messageClass = "alert-info";
+ private List<ApplicationUser> users = []; private List<LocalOperation> operations = []; private Dictionary<string, List<string>> assignments = []; private Dictionary<string, List<string>> roles = []; private readonly HashSet<int> selectedOperationIds = []; private ApplicationUser? selectedUser; private string selectedRole = ApplicationRoles.LocalOperator; private bool selectedAdminAuditEmail; private bool showCreatePassword; private bool showAssignedPassword; private string? assignedTemporaryPassword; private string? assignedTemporaryPasswordEmail; private CreateInput createInput = new(); private TemporaryPasswordInput temporaryPasswordInput = new(); private string? message; private string messageClass = "alert-info";
  protected override Task OnInitializedAsync() => ReloadAsync();
  private async Task ReloadAsync() { await using var db = await DbContextFactory.CreateDbContextAsync(); users = await db.Users.AsNoTracking().OrderBy(x => x.Email).ToListAsync(); operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); var memberships = await db.UserLocalOperations.AsNoTracking().Include(x => x.LocalOperation).ToListAsync(); assignments = memberships.GroupBy(x => x.UserId).ToDictionary(g => g.Key, g => g.Select(x => x.LocalOperation.Name).OrderBy(x => x).ToList()); var roleRows = await (from userRole in db.UserRoles join role in db.Roles on userRole.RoleId equals role.Id select new { userRole.UserId, role.Name }).ToListAsync(); roles = roleRows.GroupBy(x => x.UserId).ToDictionary(g => g.Key, g => g.Select(x => x.Name ?? "").Where(x => x.Length > 0).OrderBy(x => x).ToList()); }
  private string AssignmentNames(string id) => assignments.TryGetValue(id, out var names) && names.Count > 0 ? string.Join(", ", names) : "None";
  private string RoleNames(string id) => roles.TryGetValue(id, out var names) ? string.Join(", ", names) : "None";
  private static bool IsDisabled(ApplicationUser user) => user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow;
  private async Task CreateAsync() { var email = createInput.Email.Trim(); var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, MustChangePassword = true, AdminAuditEmail = false }; var result = await UserManager.CreateAsync(user, createInput.TemporaryPassword); if (result.Succeeded) result = await UserManager.AddToRoleAsync(user, createInput.Role); if (!result.Succeeded) { ShowErrors(result); return; } createInput = new(); message = "User created. Give the temporary password to the user securely; it must be changed at first login."; messageClass = "alert-success"; await ReloadAsync(); }
- private async Task SelectUserAsync(ApplicationUser user) { selectedUser = user; selectedAdminAuditEmail = user.AdminAuditEmail; selectedOperationIds.Clear(); await using var db = await DbContextFactory.CreateDbContextAsync(); selectedRole = await (from userRole in db.UserRoles join role in db.Roles on userRole.RoleId equals role.Id where userRole.UserId == user.Id select role.Name).FirstOrDefaultAsync() ?? ApplicationRoles.LocalOperator; selectedOperationIds.UnionWith(await db.UserLocalOperations.Where(x => x.UserId == user.Id).Select(x => x.LocalOperationId).ToListAsync()); }
+ private async Task SelectUserAsync(ApplicationUser user) { ClearAssignedPassword(); selectedUser = user; selectedAdminAuditEmail = user.AdminAuditEmail; selectedOperationIds.Clear(); await using var db = await DbContextFactory.CreateDbContextAsync(); selectedRole = await (from userRole in db.UserRoles join role in db.Roles on userRole.RoleId equals role.Id where userRole.UserId == user.Id select role.Name).FirstOrDefaultAsync() ?? ApplicationRoles.LocalOperator; selectedOperationIds.UnionWith(await db.UserLocalOperations.Where(x => x.UserId == user.Id).Select(x => x.LocalOperationId).ToListAsync()); }
  private async Task SaveAsync() { if (selectedUser is null) return; var currentRoles = await UserManager.GetRolesAsync(selectedUser); var remove = await UserManager.RemoveFromRolesAsync(selectedUser, currentRoles); if (!remove.Succeeded) { ShowErrors(remove); return; } var add = await UserManager.AddToRoleAsync(selectedUser, selectedRole); if (!add.Succeeded) { ShowErrors(add); return; } await using (var db = await DbContextFactory.CreateDbContextAsync()) { var databaseUser = await db.Users.SingleAsync(x => x.Id == selectedUser.Id); databaseUser.AdminAuditEmail = selectedRole == ApplicationRoles.Administrator && selectedAdminAuditEmail; var existing = await db.UserLocalOperations.Where(x => x.UserId == selectedUser.Id).ToListAsync(); db.UserLocalOperations.RemoveRange(existing); if (selectedRole == ApplicationRoles.LocalOperator) db.UserLocalOperations.AddRange(selectedOperationIds.Select(id => new UserLocalOperation { UserId = selectedUser.Id, LocalOperationId = id })); await db.SaveChangesAsync(); } message = "User updated."; messageClass = "alert-success"; selectedUser = null; await ReloadAsync(); }
  private Task SendPasswordLinkAsync() => selectedUser is null ? Task.CompletedTask : SendPasswordLinkAsync(selectedUser, "Password reset email sent.");
- private async Task AssignTemporaryPasswordAsync() { if (selectedUser is null) return; var token = await UserManager.GeneratePasswordResetTokenAsync(selectedUser); var result = await UserManager.ResetPasswordAsync(selectedUser, token, temporaryPasswordInput.Password); if (!result.Succeeded) { ShowErrors(result); return; } selectedUser.MustChangePassword = true; result = await UserManager.UpdateAsync(selectedUser); if (!result.Succeeded) { ShowErrors(result); return; } temporaryPasswordInput = new(); message = "Temporary password assigned. The user must change it at the next login."; messageClass = "alert-success"; }
+ private async Task AssignTemporaryPasswordAsync()
+ {
+     if (selectedUser is null) return;
+     try
+     {
+         var validationError = ValidateTemporaryPassword(temporaryPasswordInput.Password);
+         if (validationError is not null)
+         {
+             message = validationError;
+             messageClass = "alert-danger";
+             return;
+         }
+         var user = await UserManager.FindByIdAsync(selectedUser.Id);
+         if (user is null)
+         {
+             message = "The selected user no longer exists.";
+             messageClass = "alert-warning";
+             return;
+         }
+         var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+         var result = await UserManager.ResetPasswordAsync(user, token, temporaryPasswordInput.Password);
+         if (!result.Succeeded) { ShowErrors(result); return; }
+         user.MustChangePassword = true;
+         result = await UserManager.UpdateAsync(user);
+         if (!result.Succeeded) { ShowErrors(result); return; }
+         assignedTemporaryPassword = temporaryPasswordInput.Password;
+         assignedTemporaryPasswordEmail = user.Email;
+         selectedUser = user;
+         temporaryPasswordInput = new();
+         message = "Temporary password assigned. The user must change it at the next login.";
+         messageClass = "alert-success";
+     }
+     catch (Exception exception)
+     {
+         message = $"The temporary password could not be assigned: {exception.Message}";
+         messageClass = "alert-danger";
+     }
+ }
  private async Task SendPasswordLinkAsync(ApplicationUser user, string success) { try { var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(await UserManager.GeneratePasswordResetTokenAsync(user))); var callback = NavigationManager.GetUriWithQueryParameters(NavigationManager.ToAbsoluteUri("Account/ResetPassword").AbsoluteUri, new Dictionary<string, object?> { ["code"] = code }); await EmailSender.SendPasswordResetLinkAsync(user, user.Email!, HtmlEncoder.Default.Encode(callback)); message = success; messageClass = "alert-success"; } catch (Exception ex) { message = $"The account was saved, but email could not be sent: {ex.Message}"; messageClass = "alert-warning"; } }
  private async Task ToggleDisabledAsync() { if (selectedUser is null) return; var wasDisabled = IsDisabled(selectedUser); await UserManager.SetLockoutEnabledAsync(selectedUser, true); var result = await UserManager.SetLockoutEndDateAsync(selectedUser, wasDisabled ? null : DateTimeOffset.MaxValue); if (!result.Succeeded) { ShowErrors(result); return; } message = wasDisabled ? "Login enabled." : "Login disabled."; messageClass = "alert-success"; await ReloadAsync(); selectedUser = await UserManager.FindByIdAsync(selectedUser.Id); }
  private async Task DeleteAsync() { if (selectedUser is null) return; if (await UserManager.IsInRoleAsync(selectedUser, ApplicationRoles.Administrator) && (await UserManager.GetUsersInRoleAsync(ApplicationRoles.Administrator)).Count <= 1) { message = "The last administrator cannot be deleted."; messageClass = "alert-warning"; return; } await using (var db = await DbContextFactory.CreateDbContextAsync()) { var memberships = await db.UserLocalOperations.Where(x => x.UserId == selectedUser.Id).ToListAsync(); db.UserLocalOperations.RemoveRange(memberships); await db.SaveChangesAsync(); } var result = await UserManager.DeleteAsync(selectedUser); if (!result.Succeeded) { ShowErrors(result); return; } selectedUser = null; message = "User deleted."; messageClass = "alert-success"; await ReloadAsync(); }
  private void SetSelected(int id, bool selected) { if (selected) selectedOperationIds.Add(id); else selectedOperationIds.Remove(id); }
+ private void GenerateCreatePassword() { createInput.TemporaryPassword = GenerateCompliantPassword(); showCreatePassword = true; }
+ private void GenerateAssignedPassword() { temporaryPasswordInput.Password = GenerateCompliantPassword(); showAssignedPassword = true; ClearAssignedPassword(); }
+ private async Task CopyAssignedPasswordAsync() { if (!string.IsNullOrWhiteSpace(assignedTemporaryPassword)) await JS.InvokeVoidAsync("navigator.clipboard.writeText", assignedTemporaryPassword); }
+ private void ClearAssignedPassword() { assignedTemporaryPassword = null; assignedTemporaryPasswordEmail = null; }
+ private static string? ValidateTemporaryPassword(string password)
+ {
+     if (password.Length < 12) return "The temporary password must contain at least 12 characters.";
+     if (!password.Any(char.IsUpper)) return "The temporary password must contain at least one uppercase letter.";
+     if (!password.Any(char.IsLower)) return "The temporary password must contain at least one lowercase letter.";
+     if (!password.Any(char.IsDigit)) return "The temporary password must contain at least one number.";
+     if (!password.Any(character => !char.IsLetterOrDigit(character))) return "The temporary password must contain at least one symbol.";
+     return null;
+ }
+ private static string GenerateCompliantPassword()
+ {
+     const string uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+     const string lowercase = "abcdefghijkmnopqrstuvwxyz";
+     const string digits = "23456789";
+     const string symbols = "!@$%*-_?";
+     var characters = new List<char>
+     {
+         uppercase[RandomNumberGenerator.GetInt32(uppercase.Length)],
+         lowercase[RandomNumberGenerator.GetInt32(lowercase.Length)],
+         digits[RandomNumberGenerator.GetInt32(digits.Length)],
+         symbols[RandomNumberGenerator.GetInt32(symbols.Length)]
+     };
+     const string all = uppercase + lowercase + digits + symbols;
+     while (characters.Count < 16) characters.Add(all[RandomNumberGenerator.GetInt32(all.Length)]);
+     for (var index = characters.Count - 1; index > 0; index--)
+     {
+         var swapIndex = RandomNumberGenerator.GetInt32(index + 1);
+         (characters[index], characters[swapIndex]) = (characters[swapIndex], characters[index]);
+     }
+     return new string(characters.ToArray());
+ }
  private void ShowErrors(IdentityResult result) { message = string.Join("; ", result.Errors.Select(x => x.Description)); messageClass = "alert-danger"; }
  private sealed class CreateInput { [Required, EmailAddress] public string Email { get; set; } = ""; [Required, MinLength(12)] public string TemporaryPassword { get; set; } = ""; [Required] public string Role { get; set; } = ApplicationRoles.LocalOperator; }
  private sealed class TemporaryPasswordInput { [Required, MinLength(12)] public string Password { get; set; } = ""; }

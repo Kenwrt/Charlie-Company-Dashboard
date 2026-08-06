@@ -12,16 +12,15 @@
 @inject DashboardNotificationService Notifications
 @inject OperationAccessService OperationAccess
 @inject ILogger<Home> Logger
-@inject NavigationManager Navigation
 
 <PageTitle>@currentSnapshot.EntityName Dashboard</PageTitle>
 
 <section class="dashboard-shell">
     <div class="dashboard-header">
         <div>
-            <p class="eyebrow">@(IsEntityView ? "Local service entity" : "Venture group dashboard")</p>
+            <p class="eyebrow">@(IsEntityView ? "Local service entity" : isAdministrator ? "Venture group dashboard" : "Local operator dashboard")</p>
             <h1>
-                @(IsEntityView ? currentSnapshot.EntityName : "Charlie Company Ventures")
+                @(IsEntityView ? currentSnapshot.EntityName : isAdministrator ? "Charlie Company Ventures" : "My Operations Dashboard")
                 @if (!IsEntityView)
                 {
                     <span class="powered-by-centcom" style="font-size: 0.3em; font-weight: 500; margin-left: 0.65rem; vertical-align: middle;">Powered by CentCom</span>
@@ -39,7 +38,7 @@
 
     @if (IsEntityView)
     {
-        <NavLink class="back-link" href="@(isAdministrator ? "" : "locations")">@(isAdministrator ? "Back to venture group rollup" : "Back to my locations")</NavLink>
+        <NavLink class="back-link" href="">@(isAdministrator ? "Back to venture group rollup" : "Back to my operations dashboard")</NavLink>
     }
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))
@@ -105,6 +104,24 @@
         </div>
     </section>
 
+    <section class="activity-panel job-risk-panel">
+        <div><h2>Job progress &amp; revenue risk</h2><p>Jobs delayed by permits, HOA approval, weather, materials, inspections, customers, or scheduling.</p></div>
+        <div class="metric-grid finance-metric-grid">
+            <article class="metric-card accent-expired"><span>Active blocked jobs</span><strong>@jobRiskSummary.BlockedJobCount</strong><small>@jobRiskSummary.CriticalJobCount critical delays</small></article>
+            <article class="metric-card accent-revenue"><span>Revenue at risk</span><strong>@jobRiskSummary.RevenueAtRisk.ToString("C2")</strong><small>Pending payments affected by active blockers</small></article>
+            <article class="metric-card accent-quotes"><span>Follow-ups due</span><strong>@jobRiskSummary.FollowUpsDue</strong><small>Next actions due today or earlier</small></article>
+            <article class="metric-card accent-jobs"><span>Weather days lost</span><strong>@jobRiskSummary.WeatherDaysLost</strong><small>Cumulative active and resolved weather-delay days</small></article>
+        </div>
+        @if(jobRiskSummary.Jobs.Count==0){<div class="empty-state mt-3">No active job blockers are recorded.</div>}
+        else
+        {
+            <div class="finance-table-wrap mt-3"><table class="finance-table"><thead><tr><th>Priority</th><th>Job</th><th>Customer</th><th>Phase</th><th>Blocker</th><th>Days blocked</th><th>Next follow-up</th><th>Revenue at risk</th><th></th></tr></thead><tbody>
+            @foreach(var job in jobRiskSummary.Jobs)
+            {<tr class="risk-row-@job.Severity"><td><span class="badge @RiskBadge(job.Severity)">@job.Severity</span></td><td>@job.JobNumber</td><td>@job.CustomerName</td><td>@job.Phase</td><td>@job.BlockerType</td><td>@job.DaysBlocked</td><td>@FormatRiskDate(job.NextFollowUpDate)</td><td>@job.RevenueAtRisk.ToString("C2")</td><td><a class="btn btn-sm btn-outline-primary" href="@($"hcp/{job.OperationSlug}/jobs/{job.ExternalId}")">Review</a></td></tr>}
+            </tbody></table></div>
+        }
+    </section>
+
     <section class="activity-panel">
         <div>
             <h2>Accounts payable</h2>
@@ -168,8 +185,8 @@
     {
         <section class="local-entity-panel">
             <div>
-                <h2>Local service entities</h2>
-                <p>Click a local entity to view its individual dashboard.</p>
+                <h2>@(isAdministrator ? "Local service entities" : "My locations")</h2>
+                <p>@(isAdministrator ? "Click a local entity to view its individual dashboard." : "Each assigned location has an independent dashboard. Select a location to open it.")</p>
             </div>
 
             <div class="local-entity-grid">
@@ -240,6 +257,7 @@
     private string? errorMessage;
     private ApDashboardSummary apSummary = ApDashboardSummary.Empty;
     private ReceivablesSummary receivablesSummary = ReceivablesSummary.Empty;
+    private JobRiskSummary jobRiskSummary = JobRiskSummary.Empty;
     private bool isAdministrator;
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
@@ -251,7 +269,9 @@
 
     private string Subtitle => IsEntityView
         ? "Local view of jobs, estimates, monthly expenses, and revenue."
-        : "Rolled-up view of all local service entities under Charlie Company Ventures Group.";
+        : isAdministrator
+            ? "Rolled-up view of all local service entities under Charlie Company Ventures Group."
+            : "Rolled-up view of the locations assigned to your account.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -280,13 +300,6 @@
             errorMessage = null;
             isAdministrator = await OperationAccess.IsAdministratorAsync();
 
-            if (!IsEntityView && !isAdministrator)
-            {
-                var assigned = await OperationAccess.GetAccessibleOperationsAsync();
-                Navigation.NavigateTo(assigned.Count == 1 ? $"entity/{assigned[0].Slug}" : "locations");
-                return;
-            }
-
             if (IsEntityView)
             {
                 if (!await OperationAccess.CanAccessAsync(EntitySlug!))
@@ -307,6 +320,7 @@
                 currentSnapshot = entitySnapshot;
                 await LoadReceivablesAsync(EntitySlug);
                 await LoadAccountsPayableAsync(EntitySlug);
+                await LoadJobRiskAsync(EntitySlug);
                 return;
             }
 
@@ -317,6 +331,7 @@
             currentSnapshot = ventureSnapshot.Rollup;
             await LoadReceivablesAsync();
             await LoadAccountsPayableAsync();
+            await LoadJobRiskAsync();
         }
         catch (Exception ex)
         {
@@ -418,6 +433,27 @@
             agingBuckets);
     }
 
+    private async Task LoadJobRiskAsync(string? operationSlug=null)
+    {
+        var operationIds=(await OperationAccess.GetAccessibleOperationsAsync()).Where(x=>operationSlug is null||x.Slug.Equals(operationSlug,StringComparison.OrdinalIgnoreCase)).Select(x=>x.Id).ToList();
+        if(operationIds.Count==0){jobRiskSummary=JobRiskSummary.Empty;return;}
+        await using var db=await DbContextFactory.CreateDbContextAsync();
+        var jobs=await db.HousecallProJobs.AsNoTracking().Include(x=>x.LocalOperation).Include(x=>x.Progress).Include(x=>x.Blockers).Include(x=>x.PaymentMilestones).Where(x=>operationIds.Contains(x.LocalOperationId)&&x.Blockers.Any(b=>b.ResolvedOn==null)).ToListAsync();
+        var today=DateOnly.FromDateTime(DateTime.Today);
+        var rows=new List<JobRiskRow>();
+        foreach(var job in jobs)
+        {
+            var active=job.Blockers.Where(x=>x.ResolvedOn is null).ToList();
+            var primary=active.OrderByDescending(BlockerSeverityRank).ThenBy(x=>x.StartedOn).First();
+            var pending=job.PaymentMilestones.Where(x=>x.Status is not("Paid" or "Waived")).OrderBy(x=>x.ExpectedPaymentDate).FirstOrDefault();
+            var risk=Math.Max(active.Sum(x=>x.RevenueAtRisk),pending?.Amount??0);
+            rows.Add(new(BlockerSeverity(primary),job.JobNumber??job.ExternalId,job.CustomerName??"Not provided",job.Progress?.CurrentPhase??"Not tracked",primary.BlockerType,Math.Max(0,today.DayNumber-primary.StartedOn.DayNumber),job.Progress?.NextFollowUpDate??primary.NextFollowUpDate,risk,job.LocalOperation.Slug,job.ExternalId));
+        }
+        rows=rows.OrderByDescending(x=>SeverityRank(x.Severity)).ThenByDescending(x=>x.DaysBlocked).ToList();
+        var allWeatherDays=jobs.SelectMany(x=>x.Blockers).Where(x=>x.BlockerType=="Weather").Sum(x=>Math.Max(0,(x.ResolvedOn??today).DayNumber-x.StartedOn.DayNumber));
+        jobRiskSummary=new(rows.Count,rows.Count(x=>x.Severity=="Critical"),rows.Sum(x=>x.RevenueAtRisk),rows.Count(x=>x.NextFollowUpDate is not null&&x.NextFollowUpDate<=today),allWeatherDays,rows.Take(20).ToList());
+    }
+
     private static ReceivablesAgingBucket BuildAgingBucket(string label, IEnumerable<ReceivableRow> rows)
     {
         var items = rows.ToList();
@@ -435,6 +471,13 @@
     {
         public static ReceivablesSummary Empty { get; } = new(0, 0, 0, 0, []);
     }
+    private sealed record JobRiskRow(string Severity,string JobNumber,string CustomerName,string Phase,string BlockerType,int DaysBlocked,DateOnly? NextFollowUpDate,decimal RevenueAtRisk,string OperationSlug,string ExternalId);
+    private sealed record JobRiskSummary(int BlockedJobCount,int CriticalJobCount,decimal RevenueAtRisk,int FollowUpsDue,int WeatherDaysLost,IReadOnlyList<JobRiskRow> Jobs){public static JobRiskSummary Empty{get;}=new(0,0,0,0,0,[]);}
+    private static string BlockerSeverity(HousecallProJobBlocker item){var threshold=JobProgressOptions.Threshold(item.BlockerType);var age=Math.Max(0,DateOnly.FromDateTime(DateTime.Today).DayNumber-item.StartedOn.DayNumber);return age>=threshold.Critical?"Critical":age>=threshold.Warning?"Warning":"Monitored";}
+    private static int BlockerSeverityRank(HousecallProJobBlocker item)=>SeverityRank(BlockerSeverity(item));
+    private static int SeverityRank(string value)=>value=="Critical"?3:value=="Warning"?2:1;
+    private static string RiskBadge(string value)=>value=="Critical"?"text-bg-danger":value=="Warning"?"text-bg-warning":"text-bg-info";
+    private static string FormatRiskDate(DateOnly? value)=>value?.ToString("MM/dd/yyyy")??"Not scheduled";
 
     private IReadOnlyList<DashboardMetric> BuildMetrics(DashboardSnapshot snapshot)
     {
