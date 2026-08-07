@@ -104,6 +104,78 @@
         </div>
     </section>
 
+    <section class="activity-panel revenue-forecast-panel">
+        <div>
+            <h2>Job revenue forecast</h2>
+            <p>Every active job, its current phase, expected next phase, and the next customer payment. Forecast totals include all open payment milestones.</p>
+        </div>
+
+        <div class="metric-grid finance-metric-grid">
+            @foreach (var bucket in revenueForecastSummary.Buckets)
+            {
+                <article class="metric-card @bucket.AccentClass">
+                    <span>@bucket.Label</span>
+                    <strong>@bucket.Amount.ToString("C2")</strong>
+                    <small>@bucket.PaymentCount payment(s)</small>
+                </article>
+            }
+        </div>
+
+        <div class="row g-2 mt-2 mb-3">
+            <div class="col-md-4">
+                <label class="form-label" for="forecast-location">Location</label>
+                <select id="forecast-location" class="form-select" @bind="forecastOperationFilter">
+                    <option value="">All available locations</option>
+                    @foreach (var operation in revenueForecastSummary.Operations)
+                    {
+                        <option value="@operation">@operation</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="forecast-phase">Current phase</label>
+                <select id="forecast-phase" class="form-select" @bind="forecastPhaseFilter">
+                    <option value="">All phases</option>
+                    @foreach (var phase in JobProgressOptions.Phases)
+                    {
+                        <option value="@phase">@phase</option>
+                    }
+                    <option value="Not tracked">Not tracked</option>
+                </select>
+            </div>
+        </div>
+
+        @if (FilteredForecastJobs.Count == 0)
+        {
+            <div class="empty-state">No active jobs match the selected filters.</div>
+        }
+        else
+        {
+            <div class="finance-table-wrap">
+                <table class="finance-table">
+                    <thead><tr><th>Job</th><th>Location</th><th>Customer</th><th>Current phase</th><th>Time in phase</th><th>Next phase / expected</th><th>Next payment</th><th>Remaining contract</th><th>Forecast status</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var job in FilteredForecastJobs)
+                    {
+                        <tr>
+                            <td>@job.JobNumber</td>
+                            <td>@job.OperationName</td>
+                            <td>@job.CustomerName</td>
+                            <td>@job.CurrentPhase</td>
+                            <td>@job.DaysInPhaseText</td>
+                            <td><strong>@job.NextPhase</strong><br /><small>@job.NextPhaseDateText</small></td>
+                            <td><strong>@job.NextPaymentText</strong><br /><small>@job.NextPaymentDateText</small></td>
+                            <td>@job.RemainingContractValue.ToString("C2")</td>
+                            <td><span class="badge @ForecastBadge(job.ForecastStatus)">@job.ForecastStatus</span>@if (!string.IsNullOrWhiteSpace(job.BlockerText)){<br /><small>@job.BlockerText</small>}</td>
+                            <td><a class="btn btn-sm btn-outline-primary" href="@($"hcp/{job.OperationSlug}/jobs/{job.ExternalId}")">Review</a></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
     <section class="activity-panel job-risk-panel">
         <div><h2>Job progress &amp; revenue risk</h2><p>Jobs delayed by permits, HOA approval, weather, materials, inspections, customers, or scheduling.</p></div>
         <div class="metric-grid finance-metric-grid">
@@ -258,7 +330,15 @@
     private ApDashboardSummary apSummary = ApDashboardSummary.Empty;
     private ReceivablesSummary receivablesSummary = ReceivablesSummary.Empty;
     private JobRiskSummary jobRiskSummary = JobRiskSummary.Empty;
+    private RevenueForecastSummary revenueForecastSummary = RevenueForecastSummary.Empty;
+    private string forecastOperationFilter = string.Empty;
+    private string forecastPhaseFilter = string.Empty;
     private bool isAdministrator;
+
+    private IReadOnlyList<RevenueForecastJobRow> FilteredForecastJobs => revenueForecastSummary.Jobs
+        .Where(job => string.IsNullOrWhiteSpace(forecastOperationFilter) || job.OperationName == forecastOperationFilter)
+        .Where(job => string.IsNullOrWhiteSpace(forecastPhaseFilter) || job.CurrentPhase == forecastPhaseFilter)
+        .ToList();
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
     private string DashboardOperationSlug => IsEntityView
@@ -321,6 +401,7 @@
                 await LoadReceivablesAsync(EntitySlug);
                 await LoadAccountsPayableAsync(EntitySlug);
                 await LoadJobRiskAsync(EntitySlug);
+                await LoadRevenueForecastAsync(EntitySlug);
                 return;
             }
 
@@ -332,6 +413,7 @@
             await LoadReceivablesAsync();
             await LoadAccountsPayableAsync();
             await LoadJobRiskAsync();
+            await LoadRevenueForecastAsync();
         }
         catch (Exception ex)
         {
@@ -454,6 +536,111 @@
         jobRiskSummary=new(rows.Count,rows.Count(x=>x.Severity=="Critical"),rows.Sum(x=>x.RevenueAtRisk),rows.Count(x=>x.NextFollowUpDate is not null&&x.NextFollowUpDate<=today),allWeatherDays,rows.Take(20).ToList());
     }
 
+    private async Task LoadRevenueForecastAsync(string? operationSlug = null)
+    {
+        var operationIds = (await OperationAccess.GetAccessibleOperationsAsync())
+            .Where(operation => operationSlug is null || operation.Slug.Equals(operationSlug, StringComparison.OrdinalIgnoreCase))
+            .Select(operation => operation.Id)
+            .ToList();
+        if (operationIds.Count == 0)
+        {
+            revenueForecastSummary = RevenueForecastSummary.Empty;
+            return;
+        }
+
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var jobs = await db.HousecallProJobs.AsNoTracking()
+            .Include(job => job.LocalOperation)
+            .Include(job => job.Progress)
+            .Include(job => job.Blockers)
+            .Include(job => job.PaymentMilestones)
+            .Where(job => operationIds.Contains(job.LocalOperationId))
+            .Where(job => job.WorkStatus != "user canceled" && job.WorkStatus != "pro canceled" && job.WorkStatus != "pro-canceled")
+            .ToListAsync();
+
+        jobs = jobs.Where(job =>
+            !IsCompletedJob(job.WorkStatus) ||
+            job.OutstandingBalance > 0 ||
+            job.PaymentMilestones.Any(milestone => milestone.Status is not ("Paid" or "Waived")))
+            .ToList();
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var rows = new List<RevenueForecastJobRow>();
+        var openPayments = new List<HousecallProJobPaymentMilestone>();
+        foreach (var job in jobs)
+        {
+            var currentPhase = job.Progress?.CurrentPhase ?? "Not tracked";
+            var currentIndex = Array.IndexOf(JobProgressOptions.Phases, currentPhase);
+            var nextPhase = currentIndex >= 0 && currentIndex < JobProgressOptions.Phases.Length - 1
+                ? JobProgressOptions.Phases[currentIndex + 1]
+                : currentPhase == "Complete" ? "Complete" : "Not scheduled";
+            var nextPhaseDate = job.Progress?.ExpectedPhaseCompletionDate;
+            var openMilestones = job.PaymentMilestones
+                .Where(milestone => milestone.Status is not ("Paid" or "Waived"))
+                .OrderBy(milestone => milestone.ExpectedPaymentDate is null)
+                .ThenBy(milestone => milestone.ExpectedPaymentDate)
+                .ToList();
+            openPayments.AddRange(openMilestones);
+            var nextPayment = openMilestones.FirstOrDefault();
+            var activeBlockers = job.Blockers.Where(blocker => blocker.ResolvedOn is null).ToList();
+            var forecastStatus = job.Progress is null || nextPayment is null || nextPayment.ExpectedPaymentDate is null
+                ? "Missing schedule"
+                : activeBlockers.Any(blocker => BlockerSeverity(blocker) == "Critical") ? "At risk"
+                : activeBlockers.Count > 0 ? "Watch" : "Forecast";
+            var paidMilestones = job.PaymentMilestones.Where(milestone => milestone.Status == "Paid").Sum(milestone => milestone.Amount);
+            var remainingContract = Math.Max(job.OutstandingBalance, Math.Max(0, job.JobPrice - paidMilestones));
+            var daysInPhase = job.Progress is null ? (int?)null : Math.Max(0, (DateTimeOffset.UtcNow - job.Progress.PhaseEnteredAt).Days);
+
+            rows.Add(new(
+                job.JobNumber ?? job.ExternalId,
+                job.CustomerName ?? "Not provided",
+                job.LocalOperation.Name,
+                job.LocalOperation.Slug,
+                job.ExternalId,
+                currentPhase,
+                daysInPhase is null ? "Not tracked" : $"{daysInPhase} day(s)",
+                nextPhase,
+                nextPhaseDate?.ToString("MM/dd/yyyy") ?? "Not scheduled",
+                nextPayment is null ? "No payment scheduled" : $"{nextPayment.Name} · {nextPayment.Amount:C2}",
+                nextPayment?.ExpectedPaymentDate?.ToString("MM/dd/yyyy") ?? "Not scheduled",
+                remainingContract,
+                forecastStatus,
+                activeBlockers.Count == 0 ? string.Empty : string.Join(", ", activeBlockers.Select(blocker => blocker.BlockerType).Distinct())));
+        }
+
+        var buckets = BuildForecastBuckets(openPayments, today);
+        revenueForecastSummary = new(
+            rows.OrderBy(row => ForecastRank(row.ForecastStatus)).ThenBy(row => row.NextPaymentDateText == "Not scheduled").ThenBy(row => row.NextPaymentDateText).ToList(),
+            buckets,
+            rows.Select(row => row.OperationName).Distinct().OrderBy(name => name).ToList());
+    }
+
+    private static IReadOnlyList<RevenueForecastBucket> BuildForecastBuckets(IEnumerable<HousecallProJobPaymentMilestone> milestones, DateOnly today)
+    {
+        var payments = milestones.ToList();
+        return
+        [
+            ForecastBucket("Overdue / due now", payments.Where(item => item.ExpectedPaymentDate is not null && item.ExpectedPaymentDate <= today), "accent-expired"),
+            ForecastBucket("Next 7 days", payments.Where(item => DaysUntil(item.ExpectedPaymentDate, today) is >= 1 and <= 7), "accent-revenue"),
+            ForecastBucket("8–14 days", payments.Where(item => DaysUntil(item.ExpectedPaymentDate, today) is >= 8 and <= 14), "accent-quotes"),
+            ForecastBucket("15–30 days", payments.Where(item => DaysUntil(item.ExpectedPaymentDate, today) is >= 15 and <= 30), "accent-jobs"),
+            ForecastBucket("31–60 days", payments.Where(item => DaysUntil(item.ExpectedPaymentDate, today) is >= 31 and <= 60), "accent-revenue"),
+            ForecastBucket("Beyond 60 days", payments.Where(item => DaysUntil(item.ExpectedPaymentDate, today) is > 60), "accent-quotes"),
+            ForecastBucket("No date scheduled", payments.Where(item => item.ExpectedPaymentDate is null), "accent-expenses")
+        ];
+    }
+
+    private static int? DaysUntil(DateOnly? date, DateOnly today) => date is null ? null : date.Value.DayNumber - today.DayNumber;
+    private static RevenueForecastBucket ForecastBucket(string label, IEnumerable<HousecallProJobPaymentMilestone> items, string accentClass)
+    {
+        var rows = items.ToList();
+        return new(label, rows.Count, rows.Sum(item => item.Amount), accentClass);
+    }
+
+    private static bool IsCompletedJob(string? status) => status?.Trim().ToLowerInvariant() is "complete rated" or "complete unrated" or "completed" or "complete";
+    private static int ForecastRank(string status) => status == "At risk" ? 0 : status == "Missing schedule" ? 1 : status == "Watch" ? 2 : 3;
+    private static string ForecastBadge(string status) => status == "At risk" ? "text-bg-danger" : status == "Missing schedule" ? "text-bg-warning" : status == "Watch" ? "text-bg-info" : "text-bg-success";
+
     private static ReceivablesAgingBucket BuildAgingBucket(string label, IEnumerable<ReceivableRow> rows)
     {
         var items = rows.ToList();
@@ -473,6 +660,12 @@
     }
     private sealed record JobRiskRow(string Severity,string JobNumber,string CustomerName,string Phase,string BlockerType,int DaysBlocked,DateOnly? NextFollowUpDate,decimal RevenueAtRisk,string OperationSlug,string ExternalId);
     private sealed record JobRiskSummary(int BlockedJobCount,int CriticalJobCount,decimal RevenueAtRisk,int FollowUpsDue,int WeatherDaysLost,IReadOnlyList<JobRiskRow> Jobs){public static JobRiskSummary Empty{get;}=new(0,0,0,0,0,[]);}
+    private sealed record RevenueForecastBucket(string Label, int PaymentCount, decimal Amount, string AccentClass);
+    private sealed record RevenueForecastJobRow(string JobNumber,string CustomerName,string OperationName,string OperationSlug,string ExternalId,string CurrentPhase,string DaysInPhaseText,string NextPhase,string NextPhaseDateText,string NextPaymentText,string NextPaymentDateText,decimal RemainingContractValue,string ForecastStatus,string BlockerText);
+    private sealed record RevenueForecastSummary(IReadOnlyList<RevenueForecastJobRow> Jobs,IReadOnlyList<RevenueForecastBucket> Buckets,IReadOnlyList<string> Operations)
+    {
+        public static RevenueForecastSummary Empty { get; } = new([], [], []);
+    }
     private static string BlockerSeverity(HousecallProJobBlocker item){var threshold=JobProgressOptions.Threshold(item.BlockerType);var age=Math.Max(0,DateOnly.FromDateTime(DateTime.Today).DayNumber-item.StartedOn.DayNumber);return age>=threshold.Critical?"Critical":age>=threshold.Warning?"Warning":"Monitored";}
     private static int BlockerSeverityRank(HousecallProJobBlocker item)=>SeverityRank(BlockerSeverity(item));
     private static int SeverityRank(string value)=>value=="Critical"?3:value=="Warning"?2:1;

@@ -35,7 +35,7 @@ public sealed class HousecallProJob
 
 public static class JobProgressOptions
 {
-    public static readonly string[] Phases = ["Deposit", "Permitting", "HOA Approval", "Procurement", "Scheduled", "Construction", "Inspection", "Final Payment", "Complete"];
+    public static readonly string[] Phases = ["Design", "Permitting", "HOA Approval", "Procurement", "Scheduled", "Construction", "Inspection", "Final Payment", "Complete"];
     public static readonly string[] BlockerTypes = ["Permit", "HOA", "Weather", "Customer", "Materials", "Inspection", "Crew Scheduling", "Other"];
     public static readonly string[] MilestoneStatuses = ["Pending", "Earned", "Invoiced", "Paid", "Waived"];
     public static (int Warning, int Critical) Threshold(string blockerType) => blockerType switch
@@ -50,7 +50,7 @@ public sealed class HousecallProJobProgress
     public int Id { get; set; }
     public int HousecallProJobId { get; set; }
     public HousecallProJob HousecallProJob { get; set; } = null!;
-    [Required, StringLength(80)] public string CurrentPhase { get; set; } = "Deposit";
+    [Required, StringLength(80)] public string CurrentPhase { get; set; } = "Design";
     public DateTimeOffset PhaseEnteredAt { get; set; } = DateTimeOffset.UtcNow;
     public DateOnly? ExpectedPhaseCompletionDate { get; set; }
     public DateOnly? RevisedJobCompletionDate { get; set; }

@@ -57,16 +57,36 @@ public sealed class CentComChatClient(
         var messages = conversation
             .Select(x => new { role = x.Role, content = x.Content })
             .ToArray();
-        request.Content = requireJson
-            ? JsonContent.Create(new
-            {
-                model = settings.Model,
-                messages,
-                response_format = new { type = "json_object" },
-                temperature = 0,
-                max_tokens = 8192
-            })
-            : JsonContent.Create(new { model = settings.Model, messages });
+        var isNativeOllamaEndpoint = settings.ChatEndpoint.TrimStart('/')
+            .Equals("api/chat", StringComparison.OrdinalIgnoreCase);
+        request.Content = isNativeOllamaEndpoint
+            ? requireJson
+                ? JsonContent.Create(new
+                {
+                    model = settings.Model,
+                    messages,
+                    stream = false,
+                    keep_alive = settings.KeepAlive,
+                    format = "json",
+                    options = new { temperature = 0, num_predict = 8192 }
+                })
+                : JsonContent.Create(new
+                {
+                    model = settings.Model,
+                    messages,
+                    stream = false,
+                    keep_alive = settings.KeepAlive
+                })
+            : requireJson
+                ? JsonContent.Create(new
+                {
+                    model = settings.Model,
+                    messages,
+                    response_format = new { type = "json_object" },
+                    temperature = 0,
+                    max_tokens = 8192
+                })
+                : JsonContent.Create(new { model = settings.Model, messages });
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -77,6 +97,12 @@ public sealed class CentComChatClient(
         }
 
         using var document = JsonDocument.Parse(json);
+        if (document.RootElement.TryGetProperty("message", out var nativeMessage) &&
+            nativeMessage.TryGetProperty("content", out var nativeContent))
+        {
+            return nativeContent.GetString()?.Trim() ?? "CentCom returned an empty response.";
+        }
+
         if (document.RootElement.TryGetProperty("choices", out var choices) &&
             choices.ValueKind == JsonValueKind.Array &&
             choices.GetArrayLength() > 0 &&
