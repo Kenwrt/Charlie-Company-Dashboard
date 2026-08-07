@@ -14,15 +14,15 @@
 <section class="dashboard-shell finance-shell">
     <div class="dashboard-header">
         <div>
-            <p class="eyebrow">@(IsEntityView ? "Local finance reconstruction" : "Venture finance rollup")</p>
+            <p class="eyebrow">@(IsEntityView ? "Local finance position" : "Venture finance rollup")</p>
             <h1>@currentSummary.EntityName</h1>
             <p class="dashboard-subtitle">@Subtitle</p>
         </div>
 
         <div class="dashboard-status">
             <span class="status-dot"></span>
-            <span>Workbook-derived model</span>
-            <small>Financial reconstruction feature set</small>
+            <span>Source-backed finance</span>
+            <small>HCP, AP ledger, and administrator controls</small>
         </div>
     </div>
 
@@ -37,7 +37,7 @@
     }
 
     <div class="metric-grid finance-metric-grid">
-        @foreach (var metric in BuildFinanceMetrics(currentSummary))
+        @foreach (var metric in BuildFinanceMetrics(currentSummary, currentMetricAudits))
         {
             <article class="metric-card @metric.AccentClass">
                 <span>@metric.Label</span>
@@ -92,6 +92,7 @@
         <section class="finance-layout">
             <article class="finance-panel">
                 <h2>True financial position</h2>
+                <p class="text-muted">@AuditDetail(currentMetricAudits, "AccountingProfit", "Administrator Finance Setup")</p>
                 <dl class="finance-definition-list">
                     <div><dt>Known accounting profit</dt><dd>@entityDashboard.Summary.KnownAccountingProfit.ToString("C2")</dd></div>
                     <div><dt>Unrecorded AP and debt</dt><dd>@((entityDashboard.Summary.OpenAccountsPayable + entityDashboard.Summary.DebtOutstanding).ToString("C2"))</dd></div>
@@ -103,6 +104,7 @@
 
             <article class="finance-panel">
                 <h2>13-week cash forecast</h2>
+                <p class="text-muted">@AuditDetail(currentMetricAudits, "CashForecast", "HCP payment milestones and scheduled cash uses")</p>
                 <div class="finance-table-wrap">
                     <table class="finance-table">
                         <thead>
@@ -134,6 +136,7 @@
 
             <article class="finance-panel">
                 <h2>AP aging</h2>
+                <p class="text-muted">@AuditDetail(currentMetricAudits, "OpenAP", "CCV Vendors & Payables ledger")</p>
                 <div class="finance-table-wrap">
                     <table class="finance-table">
                         <thead>
@@ -165,6 +168,7 @@
 
             <article class="finance-panel">
                 <h2>Job profitability</h2>
+                <p class="text-muted">Job profitability will appear after job-cost records are linked to synchronized Housecall Pro jobs. Revenue cards do not assume zero job costs.</p>
                 <div class="finance-table-wrap">
                     <table class="finance-table">
                         <thead>
@@ -238,17 +242,19 @@
 
     private VentureFinanceDashboard ventureDashboard = new(
         new FinanceSummary("Charlie Company Ventures Group", "ventures", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-        []);
+        [],
+        new Dictionary<string, FinanceMetricAudit>());
     private FinanceDashboard? entityDashboard;
     private FinanceSummary currentSummary = new("Charlie Company Ventures Group", "ventures", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     private string? errorMessage;
     private bool isAdministrator;
+    private IReadOnlyDictionary<string, FinanceMetricAudit> currentMetricAudits = new Dictionary<string, FinanceMetricAudit>();
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
 
     private string Subtitle => IsEntityView
-        ? "Local reconstruction of cash, AP, debt, owner benefits, job economics, and readiness."
-        : "Temporary consolidated finance reporting based on the uploaded reconstruction workbook.";
+        ? "Source-backed cash, AP, debt, owner adjustments, job collections, forecast, and readiness."
+        : "Consolidated reporting from authorized local-operation finance records.";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -290,11 +296,13 @@
                 }
 
                 currentSummary = entityDashboard.Summary;
+                currentMetricAudits = entityDashboard.MetricAudits;
                 return;
             }
 
             entityDashboard = null;
             currentSummary = ventureDashboard.Rollup;
+            currentMetricAudits = ventureDashboard.MetricAudits;
         }
         catch (Exception ex)
         {
@@ -304,14 +312,19 @@
         }
     }
 
-    private static IReadOnlyList<DashboardMetric> BuildFinanceMetrics(FinanceSummary summary) =>
+    private static IReadOnlyList<DashboardMetric> BuildFinanceMetrics(FinanceSummary summary, IReadOnlyDictionary<string, FinanceMetricAudit> audits) =>
     [
-        new("Known revenue", summary.KnownRevenue.ToString("C2"), "Workbook control panel revenue", "accent-revenue"),
-        new("Open AP", summary.OpenAccountsPayable.ToString("C2"), $"{summary.MaxApDaysPastDue:N0} max days past due", "accent-expenses"),
-        new("Debt outstanding", summary.DebtOutstanding.ToString("C2"), "Debt, notes, cards, and tax liabilities", "accent-expired"),
-        new("Reserve surplus / deficit", summary.ReserveSurplusOrDeficit.ToString("C2"), "Ending cash less reserve target", "accent-quotes"),
-        new("CCV readiness", summary.ReadinessScore.ToString("P0"), "Average readiness scorecard pass rate", "accent-jobs")
+        new("Collected revenue", summary.KnownRevenue.ToString("C2"), AuditDetail(audits, "KnownRevenue", "Housecall Pro collected job value"), "accent-revenue"),
+        new("Open AP", summary.OpenAccountsPayable.ToString("C2"), AuditDetail(audits, "OpenAP", $"{summary.MaxApDaysPastDue:N0} max days past due"), "accent-expenses"),
+        new("Debt outstanding", summary.DebtOutstanding.ToString("C2"), AuditDetail(audits, "Debt", "Administrator debt register"), "accent-expired"),
+        new("Reserve surplus / deficit", summary.ReserveSurplusOrDeficit.ToString("C2"), AuditDetail(audits, "Reserve", "Reconciled cash less reserve target"), "accent-quotes"),
+        new("CCV readiness", summary.ReadinessScore.ToString("P0"), AuditDetail(audits, "Readiness", "Calculated and manual controls"), "accent-jobs")
     ];
+
+    private static string AuditDetail(IReadOnlyDictionary<string, FinanceMetricAudit> audits, string key, string fallback) =>
+        audits.TryGetValue(key, out var audit)
+            ? $"As of {audit.AsOfDate:MM/dd/yyyy} · {audit.Source} · Updated {audit.LastUpdatedAt.ToLocalTime():MM/dd/yyyy h:mm tt} by {audit.LastUpdatedBy}"
+            : fallback;
 
     private static string StatusClass(string status) => status switch
     {

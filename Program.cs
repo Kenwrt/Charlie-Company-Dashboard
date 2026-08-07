@@ -102,7 +102,7 @@ try
     builder.Services.AddHttpClient<RemoteOperationalEventForwarder>();
     builder.Services.AddHostedService(services => services.GetRequiredService<RemoteOperationalEventForwarder>());
     builder.Services.AddRateLimiter(options => options.AddPolicy("observability-ingestion", context => RateLimitPartition.GetTokenBucketLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new TokenBucketRateLimiterOptions { TokenLimit = 120, TokensPerPeriod = 120, ReplenishmentPeriod = TimeSpan.FromMinutes(1), AutoReplenishment = true, QueueLimit = 20 })));
-    builder.Services.AddScoped<IFinanceDataSource, SpreadsheetFinanceDataSource>();
+    builder.Services.AddScoped<IFinanceDataSource, DatabaseFinanceDataSource>();
     builder.Services.AddScoped<IOutboundNotificationSender, EmailNotificationSender>();
     builder.Services.AddScoped<IOutboundNotificationSender, MobileNotificationSender>();
     builder.Services.AddScoped<WebhookNotificationDispatcher>();

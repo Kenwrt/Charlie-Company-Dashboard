@@ -29,7 +29,7 @@ public sealed class SpreadsheetFinanceDataSource(OperationCatalogService operati
             MaxApDaysPastDue: dashboards.Count == 0 ? 0 : dashboards.Max(dashboard => dashboard.Summary.MaxApDaysPastDue),
             ReadinessScore: dashboards.Count == 0 ? 0 : dashboards.Average(dashboard => dashboard.Summary.ReadinessScore));
 
-        return new VentureFinanceDashboard(rollup, dashboards);
+        return new VentureFinanceDashboard(rollup, dashboards, new Dictionary<string, FinanceMetricAudit>());
     }
 
     public async Task<FinanceDashboard?> GetEntityFinanceDashboardAsync(string entitySlug, CancellationToken cancellationToken)
@@ -94,7 +94,7 @@ public sealed class SpreadsheetFinanceDataSource(OperationCatalogService operati
             data.AccountsPayable.Count == 0 ? 0 : data.AccountsPayable.Max(item => item.DaysPastDue(asOfDate)),
             readinessScore);
 
-        return new FinanceDashboard(summary, data, readinessChecks);
+        return new FinanceDashboard(summary, data, readinessChecks, new Dictionary<string, FinanceMetricAudit>());
     }
 
     private async Task<IReadOnlyList<FinanceEntityData>> BuildEntityDataAsync(CancellationToken cancellationToken)

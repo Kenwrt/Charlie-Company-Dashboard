@@ -40,6 +40,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<HousecallProJobBlocker> HousecallProJobBlockers => Set<HousecallProJobBlocker>();
     public DbSet<HousecallProJobPaymentMilestone> HousecallProJobPaymentMilestones => Set<HousecallProJobPaymentMilestone>();
     public DbSet<HousecallProJobProgressEvent> HousecallProJobProgressEvents => Set<HousecallProJobProgressEvent>();
+    public DbSet<FinanceProfile> FinanceProfiles => Set<FinanceProfile>();
+    public DbSet<FinanceDebt> FinanceDebts => Set<FinanceDebt>();
+    public DbSet<FinanceOwnerAdjustment> FinanceOwnerAdjustments => Set<FinanceOwnerAdjustment>();
+    public DbSet<FinanceScheduledCashUse> FinanceScheduledCashUses => Set<FinanceScheduledCashUse>();
+    public DbSet<FinanceReadinessControl> FinanceReadinessControls => Set<FinanceReadinessControl>();
     public DbSet<CentComChatSession> CentComChatSessions => Set<CentComChatSession>();
     public DbSet<CentComChatMessage> CentComChatMessages => Set<CentComChatMessage>();
     public DbSet<CostingPolicyVersion> CostingPolicyVersions => Set<CostingPolicyVersion>();
@@ -181,6 +186,31 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.HasIndex(x => new { x.HousecallProJobId, x.OccurredAt });
             entity.HasOne(x => x.HousecallProJob).WithMany(x => x.ProgressEvents).HasForeignKey(x => x.HousecallProJobId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<FinanceProfile>(entity =>
+        {
+            entity.HasIndex(x => x.LocalOperationId).IsUnique();
+            entity.HasOne(x => x.LocalOperation).WithMany().HasForeignKey(x => x.LocalOperationId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<FinanceDebt>(entity =>
+        {
+            entity.HasIndex(x => new { x.FinanceProfileId, x.IsActive });
+            entity.HasOne(x => x.FinanceProfile).WithMany(x => x.Debts).HasForeignKey(x => x.FinanceProfileId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<FinanceOwnerAdjustment>(entity =>
+        {
+            entity.HasIndex(x => new { x.FinanceProfileId, x.Status });
+            entity.HasOne(x => x.FinanceProfile).WithMany(x => x.OwnerAdjustments).HasForeignKey(x => x.FinanceProfileId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<FinanceScheduledCashUse>(entity =>
+        {
+            entity.HasIndex(x => new { x.FinanceProfileId, x.ExpectedDate, x.IsActive });
+            entity.HasOne(x => x.FinanceProfile).WithMany(x => x.ScheduledCashUses).HasForeignKey(x => x.FinanceProfileId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<FinanceReadinessControl>(entity =>
+        {
+            entity.HasIndex(x => new { x.FinanceProfileId, x.Category });
+            entity.HasOne(x => x.FinanceProfile).WithMany(x => x.ReadinessControls).HasForeignKey(x => x.FinanceProfileId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<QuoteProjectTaskPhoto>(entity =>
         {

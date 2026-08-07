@@ -150,6 +150,12 @@ public sealed record ReadinessCheck(
     string Owner,
     DateOnly TargetDate);
 
+public sealed record FinanceMetricAudit(
+    DateOnly AsOfDate,
+    string Source,
+    DateTimeOffset LastUpdatedAt,
+    string LastUpdatedBy);
+
 public sealed record FinanceEntityData(
     string EntityName,
     string EntitySlug,
@@ -185,9 +191,10 @@ public sealed record FinanceSummary(
 public sealed record FinanceDashboard(
     FinanceSummary Summary,
     FinanceEntityData EntityData,
-    IReadOnlyList<ReadinessCheck> ReadinessChecks);
+    IReadOnlyList<ReadinessCheck> ReadinessChecks,
+    IReadOnlyDictionary<string, FinanceMetricAudit> MetricAudits);
 
 public sealed record VentureFinanceDashboard(
     FinanceSummary Rollup,
-    IReadOnlyList<FinanceDashboard> LocalDashboards);
-
+    IReadOnlyList<FinanceDashboard> LocalDashboards,
+    IReadOnlyDictionary<string, FinanceMetricAudit> MetricAudits);

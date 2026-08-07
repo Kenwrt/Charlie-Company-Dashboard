@@ -1,0 +1,169 @@
+@page "/admin/finance-setup"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Finance Setup</PageTitle>
+
+<h1>Finance Setup</h1>
+<p>Administrator-maintained financial controls. Housecall Pro revenue and Vendors &amp; Payables are calculated automatically; the entries below provide the controlled accounting, cash, debt, adjustment, readiness, and forecast inputs.</p>
+
+@if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+
+<section class="activity-panel mb-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-6"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="selectedOperationId">@foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+        <div class="col-md-2"><button class="btn btn-outline-primary" @onclick="LoadAsync">Load operation</button></div>
+        <div class="col-md-4"><small class="text-muted">Open AP comes from Vendors &amp; Payables. Collected revenue comes from synchronized Housecall Pro jobs.</small></div>
+    </div>
+</section>
+
+@if (profile is not null)
+{
+    <section class="activity-panel mb-4">
+        <h2>1. Reporting period, cash, reserve, and accounting profit</h2>
+        <div class="row g-3">
+            <div class="col-md-3"><label class="form-label">Reporting period start</label><InputDate class="form-control" @bind-Value="profile.ReportingPeriodStart" /></div>
+            <div class="col-md-3"><label class="form-label">Reporting period end</label><InputDate class="form-control" @bind-Value="profile.ReportingPeriodEnd" /></div>
+            <div class="col-md-3"><label class="form-label">As-of date</label><InputDate class="form-control" @bind-Value="profile.AsOfDate" /></div>
+            <div class="col-md-3"><label class="form-label">AP aging policy limit (days)</label><InputNumber class="form-control" @bind-Value="profile.ApPolicyLimitDays" /></div>
+            <div class="col-md-4"><label class="form-label">Reconciled bank cash</label><InputNumber class="form-control" @bind-Value="profile.ReconciledCashBalance" /></div>
+            <div class="col-md-4"><label class="form-label">Cash source</label><InputText class="form-control" @bind-Value="profile.CashSource" /></div>
+            <div class="col-md-4"><label class="form-label">Minimum operating reserve target</label><InputNumber class="form-control" @bind-Value="profile.MinimumOperatingReserveTarget" /></div>
+            <div class="col-md-4"><label class="form-label">Accounting profit</label><InputNumber class="form-control" @bind-Value="profile.AccountingProfit" /></div>
+            <div class="col-md-4"><label class="form-label">Accounting profit source</label><InputText class="form-control" @bind-Value="profile.AccountingProfitSource" /></div>
+            <div class="col-md-4"><label class="form-label">Notes</label><InputText class="form-control" @bind-Value="profile.Notes" /></div>
+            <div class="col-12"><button class="btn btn-primary" @onclick="SaveProfileAsync">Save finance controls</button></div>
+        </div>
+        <p class="mt-3 mb-0 text-muted">Last updated @profile.UpdatedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt") by @profile.UpdatedBy</p>
+    </section>
+
+    <section class="activity-panel mb-4">
+        <h2>2. Debt register</h2>
+        <div class="row g-3">
+            <div class="col-md-3"><label class="form-label">Creditor</label><InputText class="form-control" @bind-Value="debtInput.Creditor" /></div>
+            <div class="col-md-2"><label class="form-label">Type</label><InputSelect class="form-select" @bind-Value="debtInput.DebtType"><option>Loan</option><option>Credit card</option><option>Tax liability</option><option>Other</option></InputSelect></div>
+            <div class="col-md-2"><label class="form-label">Original amount</label><InputNumber class="form-control" @bind-Value="debtInput.OriginalAmount" /></div>
+            <div class="col-md-2"><label class="form-label">Current balance</label><InputNumber class="form-control" @bind-Value="debtInput.CurrentBalance" /></div>
+            <div class="col-md-1"><label class="form-label">Rate %</label><InputNumber class="form-control" @bind-Value="debtInput.InterestRatePercent" /></div>
+            <div class="col-md-2"><label class="form-label">Monthly payment</label><InputNumber class="form-control" @bind-Value="debtInput.MonthlyPayment" /></div>
+            <div class="col-md-3"><label class="form-label">Next payment date</label><InputDate class="form-control" @bind-Value="debtInput.NextPaymentDate" /></div>
+            <div class="col-md-4"><label class="form-label">Source</label><InputText class="form-control" @bind-Value="debtInput.Source" /></div>
+            <div class="col-md-5"><label class="form-label">Notes</label><InputText class="form-control" @bind-Value="debtInput.Notes" /></div>
+            <div class="col-12"><button class="btn btn-outline-primary" @onclick="AddDebtAsync">Add debt</button></div>
+        </div>
+        @if (profile.Debts.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Creditor</th><th>Type</th><th>Balance</th><th>Payment</th><th>Source / updated</th><th></th></tr></thead><tbody>@foreach (var item in profile.Debts.Where(x => x.IsActive)) { <tr><td>@item.Creditor</td><td>@item.DebtType</td><td>@item.CurrentBalance.ToString("C2")</td><td>@item.MonthlyPayment.ToString("C2")</td><td>@item.Source<br /><small>@item.UpdatedAt.ToLocalTime().ToString("g") by @item.UpdatedBy</small></td><td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateDebtAsync(item.Id)">Deactivate</button></td></tr> }</tbody></table> }
+    </section>
+
+    <section class="activity-panel mb-4">
+        <h2>3. Owner adjustments requiring classification</h2>
+        <div class="row g-3">
+            <div class="col-md-2"><label class="form-label">Date</label><InputDate class="form-control" @bind-Value="ownerInput.TransactionDate" /></div>
+            <div class="col-md-2"><label class="form-label">Owner</label><InputText class="form-control" @bind-Value="ownerInput.Owner" /></div>
+            <div class="col-md-2"><label class="form-label">Payee</label><InputText class="form-control" @bind-Value="ownerInput.Payee" /></div>
+            <div class="col-md-3"><label class="form-label">Description</label><InputText class="form-control" @bind-Value="ownerInput.Description" /></div>
+            <div class="col-md-1"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="ownerInput.Amount" /></div>
+            <div class="col-md-2"><label class="form-label">Reclass amount</label><InputNumber class="form-control" @bind-Value="ownerInput.ReclassAmount" /></div>
+            <div class="col-md-4"><label class="form-label">Source</label><InputText class="form-control" @bind-Value="ownerInput.Source" /></div>
+            <div class="col-12"><button class="btn btn-outline-primary" @onclick="AddOwnerAdjustmentAsync">Add adjustment</button></div>
+        </div>
+        @if (profile.OwnerAdjustments.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Date</th><th>Owner / payee</th><th>Description</th><th>Reclass</th><th>Status</th><th></th></tr></thead><tbody>@foreach (var item in profile.OwnerAdjustments) { <tr><td>@item.TransactionDate.ToString("MM/dd/yyyy")</td><td>@item.Owner / @item.Payee</td><td>@item.Description</td><td>@item.ReclassAmount.ToString("C2")</td><td>@item.Status</td><td>@if (item.Status != "Resolved") { <button class="btn btn-sm btn-outline-success" @onclick="() => ResolveOwnerAdjustmentAsync(item.Id)">Mark resolved</button> }</td></tr> }</tbody></table> }
+    </section>
+
+    <section class="activity-panel mb-4">
+        <h2>4. Scheduled cash uses</h2>
+        <p>These expenses feed the 13-week forecast. Expected collections come from Housecall Pro payment milestones.</p>
+        <div class="row g-3">
+            <div class="col-md-2"><label class="form-label">Expected date</label><InputDate class="form-control" @bind-Value="cashUseInput.ExpectedDate" /></div>
+            <div class="col-md-3"><label class="form-label">Name</label><InputText class="form-control" @bind-Value="cashUseInput.Name" /></div>
+            <div class="col-md-2"><label class="form-label">Category</label><InputSelect class="form-select" @bind-Value="cashUseInput.Category">@foreach (var category in CashUseCategories) { <option>@category</option> }</InputSelect></div>
+            <div class="col-md-2"><label class="form-label">Amount</label><InputNumber class="form-control" @bind-Value="cashUseInput.Amount" /></div>
+            <div class="col-md-3"><label class="form-label">Source</label><InputText class="form-control" @bind-Value="cashUseInput.Source" /></div>
+            <div class="col-12"><button class="btn btn-outline-primary" @onclick="AddCashUseAsync">Add scheduled use</button></div>
+        </div>
+        @if (profile.ScheduledCashUses.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Date</th><th>Name</th><th>Category</th><th>Amount</th><th>Source</th><th></th></tr></thead><tbody>@foreach (var item in profile.ScheduledCashUses.Where(x => x.IsActive).OrderBy(x => x.ExpectedDate)) { <tr><td>@item.ExpectedDate.ToString("MM/dd/yyyy")</td><td>@item.Name</td><td>@item.Category</td><td>@item.Amount.ToString("C2")</td><td>@item.Source</td><td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateCashUseAsync(item.Id)">Remove</button></td></tr> }</tbody></table> }
+    </section>
+
+    <section class="activity-panel mb-4">
+        <h2>5. Manual readiness controls</h2>
+        <p>Liquidity and AP aging are calculated automatically. Add evidence-backed operational controls here.</p>
+        <div class="row g-3">
+            <div class="col-md-2"><label class="form-label">Category</label><InputText class="form-control" @bind-Value="readinessInput.Category" /></div>
+            <div class="col-md-4"><label class="form-label">Test</label><InputText class="form-control" @bind-Value="readinessInput.Test" /></div>
+            <div class="col-md-2"><label class="form-label">Current result</label><InputText class="form-control" @bind-Value="readinessInput.CurrentResult" /></div>
+            <div class="col-md-2"><label class="form-label">Threshold</label><InputText class="form-control" @bind-Value="readinessInput.Threshold" /></div>
+            <div class="col-md-2"><label class="form-label">Status</label><InputSelect class="form-select" @bind-Value="readinessInput.Status"><option>Not Started</option><option>Pass</option><option>Fail</option></InputSelect></div>
+            <div class="col-md-3"><label class="form-label">Owner</label><InputText class="form-control" @bind-Value="readinessInput.Owner" /></div>
+            <div class="col-md-3"><label class="form-label">Target date</label><InputDate class="form-control" @bind-Value="readinessInput.TargetDate" /></div>
+            <div class="col-12"><button class="btn btn-outline-primary" @onclick="AddReadinessAsync">Add readiness control</button></div>
+        </div>
+        @if (profile.ReadinessControls.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Category</th><th>Test</th><th>Current</th><th>Threshold</th><th>Status</th><th>Owner</th><th></th></tr></thead><tbody>@foreach (var item in profile.ReadinessControls) { <tr><td>@item.Category</td><td>@item.Test</td><td>@item.CurrentResult</td><td>@item.Threshold</td><td>@item.Status</td><td>@item.Owner</td><td><button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteReadinessAsync(item.Id)">Delete</button></td></tr> }</tbody></table> }
+    </section>
+}
+
+@code {
+    private static readonly string[] CashUseCategories = ["Materials", "Payroll", "Subcontractors", "Vendor payment plan", "Debt", "Taxes", "Rent and utilities", "Fuel and vehicle", "Owner payroll", "Other"];
+    private List<LocalOperation> operations = [];
+    private int selectedOperationId;
+    private FinanceProfile? profile;
+    private FinanceDebt debtInput = NewDebt();
+    private FinanceOwnerAdjustment ownerInput = NewOwner();
+    private FinanceScheduledCashUse cashUseInput = NewCashUse();
+    private FinanceReadinessControl readinessInput = NewReadiness();
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync();
+        selectedOperationId = operations.FirstOrDefault()?.Id ?? 0;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (selectedOperationId == 0) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        profile = await db.FinanceProfiles.AsNoTracking().Include(x => x.Debts).Include(x => x.OwnerAdjustments).Include(x => x.ScheduledCashUses).Include(x => x.ReadinessControls).SingleOrDefaultAsync(x => x.LocalOperationId == selectedOperationId)
+            ?? new FinanceProfile { LocalOperationId = selectedOperationId, UpdatedBy = "Not configured" };
+        message = null;
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        if (profile is null || profile.ReportingPeriodEnd < profile.ReportingPeriodStart) { message = "Enter a valid reporting period."; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var target = await db.FinanceProfiles.SingleOrDefaultAsync(x => x.LocalOperationId == selectedOperationId);
+        if (target is null) { target = new FinanceProfile { LocalOperationId = selectedOperationId }; db.FinanceProfiles.Add(target); }
+        target.ReportingPeriodStart = profile.ReportingPeriodStart; target.ReportingPeriodEnd = profile.ReportingPeriodEnd; target.AsOfDate = profile.AsOfDate;
+        target.ReconciledCashBalance = profile.ReconciledCashBalance; target.MinimumOperatingReserveTarget = profile.MinimumOperatingReserveTarget; target.AccountingProfit = profile.AccountingProfit;
+        target.ApPolicyLimitDays = profile.ApPolicyLimitDays; target.CashSource = profile.CashSource.Trim(); target.AccountingProfitSource = profile.AccountingProfitSource.Trim(); target.Notes = profile.Notes?.Trim();
+        Stamp(target, await UserNameAsync()); await db.SaveChangesAsync(); message = "Finance controls saved."; await LoadAsync();
+    }
+
+    private async Task AddDebtAsync() { if (string.IsNullOrWhiteSpace(debtInput.Creditor) || debtInput.CurrentBalance < 0) { message = "Enter a creditor and valid balance."; return; } var id = await EnsureProfileAsync(); await using var db = await DbFactory.CreateDbContextAsync(); debtInput.FinanceProfileId = id; Stamp(debtInput, await UserNameAsync()); db.FinanceDebts.Add(debtInput); await db.SaveChangesAsync(); debtInput = NewDebt(); message = "Debt added."; await LoadAsync(); }
+    private async Task AddOwnerAdjustmentAsync() { if (string.IsNullOrWhiteSpace(ownerInput.Owner) || string.IsNullOrWhiteSpace(ownerInput.Description)) { message = "Enter the owner and description."; return; } var id = await EnsureProfileAsync(); await using var db = await DbFactory.CreateDbContextAsync(); ownerInput.FinanceProfileId = id; Stamp(ownerInput, await UserNameAsync()); db.FinanceOwnerAdjustments.Add(ownerInput); await db.SaveChangesAsync(); ownerInput = NewOwner(); message = "Owner adjustment added."; await LoadAsync(); }
+    private async Task AddCashUseAsync() { if (string.IsNullOrWhiteSpace(cashUseInput.Name) || cashUseInput.Amount <= 0) { message = "Enter a cash-use name and positive amount."; return; } var id = await EnsureProfileAsync(); await using var db = await DbFactory.CreateDbContextAsync(); cashUseInput.FinanceProfileId = id; Stamp(cashUseInput, await UserNameAsync()); db.FinanceScheduledCashUses.Add(cashUseInput); await db.SaveChangesAsync(); cashUseInput = NewCashUse(); message = "Scheduled cash use added."; await LoadAsync(); }
+    private async Task AddReadinessAsync() { if (string.IsNullOrWhiteSpace(readinessInput.Category) || string.IsNullOrWhiteSpace(readinessInput.Test)) { message = "Enter the readiness category and test."; return; } var id = await EnsureProfileAsync(); await using var db = await DbFactory.CreateDbContextAsync(); readinessInput.FinanceProfileId = id; Stamp(readinessInput, await UserNameAsync()); db.FinanceReadinessControls.Add(readinessInput); await db.SaveChangesAsync(); readinessInput = NewReadiness(); message = "Readiness control added."; await LoadAsync(); }
+    private async Task DeactivateDebtAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.FinanceDebts.FindAsync(id); if (item is not null) { item.IsActive = false; Stamp(item, await UserNameAsync()); await db.SaveChangesAsync(); } await LoadAsync(); }
+    private async Task ResolveOwnerAdjustmentAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.FinanceOwnerAdjustments.FindAsync(id); if (item is not null) { item.Status = "Resolved"; Stamp(item, await UserNameAsync()); await db.SaveChangesAsync(); } await LoadAsync(); }
+    private async Task DeactivateCashUseAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.FinanceScheduledCashUses.FindAsync(id); if (item is not null) { item.IsActive = false; Stamp(item, await UserNameAsync()); await db.SaveChangesAsync(); } await LoadAsync(); }
+    private async Task DeleteReadinessAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.FinanceReadinessControls.FindAsync(id); if (item is not null) { db.Remove(item); await db.SaveChangesAsync(); } await LoadAsync(); }
+
+    private async Task<int> EnsureProfileAsync() { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.FinanceProfiles.SingleOrDefaultAsync(x => x.LocalOperationId == selectedOperationId); if (item is null) { item = new FinanceProfile { LocalOperationId = selectedOperationId, UpdatedBy = await UserNameAsync() }; db.Add(item); await db.SaveChangesAsync(); } return item.Id; }
+    private async Task<string> UserNameAsync() => (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User.Identity?.Name ?? "Administrator";
+    private static void Stamp(FinanceProfile x, string user) { x.UpdatedAt = DateTimeOffset.UtcNow; x.UpdatedBy = user; }
+    private static void Stamp(FinanceDebt x, string user) { x.UpdatedAt = DateTimeOffset.UtcNow; x.UpdatedBy = user; }
+    private static void Stamp(FinanceOwnerAdjustment x, string user) { x.UpdatedAt = DateTimeOffset.UtcNow; x.UpdatedBy = user; }
+    private static void Stamp(FinanceScheduledCashUse x, string user) { x.UpdatedAt = DateTimeOffset.UtcNow; x.UpdatedBy = user; }
+    private static void Stamp(FinanceReadinessControl x, string user) { x.UpdatedAt = DateTimeOffset.UtcNow; x.UpdatedBy = user; }
+    private static FinanceDebt NewDebt() => new() { NextPaymentDate = DateOnly.FromDateTime(DateTime.Today.AddDays(30)) };
+    private static FinanceOwnerAdjustment NewOwner() => new();
+    private static FinanceScheduledCashUse NewCashUse() => new() { ExpectedDate = DateOnly.FromDateTime(DateTime.Today.AddDays(7)) };
+    private static FinanceReadinessControl NewReadiness() => new();
+}
