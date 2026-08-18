@@ -244,6 +244,33 @@ public sealed class QuoteTaskAnalysisReviewItem
     public DateTimeOffset? ResolvedAt { get; set; }
 }
 
+public sealed class CentComResolutionRule
+{
+    public int Id { get; set; }
+    [Required, StringLength(80)] public string TaskType { get; set; } = string.Empty;
+    [Required, StringLength(30)] public string RuleKind { get; set; } = CentComResolutionRuleKinds.Warning;
+    [Required, StringLength(1000)] public string MatchText { get; set; } = string.Empty;
+    [StringLength(30)] public string? ReviewStatus { get; set; }
+    [StringLength(60)] public string? ResolutionAction { get; set; }
+    [StringLength(2000)] public string? EstimatorResponse { get; set; }
+    [StringLength(30)] public string? MaterialDecision { get; set; }
+    public int? VendorProductId { get; set; }
+    public VendorProduct? VendorProduct { get; set; }
+    [StringLength(500)] public string? MaterialDescription { get; set; }
+    [StringLength(40)] public string? MaterialUnit { get; set; }
+    [Column(TypeName = "numeric(18,4)")] public decimal? MaterialUnitCost { get; set; }
+    [StringLength(450)] public string? CreatedByUserId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public bool IsActive { get; set; } = true;
+}
+
+public static class CentComResolutionRuleKinds
+{
+    public const string Assumption = "Assumption";
+    public const string Warning = "Warning";
+    public const string Material = "Material";
+}
+
 public static class AnalysisReviewStatuses
 {
     public const string NeedsReview = "Needs review";

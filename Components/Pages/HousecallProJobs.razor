@@ -34,8 +34,11 @@
         <div class="col-md-2">
             <label class="form-label">Status</label>
             <InputSelect class="form-select" @bind-Value="status" @bind-Value:after="ReloadAsync">
+                <option value="@ScheduledAndUnscheduledStatus">Scheduled + Unscheduled</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="unscheduled">Unscheduled</option>
                 <option value="">All statuses</option>
-                @foreach (var item in statuses) { <option value="@item">@item</option> }
+                @foreach (var item in statuses.Where(IsAdditionalStatus)) { <option value="@item">@item</option> }
             </InputSelect>
         </div>
         <div class="col-md-2">
@@ -108,7 +111,9 @@
     private List<HousecallProJob> jobs = [];
     private List<string> statuses = [];
     private int operationId;
-    private string status = "";
+    private const string ScheduledAndUnscheduledStatus = "scheduled-and-unscheduled";
+    private const string NeedsSchedulingStatus = "needs scheduling";
+    private string status = ScheduledAndUnscheduledStatus;
     private string search = "";
     private DateTime? fromDate = new(DateTime.Today.Year, 1, 1);
     private DateTime? throughDate = new(DateTime.Today.Year, 12, 31);
@@ -173,7 +178,33 @@
                 x.WorkStatus != "user canceled" &&
                 x.WorkStatus != "pro canceled" &&
                 x.WorkStatus != "pro-canceled");
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.InternalStatus == status || (x.InternalStatus == null && x.WorkStatus == status));
+        if (status == ScheduledAndUnscheduledStatus)
+        {
+            query = query.Where(x =>
+                x.InternalStatus == "scheduled" ||
+                x.InternalStatus == "unscheduled" ||
+                x.InternalStatus == NeedsSchedulingStatus ||
+                (x.InternalStatus == null &&
+                    (x.WorkStatus == "scheduled" ||
+                     x.WorkStatus == "unscheduled" ||
+                     x.WorkStatus == NeedsSchedulingStatus)));
+        }
+        else if (status.Equals("unscheduled", StringComparison.OrdinalIgnoreCase))
+        {
+            query = query.Where(x =>
+                x.InternalStatus == "unscheduled" ||
+                x.InternalStatus == NeedsSchedulingStatus ||
+                (x.InternalStatus == null &&
+                    (x.WorkStatus == "unscheduled" || x.WorkStatus == NeedsSchedulingStatus)));
+        }
+        else if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(x => x.InternalStatus == status || (x.InternalStatus == null && x.WorkStatus == status));
+        }
+        var includesUnscheduled =
+            status == ScheduledAndUnscheduledStatus ||
+            status.Equals("unscheduled", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals(NeedsSchedulingStatus, StringComparison.OrdinalIgnoreCase);
         if (ReceivablesFilter is "expected" or "over30")
         {
             query = query.Where(x => x.OutstandingBalance > 0);
@@ -186,12 +217,24 @@
         if (fromDate is not null)
         {
             var from = ToUtcBoundary(fromDate.Value);
-            query = query.Where(x => x.ScheduledStart >= from);
+            query = query.Where(x =>
+                x.ScheduledStart >= from ||
+                (includesUnscheduled &&
+                    (x.InternalStatus == "unscheduled" ||
+                     x.InternalStatus == NeedsSchedulingStatus ||
+                     (x.InternalStatus == null &&
+                        (x.WorkStatus == "unscheduled" || x.WorkStatus == NeedsSchedulingStatus)))));
         }
         if (throughDate is not null)
         {
             var throughExclusive = ToUtcBoundary(throughDate.Value.AddDays(1));
-            query = query.Where(x => x.ScheduledStart < throughExclusive);
+            query = query.Where(x =>
+                x.ScheduledStart < throughExclusive ||
+                (includesUnscheduled &&
+                    (x.InternalStatus == "unscheduled" ||
+                     x.InternalStatus == NeedsSchedulingStatus ||
+                     (x.InternalStatus == null &&
+                        (x.WorkStatus == "unscheduled" || x.WorkStatus == NeedsSchedulingStatus)))));
         }
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -279,7 +322,18 @@
         var date = DateTime.SpecifyKind(value.Date, DateTimeKind.Unspecified);
         return new DateTimeOffset(date, TimeZoneInfo.Local.GetUtcOffset(date)).ToUniversalTime();
     }
-    private static string EffectiveStatus(HousecallProJob job) => job.InternalStatus ?? job.WorkStatus ?? "Not provided";
+    private static string EffectiveStatus(HousecallProJob job)
+    {
+        var value = job.InternalStatus ?? job.WorkStatus;
+        return value?.Equals(NeedsSchedulingStatus, StringComparison.OrdinalIgnoreCase) == true
+            ? "unscheduled"
+            : value ?? "Not provided";
+    }
+
+    private static bool IsAdditionalStatus(string value) =>
+        !value.Equals("scheduled", StringComparison.OrdinalIgnoreCase) &&
+        !value.Equals("unscheduled", StringComparison.OrdinalIgnoreCase) &&
+        !value.Equals(NeedsSchedulingStatus, StringComparison.OrdinalIgnoreCase);
 
     [Inject] private IConfiguration Configuration { get; set; } = null!;
 }

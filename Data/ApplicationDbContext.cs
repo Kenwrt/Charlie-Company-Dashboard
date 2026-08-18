@@ -27,6 +27,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<QuoteTaskAnalysis> QuoteTaskAnalyses => Set<QuoteTaskAnalysis>();
     public DbSet<QuoteTaskAnalysisMaterial> QuoteTaskAnalysisMaterials => Set<QuoteTaskAnalysisMaterial>();
     public DbSet<QuoteTaskAnalysisReviewItem> QuoteTaskAnalysisReviewItems => Set<QuoteTaskAnalysisReviewItem>();
+    public DbSet<CentComResolutionRule> CentComResolutionRules => Set<CentComResolutionRule>();
     public DbSet<QuotePricingRule> QuotePricingRules => Set<QuotePricingRule>();
     public DbSet<QuoteAuditEvent> QuoteAuditEvents => Set<QuoteAuditEvent>();
     public DbSet<QuoteProcessingJob> QuoteProcessingJobs => Set<QuoteProcessingJob>();
@@ -242,6 +243,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(item => new { item.QuoteTaskAnalysisId, item.ItemKey }).IsUnique();
             entity.HasOne(item => item.QuoteTaskAnalysis).WithMany(analysis => analysis.ReviewItems).HasForeignKey(item => item.QuoteTaskAnalysisId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(item => item.AddedVendorProduct).WithMany().HasForeignKey(item => item.AddedVendorProductId).OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<CentComResolutionRule>(entity =>
+        {
+            entity.HasIndex(rule => new { rule.TaskType, rule.RuleKind, rule.MatchText }).IsUnique();
+            entity.HasOne(rule => rule.VendorProduct).WithMany().HasForeignKey(rule => rule.VendorProductId).OnDelete(DeleteBehavior.SetNull);
         });
         builder.Entity<QuotePricingRule>(entity => entity.HasIndex(rule => rule.LocalOperationId).IsUnique());
         builder.Entity<CostingPolicyVersion>(entity =>

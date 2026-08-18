@@ -39,7 +39,25 @@ public sealed class CentComTaskAnalysisService(
             .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId)
             .OrderByDescending(item => item.RevisionNumber)
             .FirstOrDefaultAsync(cancellationToken);
-        if (analysis is null) return;
+        if (analysis is null)
+        {
+            var revision = (await db.QuoteTaskAnalyses
+                .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId)
+                .Select(item => (int?)item.RevisionNumber)
+                .MaxAsync(cancellationToken) ?? 0) + 1;
+            analysis = new QuoteTaskAnalysis
+            {
+                QuoteProjectTaskId = job.QuoteProjectTask.Id,
+                RevisionNumber = revision,
+                Status = QuoteTaskAnalysisStatuses.Processing
+            };
+            db.QuoteTaskAnalyses.Add(analysis);
+            await db.SaveChangesAsync(cancellationToken);
+            logger.LogInformation(
+                "Created missing CentCom analysis revision {Revision} while recovering queued job {JobId}.",
+                revision,
+                jobId);
+        }
         var priorAnalysis = await db.QuoteTaskAnalyses.AsNoTracking()
             .Include(item => item.Materials)
             .Include(item => item.ReviewItems)
@@ -74,10 +92,14 @@ public sealed class CentComTaskAnalysisService(
                 .Where(rule => rule.IsActive && (rule.TaskType == null || rule.TaskType == job.QuoteProjectTask.TaskType))
                 .OrderByDescending(rule => rule.MatchPhrase.Length)
                 .ToListAsync(cancellationToken);
+            var reusableRules = await db.CentComResolutionRules.AsNoTracking()
+                .Where(rule => rule.IsActive && rule.TaskType == job.QuoteProjectTask.TaskType)
+                .OrderByDescending(rule => rule.CreatedAt)
+                .ToListAsync(cancellationToken);
             var requestMessages = new CentComChatClient.RequestMessage[]
             {
                 new("system", BuildSystemPrompt()),
-                new("user", BuildTaskPrompt(job.QuoteProjectTask, resolvedReviewHistory))
+                new("user", BuildTaskPrompt(job.QuoteProjectTask, resolvedReviewHistory, reusableRules))
             };
             var response = await centCom.CompleteJsonAsync(requestMessages, cancellationToken);
             AnalysisResponse result;
@@ -98,7 +120,18 @@ public sealed class CentComTaskAnalysisService(
                         "matching the required schema. Keep assumptions, warnings, and material notes concise. " +
                         "Include every required material category. Return JSON only.")
                 ], cancellationToken);
-                result = ParseResponse(response);
+                try
+                {
+                    result = ParseResponse(response);
+                }
+                catch (JsonException repairException)
+                {
+                    logger.LogWarning(
+                        repairException,
+                        "CentCom JSON repair was still malformed for job {JobId}; deriving a safe material plan from the saved task scope.",
+                        jobId);
+                    result = BuildScopeFallback(job.QuoteProjectTask);
+                }
             }
 
             if (result.Materials.Count == 0)
@@ -135,9 +168,18 @@ public sealed class CentComTaskAnalysisService(
             analysis.Materials.Clear();
             analysis.Exclusions.Clear();
             analysis.ReviewItems.Clear();
+            // Persist removals before reusing revision-scoped item keys such as r01.
+            // PostgreSQL can otherwise attempt an insert before the matching delete
+            // and reject the batch on the unique analysis/item-key constraint.
+            await db.SaveChangesAsync(cancellationToken);
             var sortOrder = 1;
             foreach (var proposed in result.Materials)
             {
+                var materialRule = FindReusableRule(reusableRules, CentComResolutionRuleKinds.Material, proposed.Description);
+                if (materialRule?.MaterialDecision == MaterialReviewDecisions.Removed)
+                {
+                    continue;
+                }
                 var exclusion = exclusionRules.FirstOrDefault(rule =>
                     proposed.Description.Contains(rule.MatchPhrase, StringComparison.OrdinalIgnoreCase));
                 if (exclusion is not null)
@@ -150,11 +192,24 @@ public sealed class CentComTaskAnalysisService(
                     });
                     continue;
                 }
-                var match = FindCatalogMatch(proposed, catalog);
+                var match = materialRule?.VendorProductId is int preferredProductId
+                    ? catalog.FirstOrDefault(item => item.VendorProductId == preferredProductId)
+                    : FindCatalogMatch(proposed, catalog);
                 HomeDepotLookupResult? remoteMatch = null;
-                if (match is null)
+                if (match is null && materialRule is null)
                 {
-                    remoteMatch = await homeDepot.FindAsync(proposed.Description, cancellationToken);
+                    try
+                    {
+                        remoteMatch = await homeDepot.FindAsync(proposed.Description, cancellationToken);
+                    }
+                    catch (Exception lookupException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        logger.LogWarning(
+                            lookupException,
+                            "Home Depot lookup failed for '{Description}' in CentCom job {JobId}; preserving the material as unresolved for estimator review.",
+                            Trim(proposed.Description, 160),
+                            jobId);
+                    }
                     if (remoteMatch?.MatchKind == HomeDepotMatchKinds.Exact)
                     {
                         match = await GetOrCreateHomeDepotCatalogItemAsync(db, remoteMatch, proposed.Unit, cancellationToken);
@@ -178,20 +233,20 @@ public sealed class CentComTaskAnalysisService(
                     OriginalDescription = Trim(proposed.Description, 500) ?? "Unspecified material",
                     Quantity = quantity,
                     Unit = resolvedUnit,
-                    UnitCost = match?.UnitPrice ?? remoteMatch?.UnitPrice ?? 0,
+                    UnitCost = match?.UnitPrice ?? remoteMatch?.UnitPrice ?? materialRule?.MaterialUnitCost ?? 0,
                     WastePercent = Math.Clamp(wastePercent, 0, 100),
-                    MatchConfidence = match is not null ? 1 : remoteMatch?.Confidence ?? 0,
-                    SourceType = match is not null ? match.VendorName : remoteMatch is not null ? "Home Depot via SerpApi" : "CentCom estimate - unmatched",
+                    MatchConfidence = match is not null || materialRule is not null ? 1 : remoteMatch?.Confidence ?? 0,
+                    SourceType = match is not null ? match.VendorName : remoteMatch is not null ? "Home Depot via SerpApi" : materialRule is not null ? "Reusable estimator rule" : "CentCom estimate - unmatched",
                     SourceReference = match is null
                         ? Trim(remoteMatch?.ProductUrl ?? remoteMatch?.SearchQuery, 255)
                         : string.Join(" · ", new[] { match.SourceType, match.SourceReference }
                             .Where(value => !string.IsNullOrWhiteSpace(value))),
                     SourcePriceDate = match?.EffectiveDate,
-                    IsUnmatched = match is null && remoteMatch is null,
+                    IsUnmatched = match is null && remoteMatch is null && materialRule is null,
                     MatchKind = match is not null
                         ? (match.VendorName.Equals("Home Depot", StringComparison.OrdinalIgnoreCase) ? MaterialMatchKinds.HomeDepotExact : MaterialMatchKinds.Catalog)
-                        : remoteMatch is not null ? MaterialMatchKinds.HomeDepotSimilar : MaterialMatchKinds.Unresolved,
-                    ReviewDecision = match is not null ? MaterialReviewDecisions.Accepted : MaterialReviewDecisions.Pending,
+                        : remoteMatch is not null ? MaterialMatchKinds.HomeDepotSimilar : materialRule is not null ? MaterialMatchKinds.OneOff : MaterialMatchKinds.Unresolved,
+                    ReviewDecision = match is not null || materialRule is not null ? MaterialReviewDecisions.Accepted : MaterialReviewDecisions.Pending,
                     Notes = Trim(proposed.Notes, 1000)
                 });
             }
@@ -221,6 +276,7 @@ public sealed class CentComTaskAnalysisService(
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Select(item => (Label: "Assumption", Body: item.Trim()))
                 .Where(item => !WasPreviouslyResolved(item, AnalysisReviewKinds.Assumption, resolvedReviewHistory))
+                .Where(item => FindReusableRule(reusableRules, CentComResolutionRuleKinds.Assumption, item.Body) is null)
                 .ToList();
             analysis.Assumptions = Trim(string.Join(Environment.NewLine, generatedAssumptionItems.Select(item => item.Body)), 4000);
             var validationWarnings = ValidateDeckAnalysis(job.QuoteProjectTask, analysis.Materials, analysis.Exclusions);
@@ -240,6 +296,7 @@ public sealed class CentComTaskAnalysisService(
                     .Concat(analysis.Materials.Where(item => item.IsUnmatched)
                         .Select(item => $"[UNRESOLVED MATERIAL] {item.OriginalDescription ?? item.Description}: enter a catalog item or one-off price."))))
                 .Where(item => !WasPreviouslyResolved(item, AnalysisReviewKinds.Warning, resolvedReviewHistory))
+                .Where(item => FindReusableRule(reusableRules, CentComResolutionRuleKinds.Warning, item.Body) is null)
                 .ToList();
             analysis.QuestionsAndWarnings = Trim(
                 string.Join(Environment.NewLine, generatedReviewItems.Select(item => $"[{item.Label.ToUpperInvariant()}] {item.Body}")),
@@ -464,7 +521,8 @@ public sealed class CentComTaskAnalysisService(
 
     private static string BuildTaskPrompt(
         QuoteProjectTask task,
-        IReadOnlyCollection<QuoteTaskAnalysisReviewItem> resolvedReviewHistory)
+        IReadOnlyCollection<QuoteTaskAnalysisReviewItem> resolvedReviewHistory,
+        IReadOnlyCollection<CentComResolutionRule> reusableRules)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"TASK TYPE: {task.TaskType}");
@@ -479,6 +537,15 @@ public sealed class CentComTaskAnalysisService(
             foreach (var item in resolvedReviewHistory)
                 builder.AppendLine($"- {item.ReviewKind} / {item.Category}: {item.Description} | Disposition: {item.Status} | Response: {item.EstimatorResponse ?? "No note"} | Action: {item.ResolutionAction ?? "No added cost"}");
             builder.AppendLine("Do not repeat any accepted, resolved, or not-applicable item as a question or warning in this or future revisions. Treat the estimator disposition and response as authoritative. Preserve estimator-locked catalog products.");
+        }
+        var reviewRules = reusableRules.Where(rule => rule.RuleKind != CentComResolutionRuleKinds.Material).ToList();
+        if (reviewRules.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"REUSABLE ESTIMATOR RULES FOR {task.TaskType.ToUpperInvariant()} TASKS (authoritative):");
+            foreach (var rule in reviewRules)
+                builder.AppendLine($"- {rule.RuleKind}: {rule.MatchText} | Disposition: {rule.ReviewStatus} | Response: {rule.EstimatorResponse ?? "No note"} | Action: {rule.ResolutionAction ?? "No added cost"}");
+            builder.AppendLine("Apply these rules whenever the same or materially equivalent condition appears. Do not return a resolved rule as an open assumption, question, or warning.");
         }
         builder.AppendLine();
         builder.AppendLine(
@@ -520,6 +587,22 @@ public sealed class CentComTaskAnalysisService(
                 if (candidateLabel != priorLabel) return false;
                 return candidateBody.Contains(priorBody, StringComparison.Ordinal)
                     || priorBody.Contains(candidateBody, StringComparison.Ordinal);
+            });
+    }
+
+    private static CentComResolutionRule? FindReusableRule(
+        IEnumerable<CentComResolutionRule> rules,
+        string ruleKind,
+        string candidate)
+    {
+        var normalizedCandidate = NormalizeReviewText(candidate);
+        return rules.Where(rule => rule.RuleKind == ruleKind)
+            .FirstOrDefault(rule =>
+            {
+                var normalizedRule = NormalizeReviewText(rule.MatchText);
+                return normalizedCandidate == normalizedRule
+                    || normalizedCandidate.Contains(normalizedRule, StringComparison.Ordinal)
+                    || normalizedRule.Contains(normalizedCandidate, StringComparison.Ordinal);
             });
     }
 

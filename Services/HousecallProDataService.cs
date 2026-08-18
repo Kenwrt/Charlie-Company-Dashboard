@@ -61,8 +61,20 @@ public sealed class HousecallProDataService(
     {
         await using var dataScope = scopeFactory.CreateAsyncScope();
         var dbContext = dataScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var jobs = await GetPagesAsync(settings.JobsEndpoint, "jobs", apiKey, cancellationToken);
-        var estimates = await GetPagesAsync(settings.EstimatesEndpoint, "estimates", apiKey, cancellationToken);
+        // The Jobs page is the operational system of record, so its synchronized cache must
+        // include older unscheduled work as well as the most recent scheduled jobs.
+        var jobs = await GetPagesAsync(
+            settings.JobsEndpoint,
+            "jobs",
+            apiKey,
+            cancellationToken,
+            maxPages: int.MaxValue);
+        var estimates = await GetPagesAsync(
+            settings.EstimatesEndpoint,
+            "estimates",
+            apiKey,
+            cancellationToken,
+            maxPages: int.MaxValue);
         var syncedAt = DateTimeOffset.UtcNow;
         var existingJobs = await dbContext.HousecallProJobs
             .Where(x => x.LocalOperationId == operation.Id)
@@ -171,6 +183,7 @@ public sealed class HousecallProDataService(
     {
         estimateNumber = estimateNumber.Trim();
         if (string.IsNullOrWhiteSpace(estimateNumber)) return null;
+        var parentEstimateNumber = ParentEstimateNumber(estimateNumber);
 
         var apiKey = settings.GetApiKey(operationSlug);
         if (apiKey is null) return null;
@@ -181,7 +194,9 @@ public sealed class HousecallProDataService(
             var db = dataScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             externalId = await db.HousecallProEstimates
                 .AsNoTracking()
-                .Where(x => x.LocalOperation.Slug == operationSlug && x.EstimateNumber == estimateNumber)
+                .Where(x =>
+                    x.LocalOperation.Slug == operationSlug &&
+                    (x.EstimateNumber == estimateNumber || x.EstimateNumber == parentEstimateNumber))
                 .Select(x => x.ExternalId)
                 .FirstOrDefaultAsync(cancellationToken);
         }
@@ -202,12 +217,13 @@ public sealed class HousecallProDataService(
                 "estimates",
                 apiKey,
                 cancellationToken,
-                maxPages: 2);
+                maxPages: int.MaxValue);
             estimate = estimates.FirstOrDefault(item =>
-                string.Equals(
-                    Text(item, "estimate_number") ?? Text(item, "number"),
-                    estimateNumber,
-                    StringComparison.OrdinalIgnoreCase));
+            {
+                var number = Text(item, "estimate_number") ?? Text(item, "number");
+                return string.Equals(number, estimateNumber, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(number, parentEstimateNumber, StringComparison.OrdinalIgnoreCase);
+            });
             if (estimate.ValueKind == JsonValueKind.Undefined) return null;
             externalId = Text(estimate, "id");
             if (externalId is null) return null;
@@ -232,6 +248,49 @@ public sealed class HousecallProDataService(
                 CustomerValue(estimate, "work_number")),
             customerAddress,
             Date(estimate, "created_at") ?? FirstOptionDate(estimate, "created_at"));
+    }
+
+    public async Task<IReadOnlyList<HcpEstimateStartRecord>> SearchEstimateStartsAsync(
+        string operationSlug,
+        string search,
+        CancellationToken cancellationToken = default)
+    {
+        search = search.Trim();
+        if (string.IsNullOrWhiteSpace(search)) return [];
+
+        var parentEstimateNumber = ParentEstimateNumber(search);
+        var term = $"%{search}%";
+        await using var dataScope = scopeFactory.CreateAsyncScope();
+        var db = dataScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await db.HousecallProEstimates.AsNoTracking()
+            .Where(x => x.LocalOperation.Slug == operationSlug)
+            .Where(x =>
+                x.EstimateNumber == search ||
+                x.EstimateNumber == parentEstimateNumber ||
+                EF.Functions.ILike(x.CustomerName ?? "", term) ||
+                EF.Functions.ILike(x.CustomerAddress ?? "", term) ||
+                EF.Functions.ILike(x.CustomerEmail ?? "", term) ||
+                EF.Functions.ILike(x.CustomerPhone ?? "", term))
+            .OrderByDescending(x => x.EstimateNumber == search || x.EstimateNumber == parentEstimateNumber)
+            .ThenByDescending(x => x.EstimateDate)
+            .Take(25)
+            .Select(x => new HcpEstimateStartRecord(
+                x.ExternalId,
+                x.EstimateNumber ?? x.ExternalId,
+                x.CustomerName ?? "Not provided",
+                x.CustomerEmail,
+                x.CustomerPhone,
+                x.CustomerAddress ?? "Not provided",
+                x.EstimateDate))
+            .ToListAsync(cancellationToken);
+    }
+
+    private static string ParentEstimateNumber(string value)
+    {
+        var separator = value.LastIndexOf('-');
+        return separator > 0 && int.TryParse(value[(separator + 1)..], out _)
+            ? value[..separator]
+            : value;
     }
 
     public async Task<HcpJobPaymentHistory?> GetJobPaymentHistoryAsync(

@@ -1,0 +1,180 @@
+@page "/admin/centcom-rules"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>CentCom Resolution Rules</PageTitle>
+
+<h1>CentCom resolution rules</h1>
+<p>Review the estimator decisions that CentCom reuses on future tasks. Rules are scoped by task type and can be removed at any time.</p>
+
+@if (message is not null)
+{
+    <div class="alert alert-info" role="status">@message</div>
+}
+
+<section class="activity-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center gap-3">
+        <div><h2>Accepted assumptions</h2><p class="mb-0">Accepted or corrected assumptions that apply to similar future work.</p></div>
+        <span class="badge text-bg-secondary">@AssumptionRules.Count</span>
+    </div>
+    @ReviewRuleTable(AssumptionRules)
+</section>
+
+<section class="activity-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center gap-3">
+        <div><h2>Accepted questions and warnings</h2><p class="mb-0">Questions, warnings, and estimator responses that CentCom treats as resolved.</p></div>
+        <span class="badge text-bg-secondary">@WarningRules.Count</span>
+    </div>
+    @ReviewRuleTable(WarningRules)
+</section>
+
+<section class="activity-panel mb-4">
+    <div class="d-flex justify-content-between align-items-center gap-3">
+        <div><h2>Accepted unknown inventory</h2><p class="mb-0">Saved decisions for unresolved material descriptions. Reassign a rule to an active catalog product or delete it.</p></div>
+        <span class="badge text-bg-secondary">@MaterialRules.Count</span>
+    </div>
+    @if (MaterialRules.Count == 0)
+    {
+        <p class="text-muted mt-3 mb-0">No reusable unknown-inventory rules have been saved.</p>
+    }
+    else
+    {
+        <div class="table-responsive mt-3">
+            <table class="table align-middle">
+                <thead><tr><th>Task</th><th>Original unknown item</th><th>Current assignment</th><th>Reassign</th><th>Saved</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var rule in MaterialRules)
+                {
+                    <tr>
+                        <td><span class="badge text-bg-light">@rule.TaskType</span></td>
+                        <td><strong>@rule.MatchText</strong><br /><small>@rule.MaterialDecision</small></td>
+                        <td>@MaterialAssignment(rule)</td>
+                        <td style="min-width: 22rem">
+                            <div class="d-flex gap-2">
+                                <select class="form-select form-select-sm" value="@CatalogSelection(rule.Id)" @onchange="args => SetCatalogSelection(rule.Id, args.Value?.ToString())">
+                                    <option value="0">Select catalog product…</option>
+                                    @foreach (var item in PricedCatalogItems)
+                                    {
+                                        <option value="@item.Id">@CatalogLabel(item)</option>
+                                    }
+                                </select>
+                                <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ReassignMaterialRuleAsync(rule.Id)">Apply</button>
+                            </div>
+                        </td>
+                        <td><small>@rule.CreatedAt.ToLocalTime().ToString("MM/dd/yyyy")</small></td>
+                        <td><button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteRuleAsync(rule.Id)">Delete</button></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    private List<CentComResolutionRule> rules = [];
+    private List<VendorProduct> catalogItems = [];
+    private readonly Dictionary<int, int> catalogSelections = [];
+    private string? message;
+
+    private List<CentComResolutionRule> AssumptionRules => rules.Where(x => x.RuleKind == CentComResolutionRuleKinds.Assumption).ToList();
+    private List<CentComResolutionRule> WarningRules => rules.Where(x => x.RuleKind == CentComResolutionRuleKinds.Warning).ToList();
+    private List<CentComResolutionRule> MaterialRules => rules.Where(x => x.RuleKind == CentComResolutionRuleKinds.Material).ToList();
+    private IEnumerable<VendorProduct> PricedCatalogItems => catalogItems.Where(x => CurrentCatalogPrice(x) is not null);
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private RenderFragment ReviewRuleTable(IReadOnlyCollection<CentComResolutionRule> reviewRules) => @<text>
+        @if (reviewRules.Count == 0)
+        {
+            <p class="text-muted mt-3 mb-0">No reusable rules have been saved.</p>
+        }
+        else
+        {
+            <div class="table-responsive mt-3">
+                <table class="table align-middle">
+                    <thead><tr><th>Task</th><th>Accepted item</th><th>Disposition</th><th>Estimator response</th><th>Saved</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var rule in reviewRules)
+                    {
+                        <tr>
+                            <td><span class="badge text-bg-light">@rule.TaskType</span></td>
+                            <td><strong>@rule.MatchText</strong></td>
+                            <td>@rule.ReviewStatus<br /><small>@rule.ResolutionAction</small></td>
+                            <td>@(rule.EstimatorResponse ?? "No response recorded")</td>
+                            <td><small>@rule.CreatedAt.ToLocalTime().ToString("MM/dd/yyyy")</small></td>
+                            <td><button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteRuleAsync(rule.Id)">Delete</button></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </text>;
+
+    private async Task ReloadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        rules = await db.CentComResolutionRules.AsNoTracking().Include(x => x.VendorProduct).ThenInclude(x => x!.Product)
+            .Include(x => x.VendorProduct).ThenInclude(x => x!.SupplyVendor)
+            .Where(x => x.IsActive).OrderBy(x => x.RuleKind).ThenBy(x => x.TaskType).ThenByDescending(x => x.CreatedAt).ToListAsync();
+        catalogItems = await db.VendorProducts.AsNoTracking().Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
+            .Where(x => x.IsActive && x.Product.IsActive && x.SupplyVendor.IsActive).OrderBy(x => x.Product.Name).ToListAsync();
+    }
+
+    private async Task DeleteRuleAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var rule = await db.CentComResolutionRules.SingleOrDefaultAsync(x => x.Id == id);
+        if (rule is null) return;
+        var description = rule.MatchText;
+        db.CentComResolutionRules.Remove(rule);
+        await db.SaveChangesAsync();
+        catalogSelections.Remove(id);
+        message = $"Deleted the reusable rule for '{description}'. Future analyses will no longer apply it.";
+        await ReloadAsync();
+    }
+
+    private int CatalogSelection(int ruleId) => catalogSelections.GetValueOrDefault(ruleId);
+    private void SetCatalogSelection(int ruleId, string? value) => catalogSelections[ruleId] = int.TryParse(value, out var id) ? id : 0;
+
+    private async Task ReassignMaterialRuleAsync(int ruleId)
+    {
+        var productId = CatalogSelection(ruleId);
+        if (productId == 0) { message = "Select an active catalog product before applying the reassignment."; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var rule = await db.CentComResolutionRules.SingleOrDefaultAsync(x => x.Id == ruleId && x.RuleKind == CentComResolutionRuleKinds.Material);
+        var product = await db.VendorProducts.Include(x => x.Product).Include(x => x.SupplyVendor).Include(x => x.Prices)
+            .SingleOrDefaultAsync(x => x.Id == productId && x.IsActive && x.Product.IsActive && x.SupplyVendor.IsActive);
+        var price = product is null ? null : CurrentCatalogPrice(product);
+        if (rule is null || product is null || price is null) { message = "The rule or selected catalog product is no longer available."; return; }
+        rule.VendorProductId = product.Id;
+        rule.MaterialDecision = MaterialReviewDecisions.Replaced;
+        rule.MaterialDescription = product.VendorDescription ?? product.Product.Name;
+        rule.MaterialUnit = product.PurchaseUnit;
+        rule.MaterialUnitCost = price.UnitPrice;
+        rule.CreatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        catalogSelections.Remove(ruleId);
+        message = $"Reassigned '{rule.MatchText}' to {product.Product.Name}.";
+        await ReloadAsync();
+    }
+
+    private static VendorPrice? CurrentCatalogPrice(VendorProduct item)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return item.Prices.Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today))
+            .OrderByDescending(x => x.EffectiveDate).ThenByDescending(x => x.Id).FirstOrDefault();
+    }
+
+    private static string CatalogLabel(VendorProduct item) =>
+        $"{item.Product.Name} — {item.SupplyVendor.Name} / {item.VendorSku} — {CurrentCatalogPrice(item)!.UnitPrice:C2}";
+
+    private static string MaterialAssignment(CentComResolutionRule rule) => rule.VendorProduct is not null
+        ? $"{rule.VendorProduct.Product.Name} — {rule.VendorProduct.SupplyVendor.Name}"
+        : rule.MaterialDecision == MaterialReviewDecisions.Removed ? "Removed from future estimates" : $"{rule.MaterialDescription ?? "Accepted one-off"} — {rule.MaterialUnitCost.GetValueOrDefault():C2}";
+}

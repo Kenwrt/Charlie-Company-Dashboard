@@ -90,7 +90,7 @@
         </div>
 
         <h3 class="h5 mt-4">Receivables aging report</h3>
-        <p class="small text-muted">Aging uses the job’s scheduled end date, or scheduled start date when no end date is available.</p>
+        <p class="small text-muted">Aging uses the job’s scheduled end date, or scheduled start date when no end date is available. Unscheduled jobs without a date are shown as Unknown.</p>
         <div class="finance-table-wrap">
             <table class="finance-table">
                 <thead><tr><th>Aging period</th><th>Jobs</th><th>Uncollected balance</th></tr></thead>
@@ -100,6 +100,9 @@
                         <tr><td>@bucket.Label</td><td>@bucket.JobCount.ToString("N0")</td><td>@bucket.Balance.ToString("C2")</td></tr>
                     }
                 </tbody>
+                <tfoot>
+                    <tr class="fw-bold"><td>Total</td><td>@receivablesSummary.ExpectedJobCount.ToString("N0")</td><td>@receivablesSummary.ExpectedBalance.ToString("C2")</td></tr>
+                </tfoot>
             </table>
         </div>
     </section>
@@ -267,7 +270,7 @@
                     <NavLink class="local-entity-card" href="@($"entity/{entity.EntitySlug}")">
                         <div>
                             <strong>@entity.EntityName</strong>
-                            <span>@entity.CurrentJobsInProgress.ToString("N0") jobs in progress</span>
+                            <span>@entity.CurrentJobsInProgress.ToString("N0") scheduled + unscheduled jobs</span>
                         </div>
                         <dl>
                             <div>
@@ -501,10 +504,11 @@
 
         var agingBuckets = new[]
         {
-            BuildAgingBucket("Current to 30 days", rows.Where(row => row.AgeInDays is null or <= 30)),
+            BuildAgingBucket("Current to 30 days", rows.Where(row => row.AgeInDays is <= 30)),
             BuildAgingBucket("31–60 days", rows.Where(row => row.AgeInDays is >= 31 and <= 60)),
             BuildAgingBucket("61–90 days", rows.Where(row => row.AgeInDays is >= 61 and <= 90)),
-            BuildAgingBucket("91+ days", rows.Where(row => row.AgeInDays is >= 91))
+            BuildAgingBucket("91+ days", rows.Where(row => row.AgeInDays is >= 91)),
+            BuildAgingBucket("Unknown (unscheduled/no date)", rows.Where(row => row.AgeInDays is null))
         };
         var overThirty = rows.Where(row => row.AgeInDays is >= 31).ToList();
         receivablesSummary = new(
@@ -684,11 +688,11 @@
         return
         [
             new(
-                "Jobs in progress",
+                "Scheduled + unscheduled jobs",
                 snapshot.CurrentJobsInProgress.ToString("N0"),
-                $"Scheduled jobs in {year}",
+                $"Combined Jobs view for {year}",
                 "accent-jobs",
-                $"hcp/jobs?operation={operationSlug}&status=scheduled&from={from}&through={through}"),
+                $"hcp/jobs?operation={operationSlug}&status=scheduled-and-unscheduled&from={from}&through={through}"),
             new(
                 "Outstanding estimates",
                 snapshot.OutstandingEstimates.ToString("N0"),
@@ -700,7 +704,7 @@
                 snapshot.MonthlyRevenue.ToString("C2"),
                 "Outstanding charges for scheduled jobs",
                 "accent-revenue",
-                $"hcp/jobs?operation={operationSlug}&status=scheduled&from={from}&through={through}")
+                $"hcp/jobs?operation={operationSlug}&status=scheduled-and-unscheduled&from={from}&through={through}")
         ];
     }
 

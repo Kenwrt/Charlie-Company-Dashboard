@@ -23,7 +23,7 @@
         <div>
             <p class="eyebrow">On-site estimating</p>
             <h1>Start Estimate</h1>
-            <p class="dashboard-subtitle">Enter the Housecall Pro estimate number prepared before the customer visit. CCV will retrieve the customer and project address directly from Housecall Pro.</p>
+            <p class="dashboard-subtitle">Search by Housecall Pro estimate number, customer name, address, email, or phone. CCV will retrieve the customer and project address from Housecall Pro.</p>
         </div>
     </div>
 
@@ -46,16 +46,40 @@
                 </InputSelect>
             </div>
             <div class="col-md-5">
-                <label class="form-label">Housecall Pro estimate number</label>
-                <InputText class="form-control" @bind-Value="input.EstimateNumber" placeholder="Example: 1556" disabled="@lookingUp" />
+                <label class="form-label">Estimate or customer search</label>
+                <input class="form-control" @bind="input.EstimateNumber" @bind:event="oninput" placeholder="Example: 1308-1 or Stanley Kasakevics" disabled="@lookingUp" />
             </div>
             <div class="col-md-2">
                 <button type="button" class="btn btn-primary w-100" @onclick="FindEstimateAsync" disabled="@lookingUp">
-                    @(lookingUp ? "Finding…" : "Find Estimate")
+                    @(lookingUp ? "Searching…" : "Search")
                 </button>
             </div>
         </div>
     </section>
+
+    @if (searchResults.Count > 0)
+    {
+        <section class="activity-panel mt-4">
+            <h2>Matching Housecall Pro estimates</h2>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead><tr><th>Estimate</th><th>Customer</th><th>Address</th><th>Date</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var estimate in searchResults)
+                    {
+                        <tr>
+                            <td>@estimate.EstimateNumber</td>
+                            <td>@estimate.CustomerName<br /><small>@estimate.CustomerEmail @estimate.CustomerPhone</small></td>
+                            <td>@estimate.CustomerAddress</td>
+                            <td>@(estimate.EstimateDate?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not provided")</td>
+                            <td class="text-end"><button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => SelectEstimate(estimate)">Use estimate</button></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
 
     @if (lookup is not null)
     {
@@ -70,7 +94,7 @@
                         <p class="text-muted mb-0">@lookup.CustomerEmail @lookup.CustomerPhone</p>
                     }
                 </div>
-                <span class="badge text-bg-success">Live HCP record confirmed</span>
+                <span class="badge text-bg-success">Synchronized HCP record confirmed</span>
             </div>
 
             <EditForm Model="input" OnValidSubmit="CreateAsync" FormName="start-estimate" class="mt-4">
@@ -127,6 +151,7 @@
     private List<QuoteCase> quotes = [];
     private StartEstimateInput input = new();
     private HcpEstimateStartRecord? lookup;
+    private List<HcpEstimateStartRecord> searchResults = [];
     private string? message;
     private bool lookingUp;
     private bool creating;
@@ -147,6 +172,7 @@
     private async Task FindEstimateAsync()
     {
         lookup = null;
+        searchResults = [];
         message = null;
         var operation = operations.SingleOrDefault(x => x.Id == input.LocalOperationId);
         if (operation is null)
@@ -156,7 +182,7 @@
         }
         if (string.IsNullOrWhiteSpace(input.EstimateNumber))
         {
-            message = "Enter the Housecall Pro estimate number.";
+            message = "Enter an estimate number, customer name, address, email, or phone.";
             return;
         }
 
@@ -164,10 +190,24 @@
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            lookup = await HousecallPro.FindEstimateByNumberAsync(operation.Slug, input.EstimateNumber, timeout.Token);
-            message = lookup is null
-                ? "The estimate could not be found with a customer name and project address in Housecall Pro."
-                : "Confirm the customer and project address below, then start the on-site estimate.";
+            searchResults = (await HousecallPro.SearchEstimateStartsAsync(operation.Slug, input.EstimateNumber, timeout.Token)).ToList();
+            var normalizedNumber = NormalizeEstimateNumber(input.EstimateNumber);
+            var exactMatch = searchResults.FirstOrDefault(result =>
+                result.EstimateNumber.Equals(normalizedNumber, StringComparison.OrdinalIgnoreCase));
+            if (exactMatch is not null)
+            {
+                SelectEstimate(exactMatch);
+            }
+            else if (searchResults.Count == 1)
+            {
+                SelectEstimate(searchResults[0]);
+            }
+            else
+            {
+                message = searchResults.Count == 0
+                    ? "No synchronized Housecall Pro estimates matched that number, customer, address, email, or phone."
+                    : $"Select one of the {searchResults.Count} matching Housecall Pro estimates.";
+            }
         }
         catch (Exception)
         {
@@ -177,6 +217,23 @@
         {
             lookingUp = false;
         }
+    }
+
+    private void SelectEstimate(HcpEstimateStartRecord estimate)
+    {
+        lookup = estimate;
+        input.EstimateNumber = estimate.EstimateNumber;
+        searchResults = [];
+        message = "Confirm the customer and project address below, then start the on-site estimate.";
+    }
+
+    private static string NormalizeEstimateNumber(string value)
+    {
+        value = value.Trim();
+        var separator = value.LastIndexOf('-');
+        return separator > 0 && int.TryParse(value[(separator + 1)..], out _)
+            ? value[..separator]
+            : value;
     }
 
     private async Task CreateAsync()

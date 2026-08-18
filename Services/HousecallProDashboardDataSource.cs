@@ -75,12 +75,29 @@ public sealed class HousecallProDashboardDataSource(
         var yearStart = ToUtcBoundary(new DateTime(year, 1, 1));
         var nextYearStart = ToUtcBoundary(new DateTime(year + 1, 1, 1));
 
-        var scheduledJobs = db.HousecallProJobs.AsNoTracking()
+        var jobsInCombinedView = db.HousecallProJobs.AsNoTracking()
             .Where(job => job.LocalOperationId == operation.Id)
-            .Where(job => job.WorkStatus == "scheduled")
-            .Where(job => job.ScheduledStart >= yearStart && job.ScheduledStart < nextYearStart);
+            .Where(job => job.InternalStatus != HousecallProEstimateStatuses.FollowUpComplete)
+            .Where(job =>
+                job.InternalStatus == "scheduled" ||
+                job.InternalStatus == "unscheduled" ||
+                job.InternalStatus == "needs scheduling" ||
+                (job.InternalStatus == null &&
+                    (job.WorkStatus == "scheduled" ||
+                     job.WorkStatus == "unscheduled" ||
+                     job.WorkStatus == "needs scheduling")))
+            .Where(job =>
+                (job.ScheduledStart >= yearStart && job.ScheduledStart < nextYearStart) ||
+                job.InternalStatus == "unscheduled" ||
+                job.InternalStatus == "needs scheduling" ||
+                (job.InternalStatus == null &&
+                    (job.WorkStatus == "unscheduled" || job.WorkStatus == "needs scheduling")));
 
-        var jobsInProgress = await scheduledJobs.CountAsync(cancellationToken);
+        var scheduledJobs = jobsInCombinedView.Where(job =>
+            job.InternalStatus == "scheduled" ||
+            (job.InternalStatus == null && job.WorkStatus == "scheduled"));
+
+        var jobsInProgress = await jobsInCombinedView.CountAsync(cancellationToken);
         var outstandingCharges = await scheduledJobs.SumAsync(job => job.OutstandingBalance, cancellationToken);
 
         var outstandingEstimates = await db.HousecallProEstimates.AsNoTracking()
