@@ -21,6 +21,7 @@ public sealed class SupplyVendor
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAt { get; set; }
     public ICollection<PayableInvoice> PayableInvoices { get; set; } = [];
+    public ICollection<VendorCredit> VendorCredits { get; set; } = [];
     public ICollection<VendorProduct> VendorProducts { get; set; } = [];
     public ICollection<PriceImportDocument> PriceImportDocuments { get; set; } = [];
     public ICollection<CatalogSyncJob> CatalogSyncJobs { get; set; } = [];

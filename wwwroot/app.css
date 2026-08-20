@@ -1037,6 +1037,14 @@ details[open] > summary .disclosure-chevron {
     text-align: right;
 }
 
+.receivables-aging-table .aging-jobs-column {
+    width: 12%;
+}
+
+.receivables-aging-table .aging-balance-column {
+    width: 24%;
+}
+
 .status-pill {
     border-radius: 999px;
     display: inline-block;

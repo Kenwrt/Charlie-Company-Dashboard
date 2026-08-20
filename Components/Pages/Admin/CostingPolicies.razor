@@ -59,7 +59,8 @@
         <article class="border rounded p-3 mt-3">
             <strong>@kit.Name</strong> <span class="text-muted">— @(kit.TaskType ?? "All tasks") / @(kit.WorkType ?? "All work types")</span>
             @if (kit.Items.Count == 0) { <p class="mb-0 mt-2 text-warning">No catalog items have been added.</p> }
-            else { <ul class="mb-0 mt-2">@foreach (var item in kit.Items) { <li>@item.VendorProduct.Product.Name — @item.Quantity.ToString("N2") @item.VendorProduct.PurchaseUnit, @item.WastePercent.ToString("N2")% waste</li> }</ul> }
+            else { <ul class="mb-0 mt-2">@foreach (var item in kit.Items) { <li>@item.VendorProduct.Product.Name — @item.Quantity.ToString("N2") @item.VendorProduct.PurchaseUnit, @item.WastePercent.ToString("N2")% waste <button class="btn btn-sm btn-link text-danger" @onclick="() => DeleteKitItemAsync(item.Id)">Delete item</button></li> }</ul> }
+            <button class="btn btn-sm btn-outline-danger mt-2" @onclick="() => DeleteKitAsync(kit.Id)">Delete kit</button>
         </article>
     }
 </section>
@@ -75,7 +76,7 @@
         <div class="col-md-2"><label class="form-label">Daily crew cost</label><InputNumber class="form-control" @bind-Value="rateDailyCost" /></div>
         <div class="col-md-1 d-flex align-items-end"><button class="btn btn-outline-primary" @onclick="AddCrewRateAsync">Add rate</button></div>
     </div>
-    @if (ActivePolicy?.CrewRates.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Task</th><th>Work type</th><th>Crew</th><th>Daily cost</th></tr></thead><tbody>@foreach (var rate in ActivePolicy.CrewRates) { <tr><td>@rate.TaskType</td><td>@(rate.WorkType ?? "All")</td><td>@rate.CrewSize.ToString("N2")</td><td>@rate.DailyCrewCost.ToString("C2")</td></tr> }</tbody></table> }
+    @if (ActivePolicy?.CrewRates.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Task</th><th>Work type</th><th>Crew</th><th>Daily cost</th><th></th></tr></thead><tbody>@foreach (var rate in ActivePolicy.CrewRates) { <tr><td>@rate.TaskType</td><td>@(rate.WorkType ?? "All")</td><td>@rate.CrewSize.ToString("N2")</td><td>@rate.DailyCrewCost.ToString("C2")</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => EditCrewRate(rate)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCrewRateAsync(rate.Id)">Delete</button></td></tr> }</tbody></table> }
 </section>
 
 <section class="activity-panel mb-4">
@@ -88,7 +89,7 @@
         <div class="col-md-2"><label class="form-label">Target margin %</label><InputNumber class="form-control" @bind-Value="taskMargin" /></div>
         <div class="col-md-1 d-flex align-items-end"><button class="btn btn-outline-primary" @onclick="AddMarginRuleAsync">Add margin</button></div>
     </div>
-    @if (ActivePolicy?.MarginRules.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Task</th><th>Work type</th><th>Margin</th></tr></thead><tbody>@foreach (var rule in ActivePolicy.MarginRules) { <tr><td>@rule.TaskType</td><td>@(rule.WorkType ?? "All")</td><td>@rule.TargetMarginPercent.ToString("N2")%</td></tr> }</tbody></table> }
+    @if (ActivePolicy?.MarginRules.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Task</th><th>Work type</th><th>Margin</th><th></th></tr></thead><tbody>@foreach (var rule in ActivePolicy.MarginRules) { <tr><td>@rule.TaskType</td><td>@(rule.WorkType ?? "All")</td><td>@rule.TargetMarginPercent.ToString("N2")%</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => EditMarginRule(rule)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteMarginRuleAsync(rule.Id)">Delete</button></td></tr> }</tbody></table> }
 </section>
 
 <section class="activity-panel mb-4">
@@ -96,13 +97,31 @@
     <p>Use these for disposal, permits, equipment rental, mobilization, and other identifiable costs that are not catalog materials or monthly general overhead.</p>
     <div class="row g-3">
         @PolicySelector()
-        <div class="col-md-3"><label class="form-label">Cost name</label><InputText class="form-control" @bind-Value="ruleName" placeholder="Disposal and haul-away" /></div>
+        <div class="col-md-3"><label class="form-label">Cost name</label><input class="form-control" @bind="ruleName" @bind:event="oninput" placeholder="Disposal and haul-away" /></div>
         <div class="col-md-2"><label class="form-label">Scope</label><InputSelect class="form-select" @bind-Value="ruleScope">@foreach (var scope in CostRuleScopes.All) { <option value="@scope">@scope</option> }</InputSelect></div>
         <div class="col-md-2"><label class="form-label">Task type</label><InputSelect class="form-select" @bind-Value="ruleTaskType"><option value="">All task types</option>@foreach (var type in ProjectTaskTypes.All) { <option value="@type">@type</option> }</InputSelect></div>
         <div class="col-md-2"><label class="form-label">Calculation</label><InputSelect class="form-select" @bind-Value="ruleMethod">@foreach (var method in CostRuleCalculationMethods.All) { <option value="@method">@method</option> }</InputSelect></div>
-        <div class="col-md-2"><label class="form-label">Rate</label><InputNumber class="form-control" @bind-Value="ruleRate" /></div>
-        <div class="col-md-1 d-flex align-items-end"><button class="btn btn-outline-primary" @onclick="AddRuleAsync">Add cost</button></div>
+        <div class="col-md-2"><label class="form-label">Rate</label><input type="number" step="0.01" min="0" class="form-control" @bind="ruleRate" @bind:event="oninput" /></div>
+        <div class="col-md-1 d-flex align-items-end"><button class="btn btn-outline-primary" @onclick="AddRuleAsync">@(editingRuleId == 0 ? "Add cost" : "Save cost")</button></div>
     </div>
+    @if (ActivePolicy?.Rules.Count > 0)
+    {
+        <div class="table-responsive mt-3">
+            <table class="table table-sm">
+                <thead><tr><th>Cost name</th><th>Scope</th><th>Task type</th><th>Calculation</th><th>Rate</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var rule in ActivePolicy.Rules.OrderBy(rule => rule.Name))
+                    {
+                        <tr><td>@rule.Name</td><td>@rule.Scope</td><td>@(rule.TaskType ?? "All task types")</td><td>@rule.CalculationMethod</td><td>@FormatCostRuleRate(rule)</td><td>@(rule.IsActive ? "Active" : "Inactive")</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => EditCostRule(rule)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCostRuleAsync(rule.Id)">Delete</button></td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p class="text-muted mt-3 mb-0">No additional costs have been added to this policy revision.</p>
+    }
 </section>
 
 <section class="activity-panel mb-4">
@@ -116,7 +135,7 @@
         <div class="col-md-2"><label class="form-label">Reason</label><InputText class="form-control" @bind-Value="exclusionReason" /></div>
         <div class="col-md-1 d-flex align-items-end"><button class="btn btn-outline-primary" @onclick="AddExclusionAsync">Add</button></div>
     </div>
-    @if (exclusions.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Phrase</th><th>Task</th><th>Recovery</th><th>Reference</th><th>Status</th><th></th></tr></thead><tbody>@foreach (var exclusion in exclusions) { <tr class="@(string.IsNullOrWhiteSpace(exclusion.RecoveryType) ? "table-warning" : null)"><td>@exclusion.MatchPhrase</td><td>@(exclusion.TaskType ?? "All")</td><td>@(exclusion.RecoveryType ?? "Not mapped")</td><td>@(exclusion.RecoveryReference ?? "—")</td><td>@(exclusion.IsActive ? "Active" : "Inactive")</td><td><button class="btn btn-sm @(exclusion.IsActive ? "btn-outline-danger" : "btn-outline-success")" @onclick="() => ToggleExclusionAsync(exclusion.Id)">@(exclusion.IsActive ? "Deactivate" : "Activate")</button></td></tr> }</tbody></table> }
+    @if (exclusions.Count > 0) { <table class="table table-sm mt-3"><thead><tr><th>Phrase</th><th>Task</th><th>Recovery</th><th>Reference</th><th>Status</th><th></th></tr></thead><tbody>@foreach (var exclusion in exclusions) { <tr class="@(string.IsNullOrWhiteSpace(exclusion.RecoveryType) ? "table-warning" : null)"><td>@exclusion.MatchPhrase</td><td>@(exclusion.TaskType ?? "All")</td><td>@(exclusion.RecoveryType ?? "Not mapped")</td><td>@(exclusion.RecoveryReference ?? "—")</td><td>@(exclusion.IsActive ? "Active" : "Inactive")</td><td><button class="btn btn-sm @(exclusion.IsActive ? "btn-outline-warning" : "btn-outline-success")" @onclick="() => ToggleExclusionAsync(exclusion.Id)">@(exclusion.IsActive ? "Deactivate" : "Activate")</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteExclusionAsync(exclusion.Id)">Delete</button></td></tr> }</tbody></table> }
 </section>
 
 <section>
@@ -124,8 +143,12 @@
     @foreach (var policy in policies)
     {
         <article class="activity-panel mb-3">
-            <div class="d-flex justify-content-between"><div><h3>@policy.Name — revision @policy.RevisionNumber</h3><p>@(policy.LocalOperation?.Name ?? "Company-wide") · Effective @policy.EffectiveDate.ToString("MM/dd/yyyy")</p></div><span class="badge @(policy.IsActive ? "text-bg-success" : "text-bg-secondary")">@(policy.IsActive ? "Active" : "Superseded")</span></div>
+            <div class="d-flex justify-content-between"><div><h3>@policy.Name — revision @policy.RevisionNumber</h3><p>@(policy.LocalOperation?.Name ?? "Company-wide") · Effective @policy.EffectiveDate.ToString("MM/dd/yyyy")</p></div><span class="badge @(policy.IsActive ? "text-bg-success" : "text-bg-secondary")">@(policy.IsActive ? "Active" : "Inactive")</span></div>
             <div class="row"><div class="col-md-3"><strong>Fallback crew</strong><br />@policy.DefaultCrewSize.ToString("N2") people / @policy.DefaultDailyCrewCost.ToString("C2") day</div><div class="col-md-3"><strong>Fallback margin</strong><br />@policy.DefaultTargetMarginPercent.ToString("N2")%</div><div class="col-md-3"><strong>Monthly overhead</strong><br />@policy.MonthlyOverheadBudget.ToString("C2") / @policy.ExpectedMonthlyProductiveCrewDays.ToString("N2") crew days</div><div class="col-md-3"><strong>Calculated per day</strong><br />@policy.CalculatedOverheadPerCrewDay.ToString("C2")</div></div>
+            <div class="mt-3"><button class="btn btn-sm @(policy.IsActive ? "btn-outline-warning" : "btn-outline-success")" @onclick="() => TogglePolicyActiveAsync(policy.Id)">@(policy.IsActive ? "Inactivate" : "Activate")</button>
+                @if (!policy.IsActive && pendingPolicyDeleteId != policy.Id) { <button class="btn btn-sm btn-outline-danger ms-2" @onclick="() => pendingPolicyDeleteId = policy.Id">Delete policy</button> }
+                @if (pendingPolicyDeleteId == policy.Id) { <span class="ms-2 text-danger">Delete this policy revision and all of its rules?</span> <button class="btn btn-sm btn-danger ms-1" @onclick="() => DeletePolicyAsync(policy.Id)">Confirm delete</button> <button class="btn btn-sm btn-secondary ms-1" @onclick="() => pendingPolicyDeleteId = 0">Cancel</button> }
+            </div>
         </article>
     }
 </section>
@@ -152,6 +175,7 @@
     private decimal taskMargin = 40;
     private string ruleName = string.Empty, ruleScope = CostRuleScopes.Task, ruleTaskType = string.Empty, ruleMethod = CostRuleCalculationMethods.Fixed;
     private decimal ruleRate;
+    private int editingRuleId, pendingPolicyDeleteId;
     private string exclusionPhrase = "Deck Demolition Consumables", exclusionTaskType = string.Empty;
     private string exclusionReason = "Recovered outside the vendor material catalog.";
     private string recoveryType = ExclusionRecoveryTypes.SupplyKit, recoveryReference = string.Empty;
@@ -209,11 +233,28 @@
     private async Task AddKitItemAsync() { if (selectedKitId == 0 || selectedVendorProductId == 0 || kitQuantity <= 0) { message = "Select a kit and catalog item and enter a positive quantity."; return; } await using var db = await DbFactory.CreateDbContextAsync(); if (await db.StandardSupplyKitItems.AnyAsync(x => x.StandardSupplyKitId == selectedKitId && x.VendorProductId == selectedVendorProductId)) { message = "That catalog item is already in this kit."; return; } db.StandardSupplyKitItems.Add(new() { StandardSupplyKitId = selectedKitId, VendorProductId = selectedVendorProductId, Quantity = kitQuantity, WastePercent = kitWaste }); await db.SaveChangesAsync(); message = "Catalog item added to the supply kit."; await ReloadAsync(); }
     private async Task AddCrewRateAsync() { if (!TryPolicy(out var id) || rateCrewSize <= 0 || rateDailyCost < 0) { message = "Select an active policy and enter a valid crew size and cost."; return; } await using var db = await DbFactory.CreateDbContextAsync(); var work = NullIfBlank(crewWorkType); var existing = await db.CrewRateCards.SingleOrDefaultAsync(x => x.CostingPolicyVersionId == id && x.TaskType == crewTaskType && x.WorkType == work); if (existing is null) db.CrewRateCards.Add(new() { CostingPolicyVersionId = id, TaskType = crewTaskType, WorkType = work, CrewSize = rateCrewSize, DailyCrewCost = rateDailyCost }); else { existing.CrewSize = rateCrewSize; existing.DailyCrewCost = rateDailyCost; existing.IsActive = true; } await db.SaveChangesAsync(); message = "Crew rate saved."; await ReloadAsync(); }
     private async Task AddMarginRuleAsync() { if (!TryPolicy(out var id) || taskMargin is <= 0 or >= 100) { message = "Select an active policy and enter a margin between 0 and 100."; return; } await using var db = await DbFactory.CreateDbContextAsync(); var work = NullIfBlank(marginWorkType); var existing = await db.TaskMarginRules.SingleOrDefaultAsync(x => x.CostingPolicyVersionId == id && x.TaskType == marginTaskType && x.WorkType == work); if (existing is null) db.TaskMarginRules.Add(new() { CostingPolicyVersionId = id, TaskType = marginTaskType, WorkType = work, TargetMarginPercent = taskMargin }); else { existing.TargetMarginPercent = taskMargin; existing.IsActive = true; } await db.SaveChangesAsync(); message = "Task margin saved."; await ReloadAsync(); }
-    private async Task AddRuleAsync() { if (!TryPolicy(out var id) || string.IsNullOrWhiteSpace(ruleName) || ruleRate < 0) { message = "Select an active policy and enter a valid cost rule."; return; } await using var db = await DbFactory.CreateDbContextAsync(); db.CostingPolicyRules.Add(new() { CostingPolicyVersionId = id, Name = ruleName.Trim(), Scope = ruleScope, TaskType = NullIfBlank(ruleTaskType), CalculationMethod = ruleMethod, Rate = ruleRate }); await db.SaveChangesAsync(); ruleName = string.Empty; ruleRate = 0; message = "Additional cost rule added."; await ReloadAsync(); }
+    private async Task AddRuleAsync() { if (!TryPolicy(out var id) || string.IsNullOrWhiteSpace(ruleName) || ruleRate < 0) { message = "Select an active policy and enter a valid cost rule."; return; } var wasEditing = editingRuleId != 0; await using var db = await DbFactory.CreateDbContextAsync(); CostingPolicyRule rule; if (!wasEditing) { rule = new() { CostingPolicyVersionId = id }; db.CostingPolicyRules.Add(rule); } else { rule = await db.CostingPolicyRules.SingleAsync(x => x.Id == editingRuleId && x.CostingPolicyVersionId == id); } rule.Name = ruleName.Trim(); rule.Scope = ruleScope; rule.TaskType = NullIfBlank(ruleTaskType); rule.CalculationMethod = ruleMethod; rule.Rate = ruleRate; rule.IsActive = true; await db.SaveChangesAsync(); ResetCostRuleEditor(); message = wasEditing ? "Additional cost rule updated." : "Additional cost rule added."; await ReloadAsync(); }
+    private void EditCostRule(CostingPolicyRule rule) { editingRuleId = rule.Id; ruleName = rule.Name; ruleScope = rule.Scope; ruleTaskType = rule.TaskType ?? string.Empty; ruleMethod = rule.CalculationMethod; ruleRate = rule.Rate; }
+    private void ResetCostRuleEditor() { editingRuleId = 0; ruleName = string.Empty; ruleScope = CostRuleScopes.Task; ruleTaskType = string.Empty; ruleMethod = CostRuleCalculationMethods.Fixed; ruleRate = 0; }
+    private async Task DeleteCostRuleAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var rule = await db.CostingPolicyRules.SingleOrDefaultAsync(x => x.Id == id && x.CostingPolicyVersionId == selectedPolicyId); if (rule is null) return; db.Remove(rule); await db.SaveChangesAsync(); if (editingRuleId == id) ResetCostRuleEditor(); message = "Additional cost rule deleted."; await ReloadAsync(); }
+    private void EditMarginRule(TaskMarginRule rule) { marginTaskType = rule.TaskType; marginWorkType = rule.WorkType ?? string.Empty; taskMargin = rule.TargetMarginPercent; }
+    private async Task DeleteMarginRuleAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var rule = await db.TaskMarginRules.SingleOrDefaultAsync(x => x.Id == id && x.CostingPolicyVersionId == selectedPolicyId); if (rule is null) return; db.Remove(rule); await db.SaveChangesAsync(); message = "Task margin rule deleted."; await ReloadAsync(); }
+    private void EditCrewRate(CrewRateCard rate) { crewTaskType = rate.TaskType; crewWorkType = rate.WorkType ?? string.Empty; rateCrewSize = rate.CrewSize; rateDailyCost = rate.DailyCrewCost; }
+    private async Task DeleteCrewRateAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var rate = await db.CrewRateCards.SingleOrDefaultAsync(x => x.Id == id && x.CostingPolicyVersionId == selectedPolicyId); if (rate is null) return; db.Remove(rate); await db.SaveChangesAsync(); message = "Crew rate deleted."; await ReloadAsync(); }
+    private async Task DeleteKitItemAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.StandardSupplyKitItems.Include(x => x.StandardSupplyKit).SingleOrDefaultAsync(x => x.Id == id && x.StandardSupplyKit.CostingPolicyVersionId == selectedPolicyId); if (item is null) return; db.Remove(item); await db.SaveChangesAsync(); message = "Supply kit item deleted."; await ReloadAsync(); }
+    private async Task DeleteKitAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var kit = await db.StandardSupplyKits.SingleOrDefaultAsync(x => x.Id == id && x.CostingPolicyVersionId == selectedPolicyId); if (kit is null) return; db.Remove(kit); await db.SaveChangesAsync(); if (selectedKitId == id) selectedKitId = 0; message = "Supply kit deleted."; await ReloadAsync(); }
+    private async Task TogglePolicyActiveAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var policy = await db.CostingPolicyVersions.SingleAsync(x => x.Id == id); if (policy.IsActive) { policy.IsActive = false; policy.EndDate ??= DateOnly.FromDateTime(DateTime.Today); } else { var peers = await db.CostingPolicyVersions.Where(x => x.IsActive && x.LocalOperationId == policy.LocalOperationId).ToListAsync(); foreach (var peer in peers) { peer.IsActive = false; peer.EndDate ??= DateOnly.FromDateTime(DateTime.Today); } policy.IsActive = true; policy.EndDate = null; } await db.SaveChangesAsync(); selectedPolicyId = 0; message = policy.IsActive ? "Policy activated." : "Policy inactivated."; await ReloadAsync(); }
+    private async Task DeletePolicyAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var policy = await db.CostingPolicyVersions.SingleOrDefaultAsync(x => x.Id == id); if (policy is null) return; if (policy.IsActive) { message = "Inactivate the policy before deleting it."; pendingPolicyDeleteId = 0; return; } if (await db.QuoteCostSnapshots.AnyAsync(x => x.CostingPolicyVersionId == id)) { message = "This policy cannot be deleted because completed estimate cost snapshots reference it. It can remain inactive without affecting new estimates."; pendingPolicyDeleteId = 0; return; } db.Remove(policy); await db.SaveChangesAsync(); pendingPolicyDeleteId = 0; if (selectedPolicyId == id) selectedPolicyId = 0; message = "Policy revision deleted."; await ReloadAsync(); }
     private async Task AddExclusionAsync() { if (string.IsNullOrWhiteSpace(exclusionPhrase) || string.IsNullOrWhiteSpace(exclusionReason) || string.IsNullOrWhiteSpace(recoveryType) || string.IsNullOrWhiteSpace(recoveryReference)) { message = "Enter the phrase, reason, recovery method, and recovery reference."; return; } await using var db = await DbFactory.CreateDbContextAsync(); var task = NullIfBlank(exclusionTaskType); var existing = await db.MaterialExclusionRules.SingleOrDefaultAsync(x => x.MatchPhrase == exclusionPhrase.Trim() && x.TaskType == task); if (existing is not null) { existing.Reason = exclusionReason.Trim(); existing.RecoveryType = recoveryType; existing.RecoveryReference = recoveryReference.Trim(); existing.IsActive = true; } else db.MaterialExclusionRules.Add(new() { MatchPhrase = exclusionPhrase.Trim(), TaskType = task, Reason = exclusionReason.Trim(), RecoveryType = recoveryType, RecoveryReference = recoveryReference.Trim() }); await db.SaveChangesAsync(); message = "Material exclusion and recovery mapping saved."; await ReloadAsync(); }
     private async Task ToggleExclusionAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.MaterialExclusionRules.FindAsync(id); if (item is null) return; item.IsActive = !item.IsActive; await db.SaveChangesAsync(); await ReloadAsync(); }
+    private async Task DeleteExclusionAsync(int id) { await using var db = await DbFactory.CreateDbContextAsync(); var item = await db.MaterialExclusionRules.FindAsync(id); if (item is null) return; if (await db.QuoteTaskAnalysisExclusions.AnyAsync(x => x.MaterialExclusionRuleId == id)) { message = "This material exclusion is referenced by an estimate audit trail and cannot be deleted. Deactivate it to prevent future use."; return; } db.Remove(item); await db.SaveChangesAsync(); message = "Material exclusion deleted."; await ReloadAsync(); }
     private bool TryPolicy(out int id) { id = selectedPolicyId; return ActivePolicy?.IsActive == true; }
     private static string? NullIfBlank(string value) => string.IsNullOrWhiteSpace(value) ? null : value;
     private static string PolicyLabel(CostingPolicyVersion policy) => $"{policy.Name} r{policy.RevisionNumber} — {policy.LocalOperation?.Name ?? "Company-wide"}";
+    private static string FormatCostRuleRate(CostingPolicyRule rule) => rule.CalculationMethod switch
+    {
+        CostRuleCalculationMethods.PercentOfDirectCost => $"{rule.Rate:N2}%",
+        _ => rule.Rate.ToString("C2")
+    };
     private static string CatalogLabel(VendorProduct item) => $"{item.Product.Name} — {item.SupplyVendor.Name} / {item.VendorSku}";
 }

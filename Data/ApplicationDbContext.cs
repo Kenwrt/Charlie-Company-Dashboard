@@ -11,6 +11,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<OperationIntegration> OperationIntegrations => Set<OperationIntegration>();
     public DbSet<SupplyVendor> SupplyVendors => Set<SupplyVendor>();
     public DbSet<PayableInvoice> PayableInvoices => Set<PayableInvoice>();
+    public DbSet<VendorCredit> VendorCredits => Set<VendorCredit>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<VendorProduct> VendorProducts => Set<VendorProduct>();
     public DbSet<VendorPrice> VendorPrices => Set<VendorPrice>();
@@ -164,6 +165,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(task => new { task.QuoteCaseId, task.SortOrder }).IsUnique();
             entity.HasQueryFilter(task => !task.IsDeleted);
             entity.HasOne(task => task.QuoteCase).WithMany(quote => quote.ProjectTasks).HasForeignKey(task => task.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<VendorCredit>(entity =>
+        {
+            entity.HasIndex(credit => new { credit.SupplyVendorId, credit.LocalOperationId, credit.Reference }).IsUnique();
+            entity.Property(credit => credit.OriginalAmount).HasPrecision(18, 2);
+            entity.Property(credit => credit.AvailableAmount).HasPrecision(18, 2);
+            entity.HasOne(credit => credit.SupplyVendor).WithMany(vendor => vendor.VendorCredits).HasForeignKey(credit => credit.SupplyVendorId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(credit => credit.LocalOperation).WithMany().HasForeignKey(credit => credit.LocalOperationId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<HousecallProJobProgress>(entity =>

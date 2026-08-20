@@ -12,6 +12,12 @@
 
 <PageTitle>Housecall Pro Jobs</PageTitle>
 <section class="dashboard-shell">
+    @if (!string.IsNullOrWhiteSpace(ReceivablesFilter))
+    {
+        <nav class="mb-3" aria-label="Breadcrumb">
+            <a href="/#receivables-aging" class="text-decoration-none">← Back to Receivables aging report</a>
+        </nav>
+    }
     <div class="dashboard-header">
         <div>
             <p class="eyebrow">Housecall Pro</p>
@@ -62,17 +68,21 @@
     {
         <div class="alert alert-info">Showing jobs with an uncollected balance that are older than 30 days.</div>
     }
+    else if (ReceivablesFilter == "aging")
+    {
+        <div class="alert alert-info">Showing jobs in the @AgingFilterLabel aging period.</div>
+    }
 
     @if (message is not null) { <div class="alert alert-info">@message</div> }
     <p class="text-muted">Showing @jobs.Count of @totalCount synchronized jobs.</p>
     <div class="table-responsive">
         <table class="table">
-            <thead><tr><th>Job</th><th>Operation</th><th>Customer</th><th>Home address</th><th>Status</th><th>Date</th><th>Total job price</th><th>Amount invoiced</th><th>Uncollected</th><th></th></tr></thead>
+            <thead><tr><th>Job</th><th>Operation</th><th>Customer</th><th>Home address</th><th>Status</th><th>Date</th><th>Price</th><th>Invoiced</th><th>Uncollected</th><th></th></tr></thead>
             <tbody>
             @foreach (var job in jobs)
             {
                 <tr>
-                    <td>@(job.JobNumber ?? job.ExternalId)</td>
+                    <td><a href="@($"hcp/{job.LocalOperation.Slug}/jobs/{job.ExternalId}")">@(job.JobNumber ?? job.ExternalId)</a></td>
                     <td>@FormatOperationName(job.LocalOperation.Name)</td>
                     <td>@job.CustomerName<small class="d-block text-muted">@job.CustomerEmail<br />@FormatPhone(job.CustomerPhone)</small></td>
                     <td>@job.Address</td>
@@ -105,6 +115,7 @@
     [SupplyParameterFromQuery(Name = "from")] public DateTime? FromFilter { get; set; }
     [SupplyParameterFromQuery(Name = "through")] public DateTime? ThroughFilter { get; set; }
     [SupplyParameterFromQuery(Name = "receivables")] public string? ReceivablesFilter { get; set; }
+    [SupplyParameterFromQuery(Name = "aging")] public string? AgingFilter { get; set; }
     [SupplyParameterFromQuery(Name = "allDates")] public bool AllDates { get; set; }
 
     private List<LocalOperation> operations = [];
@@ -131,6 +142,7 @@
         operationId = operations.FirstOrDefault(operation =>
             operation.Slug.Equals(OperationFilter, StringComparison.OrdinalIgnoreCase))?.Id ?? 0;
         if (!string.IsNullOrWhiteSpace(StatusFilter)) status = StatusFilter;
+        else if (!string.IsNullOrWhiteSpace(ReceivablesFilter)) status = "";
         if (AllDates)
         {
             fromDate = null;
@@ -205,7 +217,7 @@
             status == ScheduledAndUnscheduledStatus ||
             status.Equals("unscheduled", StringComparison.OrdinalIgnoreCase) ||
             status.Equals(NeedsSchedulingStatus, StringComparison.OrdinalIgnoreCase);
-        if (ReceivablesFilter is "expected" or "over30")
+        if (ReceivablesFilter is "expected" or "over30" or "aging")
         {
             query = query.Where(x => x.OutstandingBalance > 0);
         }
@@ -213,6 +225,22 @@
         {
             var cutoff = ToUtcBoundary(DateTime.Today.AddDays(-30));
             query = query.Where(x => (x.ScheduledEnd ?? x.ScheduledStart) < cutoff);
+        }
+        if (ReceivablesFilter == "aging")
+        {
+            var ageDate = query.Select(x => new { Job = x, Date = x.ScheduledEnd ?? x.ScheduledStart });
+            var cutoff30 = ToUtcBoundary(DateTime.Today.AddDays(-30));
+            var cutoff60 = ToUtcBoundary(DateTime.Today.AddDays(-60));
+            var cutoff90 = ToUtcBoundary(DateTime.Today.AddDays(-90));
+            query = AgingFilter switch
+            {
+                "current-30" => ageDate.Where(x => x.Date >= cutoff30).Select(x => x.Job),
+                "31-60" => ageDate.Where(x => x.Date >= cutoff60 && x.Date < cutoff30).Select(x => x.Job),
+                "61-90" => ageDate.Where(x => x.Date >= cutoff90 && x.Date < cutoff60).Select(x => x.Job),
+                "91-plus" => ageDate.Where(x => x.Date < cutoff90).Select(x => x.Job),
+                "unknown" => ageDate.Where(x => x.Date == null).Select(x => x.Job),
+                _ => query.Where(_ => false)
+            };
         }
         if (fromDate is not null)
         {
@@ -329,6 +357,15 @@
             ? "unscheduled"
             : value ?? "Not provided";
     }
+    private string AgingFilterLabel => AgingFilter switch
+    {
+        "current-30" => "Current to 30 days",
+        "31-60" => "31–60 days",
+        "61-90" => "61–90 days",
+        "91-plus" => "91+ days",
+        "unknown" => "Unknown (unscheduled/no date)",
+        _ => "selected"
+    };
 
     private static bool IsAdditionalStatus(string value) =>
         !value.Equals("scheduled", StringComparison.OrdinalIgnoreCase) &&

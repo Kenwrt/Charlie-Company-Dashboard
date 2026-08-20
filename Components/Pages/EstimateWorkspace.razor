@@ -342,7 +342,7 @@ else
                                                             <button type="button" class="btn btn-sm btn-outline-success" @onclick="() => SaveReviewDispositionAsync(item, AnalysisReviewStatuses.Accepted)">Accept assumption</button>
                                                         </div>
                                                         <div class="form-check mt-2">
-                                                            <input class="form-check-input" type="checkbox" checked="@reusableReviewItemIds.Contains(item.Id)" @onchange="args => SetReusableReviewRule(item.Id, args.Value)" />
+                                                            <input class="form-check-input" type="checkbox" checked="@(!localOnlyReviewItemIds.Contains(item.Id))" @onchange="args => SetReusableReviewRule(item.Id, args.Value)" />
                                                             <label class="form-check-label">Remember this resolution for future @task.TaskType tasks</label>
                                                         </div>
                                                         <details class="mt-3 resolution-action-panel" open="@(item.Status == AnalysisReviewStatuses.FieldVerification)">
@@ -423,7 +423,7 @@ else
                                                             <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => SaveReviewDispositionAsync(item, AnalysisReviewStatuses.NotApplicable)">Not applicable</button>
                                                         </div>
                                                         <div class="form-check mt-2">
-                                                            <input class="form-check-input" type="checkbox" checked="@reusableReviewItemIds.Contains(item.Id)" @onchange="args => SetReusableReviewRule(item.Id, args.Value)" />
+                                                            <input class="form-check-input" type="checkbox" checked="@(!localOnlyReviewItemIds.Contains(item.Id))" @onchange="args => SetReusableReviewRule(item.Id, args.Value)" />
                                                             <label class="form-check-label">Remember this resolution for future @task.TaskType tasks</label>
                                                         </div>
                                                         <details class="mt-3 resolution-action-panel">
@@ -576,7 +576,7 @@ else
                                                                     @if (item.MatchKind == MaterialMatchKinds.Unresolved || item.IsUnmatched)
                                                                     {
                                                                         <div class="form-check text-start mb-1">
-                                                                            <input class="form-check-input" type="checkbox" checked="@reusableMaterialIds.Contains(item.Id)" @onchange="args => SetReusableMaterialRule(item.Id, args.Value)" />
+                                                                            <input class="form-check-input" type="checkbox" checked="@(!localOnlyMaterialIds.Contains(item.Id))" @onchange="args => SetReusableMaterialRule(item.Id, args.Value)" />
                                                                             <label class="form-check-label">Remember for future @task.TaskType tasks</label>
                                                                         </div>
                                                                     }
@@ -955,8 +955,8 @@ else
     private readonly HashSet<int> editingAnalysisIds = [];
     private readonly HashSet<int> replacingMaterialIds = [];
     private readonly Dictionary<int, int> reviewCatalogSelections = [];
-    private readonly HashSet<int> reusableReviewItemIds = [];
-    private readonly HashSet<int> reusableMaterialIds = [];
+    private readonly HashSet<int> localOnlyReviewItemIds = [];
+    private readonly HashSet<int> localOnlyMaterialIds = [];
     private List<VendorProduct> reviewCatalogItems = [];
     private readonly Dictionary<string, string?> dictationMessages = [];
     private bool savingEstimate;
@@ -1440,17 +1440,17 @@ else
 
     private void SetReusableReviewRule(int reviewItemId, object? value)
     {
-        if (value is true) reusableReviewItemIds.Add(reviewItemId); else reusableReviewItemIds.Remove(reviewItemId);
+        if (value is true) localOnlyReviewItemIds.Remove(reviewItemId); else localOnlyReviewItemIds.Add(reviewItemId);
     }
 
     private void SetReusableMaterialRule(int materialId, object? value)
     {
-        if (value is true) reusableMaterialIds.Add(materialId); else reusableMaterialIds.Remove(materialId);
+        if (value is true) localOnlyMaterialIds.Remove(materialId); else localOnlyMaterialIds.Add(materialId);
     }
 
     private async Task SaveReusableReviewRuleAsync(ApplicationDbContext db, QuoteTaskAnalysisReviewItem item, string? userId)
     {
-        if (!reusableReviewItemIds.Contains(item.Id)
+        if (localOnlyReviewItemIds.Contains(item.Id)
             || item.Status is AnalysisReviewStatuses.NeedsReview or AnalysisReviewStatuses.FieldVerification)
             return;
         var taskType = item.QuoteTaskAnalysis.QuoteProjectTask.TaskType;
@@ -1475,7 +1475,7 @@ else
 
     private async Task SaveReusableMaterialRuleAsync(ApplicationDbContext db, QuoteTaskAnalysisMaterial item, string? userId)
     {
-        if (!reusableMaterialIds.Contains(item.Id)) return;
+        if (localOnlyMaterialIds.Contains(item.Id)) return;
         var taskType = item.QuoteTaskAnalysis.QuoteProjectTask.TaskType;
         var matchText = item.OriginalDescription ?? item.Description;
         var rule = await db.CentComResolutionRules.SingleOrDefaultAsync(x =>
