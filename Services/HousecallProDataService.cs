@@ -106,8 +106,7 @@ public sealed class HousecallProDataService(
             record.Address = CustomerAddress(item);
             record.ScheduledStart = NestedDate(item, "schedule", "scheduled_start");
             record.ScheduledEnd = NestedDate(item, "schedule", "scheduled_end");
-            var subtotal = Money(item, "subtotal");
-            record.JobPrice = subtotal > 0 ? subtotal : Money(item, "total_amount");
+            record.JobPrice = Money(item, "total_amount");
             record.TotalAmount = Money(item, "total_amount");
             record.OutstandingBalance = Money(item, "outstanding_balance");
             record.SourceUpdatedAt = Date(item, "updated_at");
