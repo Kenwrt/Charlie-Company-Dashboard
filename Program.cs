@@ -11,6 +11,7 @@ using CharleyCompany.Dashboard.Web.Options;
 using CharleyCompany.Dashboard.Web.Services;
 using Serilog;
 using System.Threading.RateLimiting;
+using Wright.Messaging.Client;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -92,6 +93,25 @@ try
         client.Timeout = TimeSpan.FromSeconds(30);
     });
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
+    var messagingBaseUrl = builder.Configuration["Messaging:BaseUrl"];
+    var messagingApplicationId = builder.Configuration["Messaging:ApplicationId"];
+    var messagingApplicationKey = builder.Configuration["Messaging:ApplicationKey"];
+    if (Uri.TryCreate(messagingBaseUrl, UriKind.Absolute, out var messagingUri) &&
+        !string.IsNullOrWhiteSpace(messagingApplicationId) &&
+        !string.IsNullOrWhiteSpace(messagingApplicationKey))
+    {
+        builder.Services.AddWrightMessagingClient(options =>
+        {
+            options.BaseAddress = messagingUri;
+            options.ApplicationId = messagingApplicationId;
+            options.ApplicationKey = messagingApplicationKey;
+        });
+        builder.Services.AddTransient<ICharlieTextMessagingService, WrightCharlieTextMessagingService>();
+    }
+    else
+    {
+        builder.Services.AddSingleton<ICharlieTextMessagingService, UnconfiguredCharlieTextMessagingService>();
+    }
     builder.Services.AddSingleton<DashboardNotificationService>();
     builder.Services.AddMemoryCache();
     builder.Services.AddScoped<OperationAccessService>();

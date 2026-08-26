@@ -1,11 +1,16 @@
 ﻿@page "/Account/Manage"
 
 @using System.ComponentModel.DataAnnotations
+@using System.Text.RegularExpressions
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
 @using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
+@inject ICharlieTextMessagingService Messaging
 @inject IdentityRedirectManager RedirectManager
 
 <PageTitle>Profile</PageTitle>
@@ -23,11 +28,58 @@
                 <label for="username" class="form-label">Username</label>
             </div>
             <div class="form-floating mb-3">
-                <InputText @bind-Value="Input.PhoneNumber" id="Input.PhoneNumber" class="form-control" placeholder="Enter your phone number" />
-                <label for="Input.PhoneNumber" class="form-label">Phone number</label>
+                <InputText @bind-Value="Input.PhoneNumber" id="Input.PhoneNumber" class="form-control" autocomplete="tel" inputmode="tel" placeholder="Enter your mobile phone number" />
+                <label for="Input.PhoneNumber" class="form-label">Mobile phone number</label>
                 <ValidationMessage For="() => Input.PhoneNumber" class="text-danger" />
+                <div class="form-text">Use a U.S. or Canadian mobile number. It will be stored in international format, such as +16155551212.</div>
             </div>
-            <button type="submit" class="w-100 btn btn-lg btn-primary">Save</button>
+            <div class="border rounded p-3 mb-3">
+                <h4 class="h6">Text message permissions</h4>
+                <div class="form-check mb-2">
+                    <InputCheckbox @bind-Value="Input.SmsConsent" id="Input.SmsConsent" class="form-check-input" />
+                    <label for="Input.SmsConsent" class="form-check-label">
+                        <strong>Account and operational updates</strong><br />
+                        I agree to receive automated transactional texts about my account, jobs, estimates, scheduling, and requested service activity.
+                    </label>
+                </div>
+                <div class="form-check mb-2">
+                    <InputCheckbox @bind-Value="Input.SmsMarketingConsent" id="Input.SmsMarketingConsent" class="form-check-input" />
+                    <label for="Input.SmsMarketingConsent" class="form-check-label">
+                        <strong>Offers and company news (optional)</strong><br />
+                        I separately agree to receive recurring automated marketing texts. This is not required to use Charlie Company services.
+                    </label>
+                </div>
+                <div class="form-check mb-2">
+                    <InputCheckbox @bind-Value="Input.AuthorityConfirmed" id="Input.AuthorityConfirmed" class="form-check-input" />
+                    <label for="Input.AuthorityConfirmed" class="form-check-label">
+                        <strong>Required when text messaging is selected:</strong> I am at least 18 and am the subscriber or customary user authorized to provide consent for this number.
+                    </label>
+                </div>
+                <p class="small text-muted mb-2">
+                    Message frequency varies. Message and data rates may apply. Reply STOP to cancel or HELP for help.
+                    Consent is not a condition of purchase. See the <a href="/sms-terms" target="_blank">SMS Terms</a>
+                    and <a href="/privacy" target="_blank">Privacy Policy</a>.
+                </p>
+                @if (user?.SmsConsentGranted == true)
+                {
+                    <div class="small text-success" role="status">
+                        Text messaging is enabled for @user.SmsConsentPhoneNumber. Uncheck the box and save to opt out.
+                    </div>
+                }
+                else
+                {
+                    <div class="small text-muted" role="status">Text messaging is off. Enter a mobile number and check the box to opt in.</div>
+                }
+                @if (user is not null && !user.PhoneNumberConfirmed && (user.SmsConsentGranted || user.SmsMarketingConsent))
+                {
+                    <div class="form-floating mt-3">
+                        <InputText @bind-Value="Input.VerificationCode" id="Input.VerificationCode" class="form-control" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Six-digit verification code" />
+                        <label for="Input.VerificationCode">Six-digit verification code</label>
+                    </div>
+                }
+                <div class="mt-3" role="status">Phone verification: <strong>@(user?.PhoneNumberConfirmed == true ? "Verified" : "Not verified")</strong></div>
+            </div>
+            <button type="submit" class="w-100 btn btn-lg btn-primary">Update profile</button>
         </EditForm>
     </div>
 </div>
@@ -36,6 +88,9 @@
     private ApplicationUser? user;
     private string? username;
     private string? phoneNumber;
+    private bool smsConsentGranted;
+    private const string SmsDisclosureVersion = "sms-consent-v1-2026-08-25";
+    private const string SmsDisclosureText = "I agree to receive recurring automated text messages from Charlie Company Ventures about account, job, estimate, and operational updates at the mobile number provided. Message frequency varies. Message and data rates may apply. Reply STOP to cancel or HELP for help. Consent is not a condition of purchase.";
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
@@ -56,8 +111,12 @@
 
         username = await UserManager.GetUserNameAsync(user);
         phoneNumber = await UserManager.GetPhoneNumberAsync(user);
+        smsConsentGranted = user.SmsConsentGranted;
 
         Input.PhoneNumber ??= phoneNumber;
+        Input.SmsConsent = smsConsentGranted;
+        Input.SmsMarketingConsent = user.SmsMarketingConsent;
+        Input.AuthorityConfirmed = user.SmsAuthorityConfirmed;
     }
 
     private async Task OnValidSubmitAsync()
@@ -68,9 +127,38 @@
             return;
         }
 
-        if (Input.PhoneNumber != phoneNumber)
+        if (!TryNormalizeNorthAmericanPhone(Input.PhoneNumber, out var normalizedPhoneNumber))
         {
-            var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, Input.PhoneNumber);
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: Enter a valid 10-digit U.S. or Canadian mobile phone number.", HttpContext);
+            return;
+        }
+
+        var phoneChanged = !string.Equals(normalizedPhoneNumber, phoneNumber, StringComparison.Ordinal);
+        var oldAnyConsent = user.SmsConsentGranted || user.SmsMarketingConsent;
+        if (phoneChanged && smsConsentGranted && Input.SmsConsent)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus(
+                "Error: SMS consent is tied to the current phone number. Uncheck text messaging and save the new number, then opt in again.",
+                HttpContext);
+            return;
+        }
+
+        if (Input.SmsConsent && normalizedPhoneNumber is null)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: A mobile phone number is required to enable text messaging.", HttpContext);
+            return;
+        }
+
+        var anyConsent = Input.SmsConsent || Input.SmsMarketingConsent;
+        if (anyConsent && !Input.AuthorityConfirmed)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: Confirm that you are authorized to provide consent for this mobile number.", HttpContext);
+            return;
+        }
+
+        if (phoneChanged)
+        {
+            var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, normalizedPhoneNumber);
             if (!setPhoneResult.Succeeded)
             {
                 RedirectManager.RedirectToCurrentPageWithStatus("Error: Failed to set phone number.", HttpContext);
@@ -78,14 +166,128 @@
             }
         }
 
+        var now = DateTimeOffset.UtcNow;
+        SmsConsentEvent? consentEvent = null;
+        if (!smsConsentGranted && Input.SmsConsent)
+        {
+            user.SmsConsentGranted = true;
+            user.SmsConsentGrantedAt = now;
+            user.SmsConsentRevokedAt = null;
+            user.SmsConsentPhoneNumber = normalizedPhoneNumber;
+            user.SmsConsentDisclosureVersion = SmsDisclosureVersion;
+            consentEvent = NewConsentEvent(user, normalizedPhoneNumber!, "Granted", now);
+        }
+        else if (smsConsentGranted && !Input.SmsConsent)
+        {
+            user.SmsConsentGranted = false;
+            user.SmsConsentRevokedAt = now;
+            consentEvent = NewConsentEvent(user, user.SmsConsentPhoneNumber ?? phoneNumber ?? string.Empty, "Revoked", now);
+        }
+
+        if (user.SmsMarketingConsent != Input.SmsMarketingConsent)
+        {
+            dbMarketingEvent = NewConsentEvent(user, normalizedPhoneNumber ?? phoneNumber ?? string.Empty, Input.SmsMarketingConsent ? "Granted" : "Revoked", now, "marketing");
+        }
+        user.SmsMarketingConsent = Input.SmsMarketingConsent;
+        user.SmsMarketingConsentAt = Input.SmsMarketingConsent ? user.SmsMarketingConsentAt ?? now : null;
+        user.SmsAuthorityConfirmed = anyConsent && Input.AuthorityConfirmed;
+
+        var updateResult = await UserManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: Failed to update SMS consent.", HttpContext);
+            return;
+        }
+
+        if (consentEvent is not null)
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            db.SmsConsentEvents.Add(consentEvent);
+            if (dbMarketingEvent is not null) db.SmsConsentEvents.Add(dbMarketingEvent);
+            await db.SaveChangesAsync();
+        }
+        else if (dbMarketingEvent is not null)
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            db.SmsConsentEvents.Add(dbMarketingEvent);
+            await db.SaveChangesAsync();
+        }
+
+        try
+        {
+            if (phoneChanged && phoneNumber is not null && oldAnyConsent)
+                await Messaging.SetConsentAsync(user.Id, phoneNumber, false, HttpContext.RequestAborted);
+            if (normalizedPhoneNumber is not null)
+                await Messaging.SetConsentAsync(user.Id, normalizedPhoneNumber, anyConsent, HttpContext.RequestAborted);
+
+            if (anyConsent && normalizedPhoneNumber is not null && !user.PhoneNumberConfirmed)
+            {
+                if (!string.IsNullOrWhiteSpace(Input.VerificationCode))
+                {
+                    var verified = await UserManager.ChangePhoneNumberAsync(user, normalizedPhoneNumber, Input.VerificationCode.Trim());
+                    if (!verified.Succeeded)
+                    {
+                        RedirectManager.RedirectToCurrentPageWithStatus("Error: The verification code is invalid or expired.", HttpContext);
+                        return;
+                    }
+                }
+                else
+                {
+                    if (!Messaging.IsConfigured) throw new InvalidOperationException("Text messaging is not configured.");
+                    var code = await UserManager.GenerateChangePhoneNumberTokenAsync(user, normalizedPhoneNumber);
+                    await Messaging.SendVerificationAsync(user.Id, normalizedPhoneNumber, code, HttpContext.RequestAborted);
+                    RedirectManager.RedirectToCurrentPageWithStatus("Profile saved. A verification code was sent to your mobile number.", HttpContext);
+                    return;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Error: Your profile was saved, but the verification text could not be sent. Please try again.", HttpContext);
+            return;
+        }
+
         await SignInManager.RefreshSignInAsync(user);
         RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated", HttpContext);
+    }
+
+    private SmsConsentEvent? dbMarketingEvent;
+
+    private static SmsConsentEvent NewConsentEvent(ApplicationUser user, string phone, string action, DateTimeOffset occurredAt, string purpose = "transactional") => new()
+    {
+        UserId = user.Id,
+        PhoneNumber = phone,
+        Action = action,
+        Purpose = purpose,
+        OccurredAt = occurredAt,
+        DisclosureVersion = SmsDisclosureVersion,
+        DisclosureText = SmsDisclosureText,
+        Source = "UserProfile"
+    };
+
+    private static bool TryNormalizeNorthAmericanPhone(string? value, out string? normalized)
+    {
+        normalized = null;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+
+        var digits = Regex.Replace(value, "[^0-9]", string.Empty);
+        if (digits.Length == 11 && digits[0] == '1') digits = digits[1..];
+        if (digits.Length != 10 || digits[0] is '0' or '1' || digits[3] is '0' or '1') return false;
+
+        normalized = $"+1{digits}";
+        return true;
     }
 
     private sealed class InputModel
     {
         [Phone]
-        [Display(Name = "Phone number")]
+        [Display(Name = "Mobile phone number")]
         public string? PhoneNumber { get; set; }
+
+        public bool SmsConsent { get; set; }
+        public bool SmsMarketingConsent { get; set; }
+        public bool AuthorityConfirmed { get; set; }
+        [RegularExpression("^[0-9]{6}$", ErrorMessage = "Enter the six-digit verification code.")]
+        public string? VerificationCode { get; set; }
     }
 }

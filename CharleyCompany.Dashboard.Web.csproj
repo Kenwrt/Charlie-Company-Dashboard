@@ -15,14 +15,15 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.9" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Wright.Messaging.Client" Version="1.0.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;bin\**;obj\**" />
+    <Content Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;artifacts\**;.build-verify\**;bin\**;obj\**" />
     <Content Remove="Tools\**" />
     <Compile Remove="Tools\**\*.cs" />
     <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
-    <None Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;bin\**;obj\**" />
+    <None Remove="Data\app.db;DataProtectionKeys\**;Logs\**;CatalogImports\**;artifacts\**;.build-verify\**;bin\**;obj\**" />
     <None Remove="Tools\**" />
   </ItemGroup>
 

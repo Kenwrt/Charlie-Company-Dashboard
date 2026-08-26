@@ -3,6 +3,7 @@ using System;
 using CharleyCompany.Dashboard.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CharleyCompany.Dashboard.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825181924_AddUserSmsConsent")]
+    partial class AddUserSmsConsent
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -74,9 +77,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
 
-                    b.Property<bool>("SmsAuthorityConfirmed")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("SmsConsentDisclosureVersion")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -92,12 +92,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .HasColumnType("character varying(16)");
 
                     b.Property<DateTimeOffset?>("SmsConsentRevokedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("SmsMarketingConsent")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTimeOffset?>("SmsMarketingConsentAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("TwoFactorEnabled")
@@ -2740,11 +2734,6 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
-
-                    b.Property<string>("Purpose")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Source")
                         .IsRequired()

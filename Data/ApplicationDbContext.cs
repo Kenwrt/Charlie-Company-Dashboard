@@ -6,6 +6,7 @@ namespace CharleyCompany.Dashboard.Web.Data;
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
     public DbSet<NotificationRecipient> NotificationRecipients => Set<NotificationRecipient>();
+    public DbSet<SmsConsentEvent> SmsConsentEvents => Set<SmsConsentEvent>();
     public DbSet<LocalOperation> LocalOperations => Set<LocalOperation>();
     public DbSet<UserLocalOperation> UserLocalOperations => Set<UserLocalOperation>();
     public DbSet<OperationIntegration> OperationIntegrations => Set<OperationIntegration>();
@@ -165,6 +166,24 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(task => new { task.QuoteCaseId, task.SortOrder }).IsUnique();
             entity.HasQueryFilter(task => !task.IsDeleted);
             entity.HasOne(task => task.QuoteCase).WithMany(quote => quote.ProjectTasks).HasForeignKey(task => task.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ApplicationUser>(entity =>
+        {
+            entity.Property(user => user.SmsConsentPhoneNumber).HasMaxLength(16);
+            entity.Property(user => user.SmsConsentDisclosureVersion).HasMaxLength(64);
+        });
+
+        builder.Entity<SmsConsentEvent>(entity =>
+        {
+            entity.Property(item => item.PhoneNumber).HasMaxLength(16);
+            entity.Property(item => item.Action).HasMaxLength(16);
+            entity.Property(item => item.Purpose).HasMaxLength(32);
+            entity.Property(item => item.DisclosureVersion).HasMaxLength(64);
+            entity.Property(item => item.DisclosureText).HasMaxLength(1000);
+            entity.Property(item => item.Source).HasMaxLength(32);
+            entity.HasIndex(item => new { item.UserId, item.OccurredAt });
+            entity.HasOne(item => item.User).WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<VendorCredit>(entity =>
