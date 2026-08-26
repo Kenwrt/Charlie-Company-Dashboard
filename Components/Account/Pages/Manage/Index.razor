@@ -100,6 +100,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        var initializeInputFromDatabase = Input is null;
         Input ??= new();
 
         user = await UserManager.GetUserAsync(HttpContext.User);
@@ -113,10 +114,13 @@
         phoneNumber = await UserManager.GetPhoneNumberAsync(user);
         smsConsentGranted = user.SmsConsentGranted;
 
-        Input.PhoneNumber ??= phoneNumber;
-        Input.SmsConsent = smsConsentGranted;
-        Input.SmsMarketingConsent = user.SmsMarketingConsent;
-        Input.AuthorityConfirmed = user.SmsAuthorityConfirmed;
+        if (initializeInputFromDatabase)
+        {
+            Input.PhoneNumber = phoneNumber;
+            Input.SmsConsent = smsConsentGranted;
+            Input.SmsMarketingConsent = user.SmsMarketingConsent;
+            Input.AuthorityConfirmed = user.SmsAuthorityConfirmed;
+        }
     }
 
     private async Task OnValidSubmitAsync()
@@ -248,7 +252,7 @@
         }
 
         await SignInManager.RefreshSignInAsync(user);
-        RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated", HttpContext);
+        RedirectManager.RedirectToWithStatus("", "Your profile has been updated", HttpContext);
     }
 
     private SmsConsentEvent? dbMarketingEvent;
