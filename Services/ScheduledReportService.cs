@@ -13,6 +13,7 @@ public static class ScheduledReportCatalog
     {
         ["daily-operations"] = "Daily operations summary",
         ["estimate-follow-up"] = "Estimate follow-up",
+        ["expired-estimates"] = "Expired estimates, last two months",
         ["job-blockers"] = "Job blockers",
         ["receivables"] = "Outstanding receivables"
     };
@@ -116,13 +117,49 @@ public sealed class ScheduledReportService(
         var jobs = await db.HousecallProJobs.AsNoTracking().Include(x => x.Blockers).ToListAsync(cancellationToken);
         var estimates = await db.HousecallProEstimates.AsNoTracking().ToListAsync(cancellationToken);
         var heading = $"Report date: {localDate:MMMM d, yyyy}";
+        var expiredWindowStart = localDate.AddMonths(-2);
+        var expiredEstimates = estimates
+            .Where(x => x.ExpiresAt.HasValue)
+            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) >= expiredWindowStart)
+            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) <= localDate)
+            .Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.ExpiresAt)
+            .ToList();
         return reportType switch
         {
             "estimate-follow-up" => $"{heading}{Environment.NewLine}{Environment.NewLine}Estimates requiring follow-up: {estimates.Count(x => x.InternalStatus == HousecallProEstimateStatuses.FollowUp || x.InternalStatus == HousecallProEstimateStatuses.FollowUpPending):N0}{Environment.NewLine}Open estimate value: {estimates.Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)).Sum(x => x.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)}",
+            "expired-estimates" => BuildExpiredEstimatesReport(heading, expiredWindowStart, localDate, expiredEstimates),
             "job-blockers" => $"{heading}{Environment.NewLine}{Environment.NewLine}Open blockers: {jobs.Sum(x => x.Blockers.Count(b => b.ResolvedOn == null)):N0}{Environment.NewLine}Revenue at risk: {jobs.SelectMany(x => x.Blockers).Where(x => x.ResolvedOn == null).Sum(x => x.RevenueAtRisk).ToString("C0", CultureInfo.CurrentCulture)}",
             "receivables" => $"{heading}{Environment.NewLine}{Environment.NewLine}Jobs with outstanding balances: {jobs.Count(x => x.OutstandingBalance > 0):N0}{Environment.NewLine}Outstanding total: {jobs.Sum(x => x.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)}",
             _ => $"{heading}{Environment.NewLine}{Environment.NewLine}Active jobs: {jobs.Count(x => !string.Equals(x.WorkStatus, "completed", StringComparison.OrdinalIgnoreCase)):N0}{Environment.NewLine}Scheduled today: {jobs.Count(x => x.ScheduledStart.HasValue && DateOnly.FromDateTime(x.ScheduledStart.Value.Date) == localDate):N0}{Environment.NewLine}Open estimates: {estimates.Count(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)):N0}{Environment.NewLine}Open blockers: {jobs.Sum(x => x.Blockers.Count(b => b.ResolvedOn == null)):N0}{Environment.NewLine}Outstanding receivables: {jobs.Sum(x => x.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)}"
         };
+    }
+
+    private static string BuildExpiredEstimatesReport(
+        string heading,
+        DateOnly windowStart,
+        DateOnly windowEnd,
+        IReadOnlyCollection<HousecallProEstimate> estimates)
+    {
+        var body = new StringBuilder()
+            .AppendLine(heading)
+            .AppendLine()
+            .AppendLine($"Expiration window: {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}")
+            .AppendLine($"Expired estimates: {estimates.Count:N0}")
+            .AppendLine($"Expired estimate value: {estimates.Sum(x => x.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)}");
+
+        if (estimates.Count > 0)
+        {
+            body.AppendLine();
+            foreach (var estimate in estimates)
+            {
+                var number = string.IsNullOrWhiteSpace(estimate.EstimateNumber) ? "No estimate number" : estimate.EstimateNumber;
+                var customer = string.IsNullOrWhiteSpace(estimate.CustomerName) ? "Customer not recorded" : estimate.CustomerName;
+                body.AppendLine($"{estimate.ExpiresAt!.Value:MMM d, yyyy} | {number} | {customer} | {estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)}");
+            }
+        }
+
+        return body.ToString().TrimEnd();
     }
 }
 
