@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
 using CharleyCompany.Dashboard.Web.Data;
@@ -39,15 +40,15 @@ public sealed class ScheduledReportService(
 
     public async Task<ScheduledReportTestResult> SendManualAsync(
         string reportType,
-        int recipientId,
-        bool sendEmail,
-        bool sendSms,
+        IReadOnlyCollection<ManualReportRecipientSelection> distribution,
+        string? adHocEmail,
+        string? adHocPhone,
         DateOnly localDate,
         CancellationToken cancellationToken)
     {
-        if (!sendEmail && !sendSms)
+        if (!distribution.Any(x => x.SendEmail || x.SendSms) && string.IsNullOrWhiteSpace(adHocEmail) && string.IsNullOrWhiteSpace(adHocPhone))
         {
-            return new(false, "Select Email, Text, or both before sending the report.", null);
+            return new(false, "Select at least one distribution-list delivery or enter one ad hoc email or mobile number.", null);
         }
 
         if (!ScheduledReportCatalog.Types.TryGetValue(reportType, out var reportName))
@@ -56,7 +57,8 @@ public sealed class ScheduledReportService(
         }
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var recipient = await db.NotificationRecipients.SingleAsync(x => x.Id == recipientId && x.IsActive, cancellationToken);
+        var selectedIds = distribution.Where(x => x.SendEmail || x.SendSms).Select(x => x.RecipientId).Distinct().ToList();
+        var recipients = await db.NotificationRecipients.AsNoTracking().Where(x => x.IsActive && selectedIds.Contains(x.Id)).ToListAsync(cancellationToken);
         var document = await BuildDocumentAsync(db, reportType, localDate, cancellationToken);
         var plainText = ScheduledReportFormatter.ToPlainText(document);
         var html = ScheduledReportFormatter.ToHtml(document);
@@ -75,80 +77,136 @@ public sealed class ScheduledReportService(
 
         var outcomes = new List<string>();
         var delivered = false;
-        if (sendEmail)
+        var deliveredEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var deliveredPhones = new HashSet<string>(StringComparer.Ordinal);
+        string? reportUrl = null;
+
+        foreach (var choice in distribution.Where(x => x.SendEmail || x.SendSms))
         {
-            if (!recipient.EnableEmail || string.IsNullOrWhiteSpace(recipient.EmailAddress))
+            var recipient = recipients.FirstOrDefault(x => x.Id == choice.RecipientId);
+            if (recipient is null)
             {
-                outcomes.Add("Email was skipped because the recipient does not have email delivery enabled with an address.");
+                outcomes.Add("A selected notification recipient was skipped because the profile is no longer active.");
+                continue;
             }
-            else
+
+            if (choice.SendEmail)
             {
-                await emailSender.SendAsync(
-                    recipient,
-                    new NotificationMessage(run.Title, plainText, "manual-report", DateTimeOffset.UtcNow, html),
-                    cancellationToken);
-                outcomes.Add($"The report email was submitted for delivery to {recipient.EmailAddress}.");
+                if (!recipient.EnableEmail || string.IsNullOrWhiteSpace(recipient.EmailAddress))
+                {
+                    outcomes.Add($"Email was skipped for {recipient.DisplayName} because email delivery is unavailable.");
+                }
+                else if (deliveredEmails.Add(recipient.EmailAddress))
+                {
+                    await emailSender.SendAsync(recipient, new NotificationMessage(run.Title, plainText, "manual-report", DateTimeOffset.UtcNow, html), cancellationToken);
+                    outcomes.Add($"The report email was submitted for delivery to {recipient.DisplayName}.");
+                    delivered = true;
+                }
+            }
+
+            if (choice.SendSms)
+            {
+                if (!recipient.EnableSms || string.IsNullOrWhiteSpace(recipient.CellPhoneNumber))
+                {
+                    outcomes.Add($"Text was skipped for {recipient.DisplayName} because text delivery is unavailable.");
+                }
+                else if (deliveredPhones.Add(recipient.CellPhoneNumber))
+                {
+                    var result = await SendManualTextAsync(db, run, reportName, recipient.CellPhoneNumber, recipient.Id, recipient.DisplayName, cancellationToken);
+                    outcomes.Add(result.Message);
+                    delivered |= result.Delivered;
+                    reportUrl ??= result.ReportUrl;
+                }
+            }
+        }
+
+        var typedEmail = adHocEmail?.Trim();
+        if (!string.IsNullOrWhiteSpace(typedEmail))
+        {
+            if (!MailAddress.TryCreate(typedEmail, out var parsedEmail))
+            {
+                outcomes.Add("The ad hoc email address was invalid and was not used.");
+            }
+            else if (deliveredEmails.Add(parsedEmail.Address))
+            {
+                var recipient = new NotificationRecipient { DisplayName = "Ad hoc email recipient", EmailAddress = parsedEmail.Address, EnableEmail = true };
+                await emailSender.SendAsync(recipient, new NotificationMessage(run.Title, plainText, "manual-report", DateTimeOffset.UtcNow, html), cancellationToken);
+                outcomes.Add("The report email was submitted for delivery to the ad hoc email address.");
                 delivered = true;
             }
         }
 
-        string? reportUrl = null;
-        if (sendSms)
+        if (!string.IsNullOrWhiteSpace(adHocPhone))
         {
-            if (!recipient.EnableSms || string.IsNullOrWhiteSpace(recipient.CellPhoneNumber))
+            if (!TryNormalizePhone(adHocPhone, out var normalizedPhone))
             {
-                outcomes.Add("Text was skipped because the recipient does not have text delivery enabled with a mobile number.");
+                outcomes.Add("The ad hoc mobile number was invalid and was not used.");
             }
-            else if (!textMessaging.IsConfigured)
+            else if (deliveredPhones.Add(normalizedPhone!))
             {
-                outcomes.Add("Text was skipped because the messaging provider is not configured.");
-            }
-            else
-            {
-                var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x =>
-                    x.PhoneNumber == recipient.CellPhoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted,
-                    cancellationToken);
-                if (user is null)
-                {
-                    outcomes.Add("Text was skipped because no Charlie Company user has this verified number with current transactional consent.");
-                }
-                else
-                {
-                    var rawToken = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-                    var accessToken = new ScheduledReportAccessToken
-                    {
-                        ScheduledReportRunId = run.Id,
-                        NotificationRecipientId = recipient.Id,
-                        TokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))),
-                        ExpiresAt = DateTimeOffset.UtcNow.AddHours(Math.Clamp(reportOptions.AccessLinkHours, 1, 720))
-                    };
-                    db.ScheduledReportAccessTokens.Add(accessToken);
-                    await db.SaveChangesAsync(cancellationToken);
-                    reportUrl = BuildReportUrl(run.Id, rawToken);
-                    if (string.IsNullOrWhiteSpace(reportUrl))
-                    {
-                        db.ScheduledReportAccessTokens.Remove(accessToken);
-                        await db.SaveChangesAsync(cancellationToken);
-                        outcomes.Add("Text was skipped because the public HTTPS report URL is not configured.");
-                    }
-                    else
-                    {
-                        await textMessaging.SendOperationalAsync(
-                            user.Id,
-                            user.PhoneNumber!,
-                            $"Charlie Company: {reportName} is ready.",
-                            $"charlie-company:manual-report:{run.Id}:{recipient.Id}",
-                            cancellationToken,
-                            reportUrl,
-                            "View report");
-                        outcomes.Add($"The report text was submitted for delivery to {recipient.DisplayName}.");
-                        delivered = true;
-                    }
-                }
+                var result = await SendManualTextAsync(db, run, reportName, normalizedPhone!, null, "the ad hoc mobile number", cancellationToken);
+                outcomes.Add(result.Message);
+                delivered |= result.Delivered;
+                reportUrl ??= result.ReportUrl;
             }
         }
 
         return new(delivered, string.Join(" ", outcomes), reportUrl);
+    }
+
+    private async Task<ScheduledReportTestResult> SendManualTextAsync(
+        ApplicationDbContext db,
+        ScheduledReportRun run,
+        string reportName,
+        string phoneNumber,
+        int? recipientId,
+        string recipientLabel,
+        CancellationToken cancellationToken)
+    {
+        if (!textMessaging.IsConfigured)
+        {
+            return new(false, $"Text was skipped for {recipientLabel} because the messaging provider is not configured.", null);
+        }
+
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.PhoneNumber == phoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted, cancellationToken);
+        if (user is null)
+        {
+            return new(false, $"Text was skipped for {recipientLabel} because the number does not match a verified Charlie Company user with current transactional consent.", null);
+        }
+
+        var rawToken = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var accessToken = new ScheduledReportAccessToken
+        {
+            ScheduledReportRunId = run.Id,
+            NotificationRecipientId = recipientId,
+            TokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(Math.Clamp(reportOptions.AccessLinkHours, 1, 720))
+        };
+        db.ScheduledReportAccessTokens.Add(accessToken);
+        await db.SaveChangesAsync(cancellationToken);
+        var reportUrl = BuildReportUrl(run.Id, rawToken);
+        if (string.IsNullOrWhiteSpace(reportUrl))
+        {
+            db.ScheduledReportAccessTokens.Remove(accessToken);
+            await db.SaveChangesAsync(cancellationToken);
+            return new(false, $"Text was skipped for {recipientLabel} because the public HTTPS report URL is not configured.", null);
+        }
+
+        await textMessaging.SendOperationalAsync(user.Id, user.PhoneNumber!, $"Charlie Company: {reportName} is ready.",
+            $"charlie-company:manual-report:{run.Id}:{accessToken.Id}", cancellationToken, reportUrl, "View report");
+        return new(true, $"The report text was submitted for delivery to {recipientLabel}.", reportUrl);
+    }
+
+    private static bool TryNormalizePhone(string? value, out string? normalized)
+    {
+        normalized = null;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var trimmed = value.Trim();
+        var digits = new string(trimmed.Where(char.IsDigit).ToArray());
+        if (!trimmed.StartsWith('+') && digits.Length == 10) digits = "1" + digits;
+        if (digits.Length is < 8 or > 15 || digits[0] == '0') return false;
+        normalized = "+" + digits;
+        return true;
     }
 
     public async Task ExecuteAsync(int definitionId, DateOnly localDate, CancellationToken cancellationToken)
@@ -376,6 +434,7 @@ public sealed class ScheduledReportService(
 
 public sealed record ScheduledReportTestResult(bool Delivered, string Message, string? ReportUrl);
 public sealed record ScheduledReportPreview(string PlainText, string Html);
+public sealed record ManualReportRecipientSelection(int RecipientId, bool SendEmail, bool SendSms);
 
 public sealed class ScheduledReportWorker(
     IServiceScopeFactory scopeFactory,

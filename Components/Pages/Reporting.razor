@@ -14,13 +14,13 @@
         <div>
             <p class="eyebrow">Manual distribution</p>
             <h1>Reporting</h1>
-            <p class="dashboard-subtitle">Run a report on demand, review its contents, and send it to a notification recipient by email or text.</p>
+            <p class="dashboard-subtitle">Run a report on demand, review its contents, and send it to selected notification members or one-time destinations.</p>
         </div>
     </div>
 
     <div class="card p-4 mb-4">
         <div class="row g-3 align-items-end">
-            <div class="col-md-5">
+            <div class="col-md-10">
                 <label class="form-label">Report</label>
                 <InputSelect class="form-select" @bind-Value="reportType" @bind-Value:after="ReportChanged">
                     @foreach (var type in ScheduledReportCatalog.Types)
@@ -29,33 +29,44 @@
                     }
                 </InputSelect>
             </div>
-            <div class="col-md-5">
-                <label class="form-label">Delivery recipient</label>
-                <InputSelect class="form-select" @bind-Value="recipientId" @bind-Value:after="RecipientChanged">
-                    <option value="0">Select a notification recipient</option>
-                    @foreach (var recipient in recipients)
-                    {
-                        <option value="@recipient.Id">@recipient.DisplayName</option>
-                    }
-                </InputSelect>
-            </div>
             <div class="col-md-2">
                 <button class="btn btn-outline-primary w-100" type="button" disabled="@running" @onclick="RunAsync">@(running ? "Generating preview..." : "Preview report")</button>
             </div>
         </div>
 
-        <div class="mt-3">
-            <label class="me-3"><input type="checkbox" @bind="sendEmail" disabled="@(!RecipientCanEmail)" /> Email</label>
-            <label><input type="checkbox" @bind="sendSms" disabled="@(!RecipientCanText)" /> Text</label>
-        </div>
-        @if (SelectedRecipient is not null && !RecipientCanText)
+        <h2 class="h5 mt-4">Distribution list</h2>
+        <p class="text-muted">Select any combination of notification members and delivery methods.</p>
+        @foreach (var recipient in recipients)
         {
-            <small class="d-block text-warning mt-1">Text unavailable. Add a mobile number and enable SMS on the <a href="/notifications">notification-recipient profile</a>.</small>
+            var choice = Choices[recipient.Id];
+            <div class="border rounded p-3 mb-2">
+                <strong>@recipient.DisplayName</strong>
+                <label class="ms-3"><input type="checkbox" @bind="choice.Email" disabled="@(!CanReceiveEmail(recipient))" /> Email</label>
+                <label class="ms-3"><input type="checkbox" @bind="choice.Sms" disabled="@(!CanReceiveText(recipient))" /> Text</label>
+                @if (!CanReceiveText(recipient))
+                {
+                    <small class="d-block text-muted">Text is not enabled for this notification member.</small>
+                }
+            </div>
         }
+
+        <h2 class="h5 mt-4">One-time delivery</h2>
+        <p class="text-muted">Optionally enter one email address, one mobile number, or both. These destinations are used only for this send and are not added to the distribution list.</p>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">Ad hoc email address</label>
+                <input class="form-control" type="email" @bind="adHocEmail" placeholder="name@example.com" autocomplete="off" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Ad hoc mobile number</label>
+                <input class="form-control" type="tel" @bind="adHocPhone" placeholder="(615) 555-0123" autocomplete="off" />
+                <small class="text-muted">Text delivery requires this number to match a verified Charlie Company user with current transactional consent.</small>
+            </div>
+        </div>
 
         <div class="form-check mt-3">
             <input class="form-check-input" type="checkbox" id="confirm-manual-send" @bind="sendConfirmed" />
-            <label class="form-check-label" for="confirm-manual-send">I understand this immediately sends the selected report to this recipient.</label>
+            <label class="form-check-label" for="confirm-manual-send">I understand this immediately sends the selected report to all selected and entered destinations.</label>
         </div>
         <button class="btn btn-primary mt-3" type="button" disabled="@(!CanSend)" @onclick="SendAsync">@(sending ? "Sending..." : "Send report")</button>
 
@@ -76,10 +87,10 @@
 
 @code {
     private List<NotificationRecipient> recipients = [];
+    private Dictionary<int, Choice> Choices = [];
     private string reportType = "daily-operations";
-    private int recipientId;
-    private bool sendEmail = true;
-    private bool sendSms;
+    private string? adHocEmail;
+    private string? adHocPhone;
     private bool sendConfirmed;
     private bool running;
     private bool sending;
@@ -87,15 +98,14 @@
     private string? status;
     private string? preview;
 
-    private NotificationRecipient? SelectedRecipient => recipients.FirstOrDefault(x => x.Id == recipientId);
-    private bool RecipientCanEmail => SelectedRecipient is { EnableEmail: true } recipient && !string.IsNullOrWhiteSpace(recipient.EmailAddress);
-    private bool RecipientCanText => SelectedRecipient is { EnableSms: true } recipient && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber);
-    private bool CanSend => recipientId > 0 && preview is not null && sendConfirmed && !sending && ((sendEmail && RecipientCanEmail) || (sendSms && RecipientCanText));
+    private bool HasDestination => Choices.Values.Any(x => x.Email || x.Sms) || !string.IsNullOrWhiteSpace(adHocEmail) || !string.IsNullOrWhiteSpace(adHocPhone);
+    private bool CanSend => preview is not null && sendConfirmed && HasDestination && !sending;
 
     protected override async Task OnInitializedAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         recipients = await db.NotificationRecipients.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.DisplayName).ToListAsync();
+        Choices = recipients.ToDictionary(x => x.Id, _ => new Choice());
     }
 
     private async Task RunAsync()
@@ -124,7 +134,9 @@
         sending = true;
         try
         {
-            var result = await ReportService.SendManualAsync(reportType, recipientId, sendEmail, sendSms, LocalDate(), CancellationToken.None);
+            var distribution = Choices.Where(x => x.Value.Email || x.Value.Sms)
+                .Select(x => new ManualReportRecipientSelection(x.Key, x.Value.Email, x.Value.Sms)).ToList();
+            var result = await ReportService.SendManualAsync(reportType, distribution, adHocEmail, adHocPhone, LocalDate(), CancellationToken.None);
             succeeded = result.Delivered;
             status = result.Message;
         }
@@ -143,13 +155,8 @@
         sendConfirmed = false;
     }
 
-    private void RecipientChanged()
-    {
-        sendEmail = RecipientCanEmail;
-        sendSms = false;
-        sendConfirmed = false;
-        status = null;
-    }
+    private static bool CanReceiveEmail(NotificationRecipient recipient) => recipient.EnableEmail && !string.IsNullOrWhiteSpace(recipient.EmailAddress);
+    private static bool CanReceiveText(NotificationRecipient recipient) => recipient.EnableSms && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber);
 
     private static DateOnly LocalDate()
     {
@@ -159,5 +166,11 @@
             return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone).Date);
         }
         catch { return DateOnly.FromDateTime(DateTime.UtcNow.Date); }
+    }
+
+    private sealed class Choice
+    {
+        public bool Email { get; set; }
+        public bool Sms { get; set; }
     }
 }

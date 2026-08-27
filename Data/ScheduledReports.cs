@@ -49,8 +49,8 @@ public sealed class ScheduledReportAccessToken
     public long Id { get; set; }
     public long ScheduledReportRunId { get; set; }
     public ScheduledReportRun ScheduledReportRun { get; set; } = null!;
-    public int NotificationRecipientId { get; set; }
-    public NotificationRecipient NotificationRecipient { get; set; } = null!;
+    public int? NotificationRecipientId { get; set; }
+    public NotificationRecipient? NotificationRecipient { get; set; }
     [Required, StringLength(64)] public string TokenHash { get; set; } = string.Empty;
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
