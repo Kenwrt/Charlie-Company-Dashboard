@@ -111,7 +111,7 @@ public sealed class SpreadsheetFinanceDataSource(OperationCatalogService operati
             };
             var adjustment = operation.Slug.Equals("knoxville", StringComparison.OrdinalIgnoreCase) ? 6_500m
                 : operation.Slug.Equals("chattanooga", StringComparison.OrdinalIgnoreCase) ? 9_000m : 0m;
-            return BuildEntity(operation.Name, operation.Slug, scale, adjustment);
+            return BuildEntity(operation.EffectiveDisplayName, operation.Slug, scale, adjustment);
         }).ToList();
     }
 

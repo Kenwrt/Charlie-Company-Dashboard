@@ -41,7 +41,7 @@
                     <option value="0">Select location…</option>
                     @foreach (var operation in operations)
                     {
-                        <option value="@operation.Id">@operation.Name</option>
+                        <option value="@operation.Id">@operation.EffectiveDisplayName</option>
                     }
                 </InputSelect>
             </div>
@@ -117,13 +117,13 @@
         <h2>Estimate workspaces</h2>
         <div class="table-responsive">
             <table class="table">
-                <thead><tr><th>Estimate</th><th>Location</th><th>Customer</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+                <thead><tr><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortQuotes("estimate")'>Estimate @QuoteSortIndicator("estimate")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortQuotes("operation")'>Location @QuoteSortIndicator("operation")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortQuotes("customer")'>Customer @QuoteSortIndicator("customer")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortQuotes("status")'>Status @QuoteSortIndicator("status")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortQuotes("updated")'>Updated @QuoteSortIndicator("updated")</button></th><th></th></tr></thead>
                 <tbody>
-                @foreach (var quote in quotes)
+                @foreach (var quote in SortedQuotes)
                 {
                     <tr>
                         <td>CCV-E-@quote.Id.ToString("D6")<br /><small>HCP @(quote.HousecallProEstimateNumber ?? quote.HousecallProQuoteId)</small></td>
-                        <td>@quote.LocalOperation.Name</td>
+                        <td>@quote.LocalOperation.EffectiveDisplayName</td>
                         <td>@quote.CustomerName<br /><small>@quote.CustomerAddress</small></td>
                         <td>@quote.Status</td>
                         <td>@quote.UpdatedAt.ToLocalTime().ToString("MM/dd/yyyy")</td>
@@ -156,6 +156,11 @@
     private bool lookingUp;
     private bool creating;
     private int? deletingQuoteId;
+    private string quoteSortColumn = "updated";
+    private bool quoteSortDescending = true;
+    private IEnumerable<QuoteCase> SortedQuotes { get { Func<QuoteCase, object?> key = quoteSortColumn switch { "estimate" => quote => quote.Id, "operation" => quote => quote.LocalOperation.EffectiveDisplayName, "customer" => quote => quote.CustomerName, "status" => quote => quote.Status, _ => quote => quote.UpdatedAt }; return quoteSortDescending ? quotes.OrderByDescending(key) : quotes.OrderBy(key); } }
+    private void SortQuotes(string column) { if (quoteSortColumn == column) quoteSortDescending = !quoteSortDescending; else { quoteSortColumn = column; quoteSortDescending = false; } }
+    private string QuoteSortIndicator(string column) => quoteSortColumn == column ? (quoteSortDescending ? "▼" : "▲") : "↕";
 
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 

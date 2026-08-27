@@ -34,13 +34,13 @@
             <label class="form-label">Local operation</label>
             <InputSelect class="form-select" @bind-Value="operationId" @bind-Value:after="ReloadAsync">
                 <option value="0">All assigned operations</option>
-                @foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }
+                @foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }
             </InputSelect>
         </div>
         <div class="col-md-2">
             <label class="form-label">Status</label>
             <InputSelect class="form-select" @bind-Value="status" @bind-Value:after="ReloadAsync">
-                <option value="@ScheduledAndUnscheduledStatus">Scheduled + Unscheduled</option>
+                <option value="@ScheduledAndUnscheduledStatus">Active Jobs</option>
                 <option value="scheduled">Scheduled</option>
                 <option value="unscheduled">Unscheduled</option>
                 <option value="">All statuses</option>
@@ -77,13 +77,13 @@
     <p class="text-muted">Showing @jobs.Count of @totalCount synchronized jobs.</p>
     <div class="table-responsive">
         <table class="table">
-            <thead><tr><th>Job</th><th>Operation</th><th>Customer</th><th>Home address</th><th>Status</th><th>Date</th><th>Price</th><th>Invoiced</th><th>Uncollected</th><th></th></tr></thead>
+            <thead><tr><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("job")'>Job @SortIndicator("job")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("operation")'>Operation @SortIndicator("operation")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("customer")'>Customer @SortIndicator("customer")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("address")'>Home address @SortIndicator("address")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("status")'>Status @SortIndicator("status")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("date")'>Date @SortIndicator("date")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("price")'>Price @SortIndicator("price")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("invoiced")'>Invoiced @SortIndicator("invoiced")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("uncollected")'>Uncollected @SortIndicator("uncollected")</button></th><th></th></tr></thead>
             <tbody>
             @foreach (var job in jobs)
             {
                 <tr>
                     <td><a href="@($"hcp/{job.LocalOperation.Slug}/jobs/{job.ExternalId}")">@(job.JobNumber ?? job.ExternalId)</a></td>
-                    <td>@FormatOperationName(job.LocalOperation.Name)</td>
+                    <td>@job.LocalOperation.EffectiveDisplayName</td>
                     <td>@job.CustomerName<small class="d-block text-muted">@job.CustomerEmail<br />@FormatPhone(job.CustomerPhone)</small></td>
                     <td>@job.Address</td>
                     <td>@EffectiveStatus(job)</td>
@@ -135,6 +135,8 @@
     private decimal totalAmountInvoiced;
     private decimal totalUncollected;
     private CancellationTokenSource? searchDebounce;
+    private string sortColumn = "date";
+    private bool sortDescending = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -196,10 +198,12 @@
                 x.InternalStatus == "scheduled" ||
                 x.InternalStatus == "unscheduled" ||
                 x.InternalStatus == NeedsSchedulingStatus ||
+                x.InternalStatus == "in progress" ||
                 (x.InternalStatus == null &&
                     (x.WorkStatus == "scheduled" ||
                      x.WorkStatus == "unscheduled" ||
-                     x.WorkStatus == NeedsSchedulingStatus)));
+                     x.WorkStatus == NeedsSchedulingStatus ||
+                     x.WorkStatus == "in progress")));
         }
         else if (status.Equals("unscheduled", StringComparison.OrdinalIgnoreCase))
         {
@@ -289,11 +293,26 @@
         totalJobPrice = totals?.JobPrice ?? 0;
         totalAmountInvoiced = totals?.AmountInvoiced ?? 0;
         totalUncollected = totals?.Uncollected ?? 0;
-        query = query.OrderBy(x => x.ScheduledStart == null)
-            .ThenByDescending(x => x.ScheduledStart)
-            .ThenByDescending(x => x.Id);
+        query = ApplySort(query);
         jobs = await query.Take(500).ToListAsync();
     }
+
+    private IQueryable<HousecallProJob> ApplySort(IQueryable<HousecallProJob> query) => (sortColumn, sortDescending) switch
+    {
+        ("job", false) => query.OrderBy(x => x.JobNumber), ("job", true) => query.OrderByDescending(x => x.JobNumber),
+        ("operation", false) => query.OrderBy(x => x.LocalOperation.DisplayName).ThenBy(x => x.LocalOperation.Name), ("operation", true) => query.OrderByDescending(x => x.LocalOperation.DisplayName).ThenByDescending(x => x.LocalOperation.Name),
+        ("customer", false) => query.OrderBy(x => x.CustomerName), ("customer", true) => query.OrderByDescending(x => x.CustomerName),
+        ("address", false) => query.OrderBy(x => x.Address), ("address", true) => query.OrderByDescending(x => x.Address),
+        ("status", false) => query.OrderBy(x => x.InternalStatus ?? x.WorkStatus), ("status", true) => query.OrderByDescending(x => x.InternalStatus ?? x.WorkStatus),
+        ("price", false) => query.OrderBy(x => x.JobPrice), ("price", true) => query.OrderByDescending(x => x.JobPrice),
+        ("invoiced", false) => query.OrderBy(x => x.TotalAmount), ("invoiced", true) => query.OrderByDescending(x => x.TotalAmount),
+        ("uncollected", false) => query.OrderBy(x => x.OutstandingBalance), ("uncollected", true) => query.OrderByDescending(x => x.OutstandingBalance),
+        (_, false) => query.OrderBy(x => x.ScheduledStart == null).ThenBy(x => x.ScheduledStart),
+        _ => query.OrderBy(x => x.ScheduledStart == null).ThenByDescending(x => x.ScheduledStart)
+    };
+
+    private async Task SortAsync(string column) { if (sortColumn == column) sortDescending = !sortDescending; else { sortColumn = column; sortDescending = false; } await ReloadAsync(); }
+    private string SortIndicator(string column) => sortColumn == column ? (sortDescending ? "▼" : "▲") : "↕";
 
     private async Task SyncAsync()
     {
@@ -321,9 +340,6 @@
         if (digits.Length == 11 && digits[0] == '1') digits = digits[1..];
         return digits.Length == 10 ? $"({digits[..3]}) {digits.Substring(3, 3)}-{digits[6..]}" : value;
     }
-
-    private static string FormatOperationName(string value) =>
-        value.Replace("Charlie Company", "C.C.", StringComparison.OrdinalIgnoreCase);
 
     private async Task OnSearchInputAsync(ChangeEventArgs args)
     {

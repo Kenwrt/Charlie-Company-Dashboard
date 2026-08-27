@@ -10,7 +10,7 @@
 <PageTitle>Invoice Lines</PageTitle>
 @if (invoice is null) { <h1>Invoice not found</h1> }
 else {
- <h1>Invoice @invoice.InvoiceNumber lines</h1><p>@invoice.SupplyVendor.Name · @invoice.LocalOperation.Name · Job @invoice.JobNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices")">Back to invoices</a></p>
+ <h1>Invoice @invoice.InvoiceNumber lines</h1><p>@invoice.SupplyVendor.Name · @invoice.LocalOperation.EffectiveDisplayName · Job @invoice.JobNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices")">Back to invoices</a></p>
  @if (message is not null) { <div class="alert alert-info">@message</div> }
  @if (products.Count == 0) { <div class="alert alert-warning">Add products to this vendor's catalog before entering invoice lines.</div> }
  else { <EditForm Model="input" OnValidSubmit="SaveLineAsync" FormName="invoice-line"><DataAnnotationsValidator /><ValidationSummary class="text-danger" /><div class="row g-3">

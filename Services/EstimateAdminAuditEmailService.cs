@@ -117,7 +117,7 @@ public sealed class EstimateAdminAuditEmailService(
         html.Append("<!doctype html><html><body style=\"margin:0;background:#eef2f7;font-family:Arial,sans-serif;color:#172033\"><div style=\"max-width:1100px;margin:24px auto;background:#fff;border:1px solid #d7e0ec;border-radius:12px;overflow:hidden\">")
             .Append("<div style=\"background:#0b2559;color:#fff;padding:26px 30px\"><div style=\"font-size:12px;text-transform:uppercase;letter-spacing:1.2px;opacity:.8\">Administrator hard copy · Charlie Company Ventures</div>")
             .Append($"<h1 style=\"margin:8px 0 4px;font-size:26px\">Estimate #{H(estimateNumber)} Audit &amp; Costing Report</h1>")
-            .Append($"<div>{H(quote.LocalOperation.Name)} · Generated {DateTimeOffset.Now:MM/dd/yyyy h:mm tt zzz}</div></div><div style=\"padding:26px 30px\">")
+            .Append($"<div>{H(quote.LocalOperation.EffectiveDisplayName)} · Generated {DateTimeOffset.Now:MM/dd/yyyy h:mm tt zzz}</div></div><div style=\"padding:26px 30px\">")
             .Append(Section("1. Estimate and customer", KeyValues([
                 ("CCV estimate", $"CCV-E-{quote.Id:D6}"), ("Housecall Pro estimate", estimateNumber), ("Status", quote.Status),
                 ("Customer", quote.CustomerName ?? "Not provided"), ("Customer email", quote.CustomerEmail ?? "Not provided"),

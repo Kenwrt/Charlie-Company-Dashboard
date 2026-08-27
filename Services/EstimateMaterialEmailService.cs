@@ -145,7 +145,7 @@ public sealed class EstimateMaterialEmailService(
                 <div style="background:#0b2559;color:#fff;padding:24px 28px">
                   <div style="font-size:12px;text-transform:uppercase;letter-spacing:1.2px;opacity:.8">Charlie Company Ventures</div>
                   <h1 style="margin:8px 0 4px;font-size:24px">{{Html(vendorName)}} Materials List</h1>
-                  <div>Estimate #{{Html(estimateNumber)}} · {{Html(quote.LocalOperation.Name)}}</div>
+                  <div>Estimate #{{Html(estimateNumber)}} · {{Html(quote.LocalOperation.EffectiveDisplayName)}}</div>
                 </div>
                 <div style="padding:24px 28px">
                   <p style="margin-top:0"><strong>Customer:</strong> {{Html(quote.CustomerName ?? "Not provided")}}<br>

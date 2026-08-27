@@ -17,7 +17,7 @@
 
 <section class="activity-panel mb-4">
     <div class="row g-3 align-items-end">
-        <div class="col-md-6"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="selectedOperationId">@foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+        <div class="col-md-6"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="selectedOperationId">@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
         <div class="col-md-2"><button class="btn btn-outline-primary" @onclick="LoadAsync">Load operation</button></div>
         <div class="col-md-4"><small class="text-muted">Open AP comes from Vendors &amp; Payables. Collected revenue comes from synchronized Housecall Pro jobs.</small></div>
     </div>

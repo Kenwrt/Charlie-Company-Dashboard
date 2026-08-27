@@ -82,10 +82,12 @@ public sealed class HousecallProDashboardDataSource(
                 job.InternalStatus == "scheduled" ||
                 job.InternalStatus == "unscheduled" ||
                 job.InternalStatus == "needs scheduling" ||
+                job.InternalStatus == "in progress" ||
                 (job.InternalStatus == null &&
                     (job.WorkStatus == "scheduled" ||
                      job.WorkStatus == "unscheduled" ||
-                     job.WorkStatus == "needs scheduling")))
+                     job.WorkStatus == "needs scheduling" ||
+                     job.WorkStatus == "in progress")))
             .Where(job =>
                 (job.ScheduledStart >= yearStart && job.ScheduledStart < nextYearStart) ||
                 job.InternalStatus == "unscheduled" ||
@@ -117,7 +119,7 @@ public sealed class HousecallProDashboardDataSource(
             LastUpdated: DateTimeOffset.UtcNow,
             DataSource: "CCV synchronized Housecall Pro data",
             RecentEvents: notifications.RecentEvents,
-            EntityName: operation.Name,
+            EntityName: operation.EffectiveDisplayName,
             EntitySlug: operation.Slug);
     }
 

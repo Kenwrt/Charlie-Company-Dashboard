@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CharleyCompany.Dashboard.Web.Data;
 
@@ -6,6 +7,8 @@ public sealed class LocalOperation
 {
     public int Id { get; set; }
     [Required, StringLength(120)] public string Name { get; set; } = string.Empty;
+    [Required, StringLength(120)] public string DisplayName { get; set; } = string.Empty;
+    [NotMapped] public string EffectiveDisplayName => string.IsNullOrWhiteSpace(DisplayName) ? Name : DisplayName;
     [Required, StringLength(80)] public string Slug { get; set; } = string.Empty;
     [Required, StringLength(100)] public string TimeZone { get; set; } = "America/Chicago";
     [StringLength(160)] public string? HousecallProLocationId { get; set; }

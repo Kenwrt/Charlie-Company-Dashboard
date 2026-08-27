@@ -148,7 +148,7 @@ public sealed class DatabaseFinanceDataSource(IDbContextFactory<ApplicationDbCon
         var forecastEndingCash = forecast.LastOrDefault()?.EndingCash ?? profile.ReconciledCashBalance;
         var readinessScore = checks.Count == 0 ? 0m : checks.Average(x => x.Score);
         var summary = new FinanceSummary(
-            operation.Name,
+            operation.EffectiveDisplayName,
             operation.Slug,
             knownRevenue,
             profile.AccountingProfit,
@@ -167,7 +167,7 @@ public sealed class DatabaseFinanceDataSource(IDbContextFactory<ApplicationDbCon
             readinessScore);
 
         var entityData = new FinanceEntityData(
-            operation.Name,
+            operation.EffectiveDisplayName,
             operation.Slug,
             assumptions,
             [],

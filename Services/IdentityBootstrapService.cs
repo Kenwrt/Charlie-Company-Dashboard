@@ -23,7 +23,7 @@ public static class IdentityBootstrapService
 
         var seededOperations = new[]
         {
-            new LocalOperation { Name = "Charlie Company Nashville", Slug = "nashville" }
+            new LocalOperation { Name = "Charlie Company Nashville", DisplayName = "Charlie Company Nashville", Slug = "nashville" }
         };
 
         foreach (var operation in seededOperations)

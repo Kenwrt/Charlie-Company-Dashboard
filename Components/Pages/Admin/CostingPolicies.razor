@@ -19,7 +19,7 @@
     <p>Creating a revision supersedes the current policy for the same location. Existing estimate snapshots remain unchanged.</p>
     <div class="row g-3">
         <div class="col-md-4"><label class="form-label">Policy name</label><InputText class="form-control" @bind-Value="policyName" /></div>
-        <div class="col-md-4"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="operationId"><option value="0">Company-wide default</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+        <div class="col-md-4"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="operationId"><option value="0">Company-wide default</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
         <div class="col-md-4"><label class="form-label">Effective date</label><InputDate class="form-control" @bind-Value="effectiveDate" /></div>
         <div class="col-md-3"><label class="form-label">Fallback daily crew cost</label><InputNumber class="form-control" @bind-Value="dailyCrewCost" /></div>
         <div class="col-md-3"><label class="form-label">Fallback crew size</label><InputNumber class="form-control" @bind-Value="crewSize" /></div>

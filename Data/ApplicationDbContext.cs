@@ -84,6 +84,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         builder.Entity<LocalOperation>(entity =>
         {
+            entity.Property(operation => operation.DisplayName).HasMaxLength(120).IsRequired();
             entity.HasIndex(operation => operation.Slug).IsUnique();
             entity.HasIndex(operation => operation.HousecallProLocationId)
                 .IsUnique()

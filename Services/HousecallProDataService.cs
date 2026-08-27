@@ -147,7 +147,7 @@ public sealed class HousecallProDataService(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-        logger.LogInformation("Housecall Pro sync stored {JobCount} jobs and {EstimateCount} estimates for {Operation}.", jobs.Count, estimates.Count, operation.Name);
+        logger.LogInformation("Housecall Pro sync stored {JobCount} jobs and {EstimateCount} estimates for {Operation}.", jobs.Count, estimates.Count, operation.EffectiveDisplayName);
     }
 
     public async Task<HcpRecordDetail?> GetDetailAsync(string operationSlug, string kind, string externalId, CancellationToken cancellationToken = default)

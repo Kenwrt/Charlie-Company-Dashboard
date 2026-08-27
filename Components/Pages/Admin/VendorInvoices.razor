@@ -14,7 +14,7 @@ else {
  @if (!string.IsNullOrWhiteSpace(message)) { <div class="alert alert-info" role="status">@message</div> }
  <EditForm Model="input" OnValidSubmit="SaveAsync" FormName="invoice-editor"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
   <div class="row g-3">
-   <div class="col-md-4"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="input.LocalOperationId"><option value="0">Select operation…</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+   <div class="col-md-4"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="input.LocalOperationId"><option value="0">Select operation…</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
    <div class="col-md-4"><label class="form-label">Invoice number</label><InputText class="form-control" @bind-Value="input.InvoiceNumber" /></div>
    <div class="col-md-4"><label class="form-label">Local operation job #</label><InputText class="form-control" @bind-Value="input.JobNumber" /></div>
    <div class="col-md-3"><label class="form-label">Invoice date</label><InputDate class="form-control" @bind-Value="input.InvoiceDate" /></div>
@@ -29,7 +29,7 @@ else {
  <section class="mt-5"><h2>Available credits</h2><p>Enter unapplied credits from the vendor account. The dashboard subtracts available credits from gross open invoices.</p>
   <EditForm Model="creditInput" OnValidSubmit="SaveCreditAsync" FormName="credit-editor"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
    <div class="row g-3">
-    <div class="col-md-3"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="creditInput.LocalOperationId"><option value="0">Select operation…</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.Name</option> }</InputSelect></div>
+    <div class="col-md-3"><label class="form-label">Local operation</label><InputSelect class="form-select" @bind-Value="creditInput.LocalOperationId"><option value="0">Select operation…</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
     <div class="col-md-3"><label class="form-label">Reference</label><InputText class="form-control" @bind-Value="creditInput.Reference" /></div>
     <div class="col-md-2"><label class="form-label">Credit date</label><InputDate class="form-control" @bind-Value="creditInput.CreditDate" /></div>
     <div class="col-md-2"><label class="form-label">Original amount</label><InputNumber class="form-control" @bind-Value="creditInput.OriginalAmount" /></div>
@@ -39,11 +39,11 @@ else {
    </div>
   </EditForm>
   <div class="table-responsive mt-3"><table class="table"><thead><tr><th>Reference</th><th>Operation</th><th>Date</th><th>Original</th><th>Available</th><th></th></tr></thead><tbody>
-   @foreach (var credit in credits) { <tr><td>@credit.Reference</td><td>@credit.LocalOperation.Name</td><td>@credit.CreditDate.ToString("MM/dd/yyyy")</td><td>@credit.OriginalAmount.ToString("C2")</td><td>@credit.AvailableAmount.ToString("C2")</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => EditCredit(credit)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCreditAsync(credit)">Delete</button></td></tr> }
+   @foreach (var credit in credits) { <tr><td>@credit.Reference</td><td>@credit.LocalOperation.EffectiveDisplayName</td><td>@credit.CreditDate.ToString("MM/dd/yyyy")</td><td>@credit.OriginalAmount.ToString("C2")</td><td>@credit.AvailableAmount.ToString("C2")</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => EditCredit(credit)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCreditAsync(credit)">Delete</button></td></tr> }
   </tbody></table></div>
  </section>
- <section class="mt-5"><h2>Invoices</h2><div class="table-responsive"><table class="table"><thead><tr><th>Invoice</th><th>Operation / Job</th><th>Due</th><th>Original</th><th>Paid</th><th>Open</th><th>Status</th><th></th></tr></thead><tbody>
-  @foreach (var invoice in invoices) { <tr><td>@invoice.InvoiceNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices/{invoice.Id}/lines")">@invoice.Lines.Count line(s)</a></td><td>@invoice.LocalOperation.Name<br /><small>Job @invoice.JobNumber</small></td><td>@invoice.DueDate.ToString("MM/dd/yyyy")</td><td>@invoice.OriginalAmount.ToString("C2")</td><td>@invoice.AmountPaid.ToString("C2")</td><td>@invoice.OpenBalance.ToString("C2")</td><td>@invoice.Status</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(invoice)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(invoice)">Delete</button></td></tr> }
+ <section class="mt-5"><h2>Invoices</h2><div class="table-responsive"><table class="table"><thead><tr><th>Invoice</th><th>Operation / Job</th><th>Due</th><th>Past due</th><th>Original</th><th>Paid</th><th>Open</th><th>Status</th><th></th></tr></thead><tbody>
+  @foreach (var invoice in invoices) { var daysPastDue=Math.Max(0,DateOnly.FromDateTime(DateTime.Today).DayNumber-invoice.DueDate.DayNumber); <tr><td>@invoice.InvoiceNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices/{invoice.Id}/lines")">@invoice.Lines.Count line(s)</a></td><td>@invoice.LocalOperation.EffectiveDisplayName<br /><small>Job @invoice.JobNumber</small></td><td>@invoice.DueDate.ToString("MM/dd/yyyy")</td><td>@(daysPastDue==0?"Current":$"{daysPastDue} days")</td><td>@invoice.OriginalAmount.ToString("C2")</td><td>@invoice.AmountPaid.ToString("C2")</td><td>@invoice.OpenBalance.ToString("C2")</td><td>@invoice.Status</td><td><button class="btn btn-sm btn-outline-primary" @onclick="() => Edit(invoice)">Edit</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteAsync(invoice)">Delete</button></td></tr> }
  </tbody></table></div></section>
 }
 

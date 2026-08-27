@@ -170,7 +170,7 @@
         {
             <div class="finance-table-wrap">
                 <table class="finance-table">
-                    <thead><tr><th>Job</th><th>Job date</th><th>Location</th><th>Customer</th><th>Current phase</th><th>Time in phase</th><th>Next phase / expected</th><th>Next payment</th><th>Remaining contract</th><th>Forecast status</th><th></th></tr></thead>
+                    <thead><tr><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("job")'>Job @ForecastSortIndicator("job")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("date")'>Job date @ForecastSortIndicator("date")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("operation")'>Location @ForecastSortIndicator("operation")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("customer")'>Customer @ForecastSortIndicator("customer")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("phase")'>Current phase @ForecastSortIndicator("phase")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("days")'>Time in phase @ForecastSortIndicator("days")</button></th><th>Next phase / expected</th><th>Next payment</th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("remaining")'>Remaining contract @ForecastSortIndicator("remaining")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("status")'>Forecast status @ForecastSortIndicator("status")</button></th><th></th></tr></thead>
                     <tbody>
                     @foreach (var job in FilteredForecastJobs)
                     {
@@ -250,7 +250,7 @@
             <div class="finance-table-wrap">
                 <table class="finance-table">
                     <thead>
-                        <tr><th>Vendor</th><th>Operation</th><th>Invoice</th><th>Job #</th><th>Due</th><th>Status</th><th>Open</th></tr>
+                        <tr><th>Vendor</th><th>Operation</th><th>Invoice</th><th>Job #</th><th>Due</th><th>Past due</th><th>Status</th><th>Open</th></tr>
                     </thead>
                     <tbody>
                         @foreach (var invoice in apSummary.Invoices)
@@ -261,6 +261,7 @@
                                 <td>@invoice.InvoiceNumber</td>
                                 <td>@invoice.JobNumber</td>
                                 <td>@invoice.DueDate.ToString("MM/dd/yyyy")</td>
+                                <td>@(invoice.DaysPastDue == 0 ? "Current" : $"{invoice.DaysPastDue} days")</td>
                                 <td>@invoice.Status</td>
                                 <td>@invoice.OpenBalance.ToString("C2")</td>
                             </tr>
@@ -285,7 +286,7 @@
                     <NavLink class="local-entity-card" href="@($"entity/{entity.EntitySlug}")">
                         <div>
                             <strong>@entity.EntityName</strong>
-                            <span>@entity.CurrentJobsInProgress.ToString("N0") scheduled + unscheduled jobs</span>
+                            <span>@entity.CurrentJobsInProgress.ToString("N0") active jobs</span>
                         </div>
                         <dl>
                             <div>
@@ -351,12 +352,19 @@
     private RevenueForecastSummary revenueForecastSummary = RevenueForecastSummary.Empty;
     private string forecastOperationFilter = string.Empty;
     private string forecastPhaseFilter = string.Empty;
+    private string forecastSortColumn = "date";
+    private bool forecastSortDescending = true;
     private bool isAdministrator;
 
-    private IReadOnlyList<RevenueForecastJobRow> FilteredForecastJobs => revenueForecastSummary.Jobs
-        .Where(job => string.IsNullOrWhiteSpace(forecastOperationFilter) || job.OperationName == forecastOperationFilter)
-        .Where(job => string.IsNullOrWhiteSpace(forecastPhaseFilter) || job.CurrentPhase == forecastPhaseFilter)
-        .ToList();
+    private IReadOnlyList<RevenueForecastJobRow> FilteredForecastJobs
+    {
+        get
+        {
+            var rows = revenueForecastSummary.Jobs.Where(job => string.IsNullOrWhiteSpace(forecastOperationFilter) || job.OperationName == forecastOperationFilter).Where(job => string.IsNullOrWhiteSpace(forecastPhaseFilter) || job.CurrentPhase == forecastPhaseFilter);
+            Func<RevenueForecastJobRow, object?> key = forecastSortColumn switch { "job" => row => row.JobNumber, "operation" => row => row.OperationName, "customer" => row => row.CustomerName, "phase" => row => row.CurrentPhase, "days" => row => ParseDays(row.DaysInPhaseText), "remaining" => row => row.RemainingContractValue, "status" => row => row.ForecastStatus, _ => row => row.JobDateText };
+            return (forecastSortDescending ? rows.OrderByDescending(key) : rows.OrderBy(key)).ToList();
+        }
+    }
 
     private bool IsEntityView => !string.IsNullOrWhiteSpace(EntitySlug);
     private string DashboardOperationSlug => IsEntityView
@@ -463,7 +471,7 @@
             .OrderBy(invoice => invoice.DueDate)
             .Select(invoice => new ApDashboardInvoice(
                 invoice.SupplyVendor.Name,
-                invoice.LocalOperation.Name,
+                string.IsNullOrWhiteSpace(invoice.LocalOperation.DisplayName) ? invoice.LocalOperation.Name : invoice.LocalOperation.DisplayName,
                 invoice.InvoiceNumber,
                 invoice.JobNumber,
                 invoice.DueDate,
@@ -583,7 +591,7 @@
             .Include(job => job.Blockers)
             .Include(job => job.PaymentMilestones)
             .Where(job => operationIds.Contains(job.LocalOperationId))
-            .Where(job => job.ScheduledStart == null || job.ScheduledStart >= earliestForecastJobDate)
+            .Where(job => job.ScheduledStart >= earliestForecastJobDate)
             .Where(job => job.WorkStatus != "user canceled" && job.WorkStatus != "pro canceled" && job.WorkStatus != "pro-canceled")
             .ToListAsync();
 
@@ -624,7 +632,7 @@
                 job.JobNumber ?? job.ExternalId,
                 job.ScheduledStart?.ToLocalTime().ToString("MM/dd/yyyy") ?? "Not scheduled",
                 job.CustomerName ?? "Not provided",
-                job.LocalOperation.Name,
+                job.LocalOperation.EffectiveDisplayName,
                 job.LocalOperation.Slug,
                 job.ExternalId,
                 currentPhase,
@@ -670,6 +678,9 @@
     private static bool IsCompletedJob(string? status) => status?.Trim().ToLowerInvariant() is "complete rated" or "complete unrated" or "completed" or "complete";
     private static int ForecastRank(string status) => status == "At risk" ? 0 : status == "Missing schedule" ? 1 : status == "Watch" ? 2 : 3;
     private static string ForecastBadge(string status) => status == "At risk" ? "text-bg-danger" : status == "Missing schedule" ? "text-bg-warning" : status == "Watch" ? "text-bg-info" : "text-bg-success";
+    private void SortForecast(string column) { if (forecastSortColumn == column) forecastSortDescending = !forecastSortDescending; else { forecastSortColumn = column; forecastSortDescending = false; } }
+    private string ForecastSortIndicator(string column) => forecastSortColumn == column ? (forecastSortDescending ? "▼" : "▲") : "↕";
+    private static int ParseDays(string value) => int.TryParse(value.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), out var days) ? days : -1;
 
     private static ReceivablesAgingBucket BuildAgingBucket(string label, string slug, IEnumerable<ReceivableRow> rows)
     {
@@ -677,7 +688,10 @@
         return new(label, slug, items.Count, items.Sum(item => item.Balance));
     }
 
-    private sealed record ApDashboardInvoice(string Vendor, string Operation, string InvoiceNumber, string JobNumber, DateOnly DueDate, string Status, decimal OpenBalance, decimal AmountPaid);
+    private sealed record ApDashboardInvoice(string Vendor, string Operation, string InvoiceNumber, string JobNumber, DateOnly DueDate, string Status, decimal OpenBalance, decimal AmountPaid)
+    {
+        public int DaysPastDue => Math.Max(0, DateOnly.FromDateTime(DateTime.Today).DayNumber - DueDate.DayNumber);
+    }
     private sealed record ApDashboardSummary(int OpenInvoiceCount, decimal GrossOpenBalance, decimal AvailableCredits, decimal NetDue, int PastDueInvoiceCount, decimal PastDueBalance, decimal DueSoonBalance, decimal AmountPaid, IReadOnlyList<ApDashboardInvoice> Invoices)
     {
         public static ApDashboardSummary Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, []);
@@ -714,9 +728,9 @@
         return
         [
             new(
-                "Scheduled + unscheduled jobs",
+                "Active Jobs",
                 snapshot.CurrentJobsInProgress.ToString("N0"),
-                $"Combined Jobs view for {year}",
+                $"Scheduled, unscheduled, and in-progress jobs for {year}",
                 "accent-jobs",
                 $"hcp/jobs?operation={operationSlug}&status=scheduled-and-unscheduled&from={from}&through={through}"),
             new(
