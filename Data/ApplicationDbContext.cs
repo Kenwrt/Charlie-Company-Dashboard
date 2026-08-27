@@ -7,6 +7,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 {
     public DbSet<NotificationRecipient> NotificationRecipients => Set<NotificationRecipient>();
     public DbSet<SmsConsentEvent> SmsConsentEvents => Set<SmsConsentEvent>();
+    public DbSet<ScheduledReportDefinition> ScheduledReportDefinitions => Set<ScheduledReportDefinition>();
+    public DbSet<ScheduledReportRecipient> ScheduledReportRecipients => Set<ScheduledReportRecipient>();
+    public DbSet<ScheduledReportRun> ScheduledReportRuns => Set<ScheduledReportRun>();
     public DbSet<LocalOperation> LocalOperations => Set<LocalOperation>();
     public DbSet<UserLocalOperation> UserLocalOperations => Set<UserLocalOperation>();
     public DbSet<OperationIntegration> OperationIntegrations => Set<OperationIntegration>();
@@ -166,6 +169,27 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(task => new { task.QuoteCaseId, task.SortOrder }).IsUnique();
             entity.HasQueryFilter(task => !task.IsDeleted);
             entity.HasOne(task => task.QuoteCase).WithMany(quote => quote.ProjectTasks).HasForeignKey(task => task.QuoteCaseId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ScheduledReportDefinition>(entity =>
+        {
+            entity.Property(x => x.Name).HasMaxLength(120);
+            entity.Property(x => x.ReportType).HasMaxLength(60);
+            entity.Property(x => x.TimeZoneId).HasMaxLength(80);
+        });
+        builder.Entity<ScheduledReportRecipient>(entity =>
+        {
+            entity.HasKey(x => new { x.ScheduledReportDefinitionId, x.NotificationRecipientId });
+            entity.HasOne(x => x.ScheduledReportDefinition).WithMany(x => x.Recipients).HasForeignKey(x => x.ScheduledReportDefinitionId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.NotificationRecipient).WithMany().HasForeignKey(x => x.NotificationRecipientId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<ScheduledReportRun>(entity =>
+        {
+            entity.HasIndex(x => new { x.ScheduledReportDefinitionId, x.ScheduledLocalDate }).IsUnique();
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.Title).HasMaxLength(200);
+            entity.Property(x => x.Error).HasMaxLength(500);
+            entity.HasOne(x => x.ScheduledReportDefinition).WithMany(x => x.Runs).HasForeignKey(x => x.ScheduledReportDefinitionId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ApplicationUser>(entity =>

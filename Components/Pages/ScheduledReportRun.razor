@@ -1,0 +1,32 @@
+@page "/reports/runs/{RunId:long}"
+@attribute [Authorize]
+@using CharleyCompany.Dashboard.Web.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Charlie Company Report</PageTitle>
+<section class="dashboard-shell">
+    @if (run is null) { <div class="alert alert-warning">The report could not be found.</div> }
+    else { <div class="dashboard-header"><div><p class="eyebrow">Scheduled report</p><h1>@run.Title</h1><p class="dashboard-subtitle">@run.ScheduledLocalDate.ToString("MMMM d, yyyy")</p></div></div><article class="card p-4"><div style="white-space:pre-wrap">@run.Body</div></article> }
+</section>
+@code {
+    [Parameter] public long RunId { get; set; }
+    private CharleyCompany.Dashboard.Web.Data.ScheduledReportRun? run;
+    protected override async Task OnParametersSetAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        var userId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var user = string.IsNullOrWhiteSpace(userId) ? null : await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == userId);
+        var isAdmin = principal.IsInRole(ApplicationRoles.Administrator);
+        var email = user?.Email;
+        var phone = user?.PhoneNumber;
+        run = await db.ScheduledReportRuns.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.Id == RunId && x.Status == "Completed" &&
+            (isAdmin || x.ScheduledReportDefinition.Recipients.Any(a =>
+                (a.SendEmail && email != null && a.NotificationRecipient.EmailAddress == email) ||
+                (a.SendSms && phone != null && a.NotificationRecipient.CellPhoneNumber == phone))),
+            CancellationToken.None);
+    }
+}

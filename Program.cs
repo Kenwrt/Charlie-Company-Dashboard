@@ -93,6 +93,7 @@ try
         client.Timeout = TimeSpan.FromSeconds(30);
     });
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
+    builder.Services.Configure<ScheduledReportOptions>(builder.Configuration.GetSection(ScheduledReportOptions.SectionName));
     var messagingBaseUrl = builder.Configuration["Messaging:BaseUrl"];
     var messagingApplicationId = builder.Configuration["Messaging:ApplicationId"];
     var messagingApplicationKey = builder.Configuration["Messaging:ApplicationKey"];
@@ -123,7 +124,8 @@ try
     builder.Services.AddHostedService(services => services.GetRequiredService<RemoteOperationalEventForwarder>());
     builder.Services.AddRateLimiter(options => options.AddPolicy("observability-ingestion", context => RateLimitPartition.GetTokenBucketLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new TokenBucketRateLimiterOptions { TokenLimit = 120, TokensPerPeriod = 120, ReplenishmentPeriod = TimeSpan.FromMinutes(1), AutoReplenishment = true, QueueLimit = 20 })));
     builder.Services.AddScoped<IFinanceDataSource, DatabaseFinanceDataSource>();
-    builder.Services.AddScoped<IOutboundNotificationSender, EmailNotificationSender>();
+    builder.Services.AddScoped<EmailNotificationSender>();
+    builder.Services.AddScoped<IOutboundNotificationSender>(services => services.GetRequiredService<EmailNotificationSender>());
     builder.Services.AddScoped<IOutboundNotificationSender, MobileNotificationSender>();
     builder.Services.AddScoped<WebhookNotificationDispatcher>();
     builder.Services.AddScoped<HousecallProDashboardDataSource>();
@@ -135,6 +137,8 @@ try
     builder.Services.AddHostedService<CentComTaskAnalysisWorker>();
     builder.Services.AddScoped<IDashboardDataSource>(services => services.GetRequiredService<HousecallProDashboardDataSource>());
     builder.Services.AddHostedService<HousecallProSyncService>();
+    builder.Services.AddScoped<ScheduledReportService>();
+    builder.Services.AddHostedService<ScheduledReportWorker>();
 
     var app = builder.Build();
 

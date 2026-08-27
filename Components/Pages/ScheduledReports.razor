@@ -1,0 +1,84 @@
+@page "/admin/scheduled-reports"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>Scheduled Reports</PageTitle>
+
+<section class="dashboard-shell">
+    <div class="dashboard-header">
+        <div><p class="eyebrow">Automated distribution</p><h1>Scheduled reports</h1><p class="dashboard-subtitle">Run a Charlie Company report each day and deliver it by email, text, or both.</p></div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(status)) { <div class="alert alert-info">@status</div> }
+    <div class="card p-4 mb-4">
+        <EditForm Model="model" OnValidSubmit="SaveAsync">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <div class="row g-3">
+                <div class="col-md-4"><label class="form-label">Schedule name</label><InputText class="form-control" @bind-Value="model.Name" /></div>
+                <div class="col-md-3"><label class="form-label">Report</label><InputSelect class="form-select" @bind-Value="model.ReportType">@foreach (var type in ScheduledReportCatalog.Types) { <option value="@type.Key">@type.Value</option> }</InputSelect></div>
+                <div class="col-md-2"><label class="form-label">Daily time</label><InputText class="form-control" @bind-Value="runAt" placeholder="07:00" /></div>
+                <div class="col-md-3"><label class="form-label">Time zone</label><InputText class="form-control" @bind-Value="model.TimeZoneId" /></div>
+            </div>
+            <div class="form-check my-3"><InputCheckbox class="form-check-input" @bind-Value="model.IsActive" /><label class="form-check-label">Active</label></div>
+            <h2 class="h5">Distribution list</h2>
+            @foreach (var recipient in recipients)
+            {
+                var choice = Choices[recipient.Id];
+                <div class="border rounded p-3 mb-2">
+                    <strong>@recipient.DisplayName</strong>
+                    <label class="ms-3"><input type="checkbox" @bind="choice.Email" /> Email</label>
+                    <label class="ms-3"><input type="checkbox" @bind="choice.Sms" /> Text</label>
+                    @if (choice.Sms) { <small class="d-block text-muted">Text delivery occurs only when this number matches a verified Charlie user with transactional consent.</small> }
+                </div>
+            }
+            <button class="btn btn-primary mt-3" type="submit">Save schedule</button>
+            @if (model.Id != 0) { <button class="btn btn-outline-secondary mt-3 ms-2" type="button" @onclick="Reset">New schedule</button> }
+        </EditForm>
+    </div>
+    @foreach (var item in schedules)
+    {
+        <article class="card p-3 mb-2"><div class="d-flex justify-content-between"><div><strong>@item.Name</strong><div>@ScheduledReportCatalog.Types.GetValueOrDefault(item.ReportType, item.ReportType) at @item.RunAtLocalTime.ToString("h:mm tt") @item.TimeZoneId</div><small>@item.Recipients.Count recipient assignments</small></div><button class="btn btn-outline-primary" @onclick="() => Edit(item.Id)">Edit</button></div></article>
+    }
+</section>
+
+@code {
+    private ScheduledReportDefinition model = NewModel();
+    private string runAt = "07:00";
+    private string? status;
+    private List<NotificationRecipient> recipients = [];
+    private List<ScheduledReportDefinition> schedules = [];
+    private Dictionary<int, Choice> Choices = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        recipients = await db.NotificationRecipients.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.DisplayName).ToListAsync();
+        schedules = await db.ScheduledReportDefinitions.AsNoTracking().Include(x => x.Recipients).OrderBy(x => x.Name).ToListAsync();
+        Choices = recipients.ToDictionary(x => x.Id, _ => new Choice());
+    }
+    private async Task SaveAsync()
+    {
+        if (!TimeOnly.TryParse(runAt, out var time)) { status = "Enter a valid daily time."; return; }
+        try { _ = TimeZoneInfo.FindSystemTimeZoneById(model.TimeZoneId); } catch { status = "Enter a valid time zone, such as America/Chicago."; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        ScheduledReportDefinition entity;
+        if (model.Id == 0) { entity = model; db.ScheduledReportDefinitions.Add(entity); }
+        else { entity = await db.ScheduledReportDefinitions.Include(x => x.Recipients).SingleAsync(x => x.Id == model.Id); db.ScheduledReportRecipients.RemoveRange(entity.Recipients); entity.Name = model.Name; entity.ReportType = model.ReportType; entity.TimeZoneId = model.TimeZoneId; entity.IsActive = model.IsActive; }
+        entity.RunAtLocalTime = time; entity.UpdatedAt = DateTimeOffset.UtcNow;
+        entity.Recipients = Choices.Where(x => x.Value.Email || x.Value.Sms).Select(x => new ScheduledReportRecipient { NotificationRecipientId = x.Key, SendEmail = x.Value.Email, SendSms = x.Value.Sms }).ToList();
+        await db.SaveChangesAsync(); status = "The report schedule was saved."; Reset(); await LoadAsync();
+    }
+    private async Task Edit(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        model = await db.ScheduledReportDefinitions.AsNoTracking().Include(x => x.Recipients).SingleAsync(x => x.Id == id);
+        runAt = model.RunAtLocalTime.ToString("HH:mm"); Choices = recipients.ToDictionary(x => x.Id, x => { var a = model.Recipients.FirstOrDefault(y => y.NotificationRecipientId == x.Id); return new Choice { Email = a?.SendEmail == true, Sms = a?.SendSms == true }; });
+    }
+    private void Reset() { model = NewModel(); runAt = "07:00"; Choices = recipients.ToDictionary(x => x.Id, _ => new Choice()); }
+    private static ScheduledReportDefinition NewModel() => new() { Name = "Daily operations summary", ReportType = "daily-operations", TimeZoneId = "America/Chicago", IsActive = true };
+    private sealed class Choice { public bool Email { get; set; } public bool Sms { get; set; } }
+}
