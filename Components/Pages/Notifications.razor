@@ -52,7 +52,6 @@
                     <span>Channels</span>
                     <label><InputCheckbox @bind-Value="formModel.EnableEmail" /> Email</label>
                     <label><InputCheckbox @bind-Value="formModel.EnableSms" /> SMS</label>
-                    <label><InputCheckbox @bind-Value="formModel.EnableIMessage" /> iMessage</label>
                 </div>
 
                 <div class="preference-group">
@@ -96,10 +95,6 @@
                                 @if (recipient.EnableSms)
                                 {
                                     <span>SMS</span>
-                                }
-                                @if (recipient.EnableIMessage)
-                                {
-                                    <span>iMessage</span>
                                 }
                                 @if (!recipient.IsActive)
                                 {
@@ -152,7 +147,7 @@
     {
         try
         {
-            if (!formModel.EnableEmail && !formModel.EnableSms && !formModel.EnableIMessage)
+            if (!formModel.EnableEmail && !formModel.EnableSms)
             {
                 ShowError("Select at least one notification channel.");
                 return;
@@ -164,9 +159,9 @@
                 return;
             }
 
-            if ((formModel.EnableSms || formModel.EnableIMessage) && string.IsNullOrWhiteSpace(formModel.CellPhoneNumber))
+            if (formModel.EnableSms && string.IsNullOrWhiteSpace(formModel.CellPhoneNumber))
             {
-                ShowError("SMS or iMessage notifications require a cell phone number.");
+                ShowError("SMS notifications require a cell phone number.");
                 return;
             }
 
@@ -199,7 +194,7 @@
             recipient.CellPhoneNumber = normalizedPhone;
             recipient.EnableEmail = formModel.EnableEmail;
             recipient.EnableSms = formModel.EnableSms;
-            recipient.EnableIMessage = formModel.EnableIMessage;
+            recipient.EnableIMessage = false;
             recipient.NotifyOnQuoteEvents = formModel.NotifyOnQuoteEvents;
             recipient.NotifyOnExpenseEvents = formModel.NotifyOnExpenseEvents;
             recipient.IsActive = formModel.IsActive;
@@ -226,7 +221,6 @@
         formModel.CellPhoneNumber = recipient.CellPhoneNumber;
         formModel.EnableEmail = recipient.EnableEmail;
         formModel.EnableSms = recipient.EnableSms;
-        formModel.EnableIMessage = recipient.EnableIMessage;
         formModel.NotifyOnQuoteEvents = recipient.NotifyOnQuoteEvents;
         formModel.NotifyOnExpenseEvents = recipient.NotifyOnExpenseEvents;
         formModel.IsActive = recipient.IsActive;
@@ -264,7 +258,6 @@
         formModel.CellPhoneNumber = string.Empty;
         formModel.EnableEmail = true;
         formModel.EnableSms = false;
-        formModel.EnableIMessage = false;
         formModel.NotifyOnQuoteEvents = true;
         formModel.NotifyOnExpenseEvents = true;
         formModel.IsActive = true;
@@ -311,8 +304,6 @@
         public bool EnableEmail { get; set; } = true;
 
         public bool EnableSms { get; set; }
-
-        public bool EnableIMessage { get; set; }
 
         public bool NotifyOnQuoteEvents { get; set; } = true;
 
