@@ -15,7 +15,7 @@ public static class ScheduledReportCatalog
     {
         ["daily-operations"] = "Daily operations summary",
         ["estimate-follow-up"] = "Estimate follow-up",
-        ["expired-estimates"] = "Expired estimates, last two months",
+        ["expired-estimates"] = "Expired estimates, last month",
         ["job-blockers"] = "Job blockers",
         ["receivables"] = "Outstanding receivables"
     };
@@ -263,18 +263,20 @@ public sealed class ScheduledReportService(
         var jobs = await db.HousecallProJobs.AsNoTracking().Include(x => x.Blockers).ToListAsync(cancellationToken);
         var estimates = await db.HousecallProEstimates.AsNoTracking().ToListAsync(cancellationToken);
         var reportDate = $"Report date: {localDate:MMMM d, yyyy}";
-        var expiredWindowStart = localDate.AddMonths(-2);
+        var currentMonthStart = new DateOnly(localDate.Year, localDate.Month, 1);
+        var expiredWindowStart = currentMonthStart.AddMonths(-1);
+        var expiredWindowEnd = currentMonthStart.AddDays(-1);
         var expiredEstimates = estimates
-            .Where(x => x.ExpiresAt.HasValue)
-            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) >= expiredWindowStart)
-            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) <= localDate)
-            .Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(x => x.ExpiresAt)
+            .Where(x => string.Equals(x.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase))
+            .Where(x => EffectiveExpiredEstimateDate(x).HasValue)
+            .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) >= expiredWindowStart)
+            .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) <= expiredWindowEnd)
+            .OrderByDescending(EffectiveExpiredEstimateDate)
             .ToList();
         return reportType switch
         {
             "estimate-follow-up" => BuildEstimateFollowUpReport(reportDate, estimates),
-            "expired-estimates" => BuildExpiredEstimatesReport(reportDate, expiredWindowStart, localDate, expiredEstimates),
+            "expired-estimates" => BuildExpiredEstimatesReport(reportDate, expiredWindowStart, expiredWindowEnd, expiredEstimates),
             "job-blockers" => BuildJobBlockersReport(reportDate, jobs),
             "receivables" => BuildReceivablesReport(reportDate, jobs),
             _ => BuildDailyOperationsReport(reportDate, localDate, jobs, estimates)
@@ -325,12 +327,15 @@ public sealed class ScheduledReportService(
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
         var rows = estimates.Select(estimate => new ScheduledReportRow([
-            estimate.ExpiresAt!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
+            EffectiveExpiredEstimateDate(estimate)!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
             Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
         rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new("Expired estimates", reportDate, $"Unapproved estimates expiring from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}.",
-            [new("Expiration date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
+        return new("Expired estimates", reportDate, $"Housecall Pro estimates marked expired from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}.",
+            [new("Expired estimate date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
     }
+
+    private static DateTimeOffset? EffectiveExpiredEstimateDate(HousecallProEstimate estimate)
+        => estimate.ExpiresAt ?? estimate.EstimateDate;
 
     private static ScheduledReportDocument BuildJobBlockersReport(string reportDate, IReadOnlyCollection<HousecallProJob> jobs)
     {
