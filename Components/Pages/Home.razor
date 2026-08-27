@@ -591,7 +591,18 @@
             .Include(job => job.Blockers)
             .Include(job => job.PaymentMilestones)
             .Where(job => operationIds.Contains(job.LocalOperationId))
-            .Where(job => job.ScheduledStart >= earliestForecastJobDate)
+            .Where(job => job.InternalStatus != HousecallProEstimateStatuses.FollowUpComplete)
+            .Where(job =>
+                job.InternalStatus == "scheduled" ||
+                job.InternalStatus == "unscheduled" ||
+                job.InternalStatus == "needs scheduling" ||
+                job.InternalStatus == "in progress" ||
+                (job.InternalStatus == null &&
+                    (job.WorkStatus == "scheduled" ||
+                     job.WorkStatus == "unscheduled" ||
+                     job.WorkStatus == "needs scheduling" ||
+                     job.WorkStatus == "in progress")))
+            .Where(job => job.ScheduledStart == null || job.ScheduledStart >= earliestForecastJobDate)
             .Where(job => job.WorkStatus != "user canceled" && job.WorkStatus != "pro canceled" && job.WorkStatus != "pro-canceled")
             .ToListAsync();
 
