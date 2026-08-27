@@ -10,6 +10,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ScheduledReportDefinition> ScheduledReportDefinitions => Set<ScheduledReportDefinition>();
     public DbSet<ScheduledReportRecipient> ScheduledReportRecipients => Set<ScheduledReportRecipient>();
     public DbSet<ScheduledReportRun> ScheduledReportRuns => Set<ScheduledReportRun>();
+    public DbSet<ScheduledReportAccessToken> ScheduledReportAccessTokens => Set<ScheduledReportAccessToken>();
     public DbSet<LocalOperation> LocalOperations => Set<LocalOperation>();
     public DbSet<UserLocalOperation> UserLocalOperations => Set<UserLocalOperation>();
     public DbSet<OperationIntegration> OperationIntegrations => Set<OperationIntegration>();
@@ -190,6 +191,14 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(x => x.Title).HasMaxLength(200);
             entity.Property(x => x.Error).HasMaxLength(500);
             entity.HasOne(x => x.ScheduledReportDefinition).WithMany(x => x.Runs).HasForeignKey(x => x.ScheduledReportDefinitionId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<ScheduledReportAccessToken>(entity =>
+        {
+            entity.HasIndex(x => x.TokenHash).IsUnique();
+            entity.HasIndex(x => x.ExpiresAt);
+            entity.Property(x => x.TokenHash).HasMaxLength(64);
+            entity.HasOne(x => x.ScheduledReportRun).WithMany(x => x.AccessTokens).HasForeignKey(x => x.ScheduledReportRunId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.NotificationRecipient).WithMany().HasForeignKey(x => x.NotificationRecipientId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ApplicationUser>(entity =>

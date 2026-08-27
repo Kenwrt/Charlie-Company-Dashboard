@@ -38,4 +38,18 @@ public sealed class ScheduledReportRun
     [StringLength(500)] public string? Error { get; set; }
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAt { get; set; }
+    public ICollection<ScheduledReportAccessToken> AccessTokens { get; set; } = [];
+}
+
+public sealed class ScheduledReportAccessToken
+{
+    public long Id { get; set; }
+    public long ScheduledReportRunId { get; set; }
+    public ScheduledReportRun ScheduledReportRun { get; set; } = null!;
+    public int NotificationRecipientId { get; set; }
+    public NotificationRecipient NotificationRecipient { get; set; } = null!;
+    [Required, StringLength(64)] public string TokenHash { get; set; } = string.Empty;
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? LastAccessedAt { get; set; }
 }

@@ -1,32 +1,58 @@
 @page "/reports/runs/{RunId:long}"
-@attribute [Authorize]
+@using System.Security.Cryptography
+@using System.Text
 @using CharleyCompany.Dashboard.Web.Data
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
-@inject AuthenticationStateProvider AuthenticationStateProvider
 
 <PageTitle>Charlie Company Report</PageTitle>
 <section class="dashboard-shell">
-    @if (run is null) { <div class="alert alert-warning">The report could not be found.</div> }
-    else { <div class="dashboard-header"><div><p class="eyebrow">Scheduled report</p><h1>@run.Title</h1><p class="dashboard-subtitle">@run.ScheduledLocalDate.ToString("MMMM d, yyyy")</p></div></div><article class="card p-4"><div style="white-space:pre-wrap">@run.Body</div></article> }
+    @if (run is null)
+    {
+        <div class="alert alert-warning" role="alert">This report link is invalid or has expired. Request a new report link from a Charlie Company administrator.</div>
+        <a class="btn btn-primary" href="Account/Login">Log in to Charlie Company</a>
+    }
+    else
+    {
+        <div class="dashboard-header"><div><p class="eyebrow">Secure scheduled report</p><h1>@run.Title</h1><p class="dashboard-subtitle">@run.ScheduledLocalDate.ToString("MMMM d, yyyy")</p></div></div>
+        <article class="card p-4"><div style="white-space:pre-wrap">@run.Body</div></article>
+        <div class="card p-4 mt-3">
+            <h2 class="h5">Ready to take action?</h2>
+            <p>Log in to Charlie Company to review the current records and begin resolving the items in this report.</p>
+            <a class="btn btn-primary align-self-start" href="@LoginUrl">@LoginLabel</a>
+        </div>
+        <p class="text-muted mt-3"><small>This private report link expires automatically. Do not forward it.</small></p>
+    }
 </section>
 @code {
     [Parameter] public long RunId { get; set; }
+    [SupplyParameterFromQuery(Name = "token")] public string? Token { get; set; }
     private CharleyCompany.Dashboard.Web.Data.ScheduledReportRun? run;
+
+    private string LoginUrl
+    {
+        get
+        {
+            var destination = run?.ScheduledReportDefinition.ReportType is "expired-estimates" or "estimate-follow-up" ? "/estimates" : "/";
+            return $"Account/Login?returnUrl={Uri.EscapeDataString(destination)}";
+        }
+    }
+    private string LoginLabel => run?.ScheduledReportDefinition.ReportType is "expired-estimates" or "estimate-follow-up" ? "Log in to review estimates" : "Log in to Charlie Company";
+
     protected override async Task OnParametersSetAsync()
     {
-        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-        var userId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        run = null;
+        if (string.IsNullOrWhiteSpace(Token) || Token.Length > 200) return;
+        var suppliedHash = SHA256.HashData(Encoding.UTF8.GetBytes(Token));
         await using var db = await DbFactory.CreateDbContextAsync();
-        var user = string.IsNullOrWhiteSpace(userId) ? null : await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == userId);
-        var isAdmin = principal.IsInRole(ApplicationRoles.Administrator);
-        var email = user?.Email;
-        var phone = user?.PhoneNumber;
-        run = await db.ScheduledReportRuns.AsNoTracking().SingleOrDefaultAsync(x =>
-            x.Id == RunId && x.Status == "Completed" &&
-            (isAdmin || x.ScheduledReportDefinition.Recipients.Any(a =>
-                (a.SendEmail && email != null && a.NotificationRecipient.EmailAddress == email) ||
-                (a.SendSms && phone != null && a.NotificationRecipient.CellPhoneNumber == phone))),
-            CancellationToken.None);
+        var candidates = await db.ScheduledReportAccessTokens
+            .Include(x => x.ScheduledReportRun).ThenInclude(x => x.ScheduledReportDefinition)
+            .Where(x => x.ScheduledReportRunId == RunId && x.ExpiresAt > DateTimeOffset.UtcNow)
+            .ToListAsync();
+        var access = candidates.FirstOrDefault(x => CryptographicOperations.FixedTimeEquals(suppliedHash, Convert.FromHexString(x.TokenHash)));
+        if (access?.ScheduledReportRun.Status != "Completed") return;
+        access.LastAccessedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        run = access.ScheduledReportRun;
     }
 }

@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using CharleyCompany.Dashboard.Web.Data;
 using CharleyCompany.Dashboard.Web.Options;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 
 namespace CharleyCompany.Dashboard.Web.Services;
@@ -60,7 +62,6 @@ public sealed class ScheduledReportService(
             run.CompletedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
 
-            var reportUrl = BuildReportUrl(run.Id);
             foreach (var assignment in definition.Recipients.Where(x => x.NotificationRecipient.IsActive))
             {
                 var recipient = assignment.NotificationRecipient;
@@ -69,7 +70,7 @@ public sealed class ScheduledReportService(
                     await emailSender.SendAsync(recipient, new NotificationMessage(run.Title, run.Body, "scheduled-report", DateTimeOffset.UtcNow), cancellationToken);
                 }
 
-                if (assignment.SendSms && recipient.EnableSms && textMessaging.IsConfigured && !string.IsNullOrWhiteSpace(reportUrl))
+                if (assignment.SendSms && recipient.EnableSms && textMessaging.IsConfigured)
                 {
                     var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x =>
                         x.PhoneNumber == recipient.CellPhoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted,
@@ -77,6 +78,24 @@ public sealed class ScheduledReportService(
                     if (user is null)
                     {
                         logger.LogWarning("Scheduled report SMS skipped for recipient {RecipientId}: verified transactional consent was not found.", recipient.Id);
+                        continue;
+                    }
+
+                    var rawToken = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+                    var accessToken = new ScheduledReportAccessToken
+                    {
+                        ScheduledReportRunId = run.Id,
+                        NotificationRecipientId = recipient.Id,
+                        TokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))),
+                        ExpiresAt = DateTimeOffset.UtcNow.AddHours(Math.Clamp(reportOptions.AccessLinkHours, 1, 720))
+                    };
+                    db.ScheduledReportAccessTokens.Add(accessToken);
+                    await db.SaveChangesAsync(cancellationToken);
+                    var reportUrl = BuildReportUrl(run.Id, rawToken);
+                    if (string.IsNullOrWhiteSpace(reportUrl))
+                    {
+                        db.ScheduledReportAccessTokens.Remove(accessToken);
+                        await db.SaveChangesAsync(cancellationToken);
                         continue;
                     }
 
@@ -101,7 +120,7 @@ public sealed class ScheduledReportService(
         }
     }
 
-    private string? BuildReportUrl(long runId)
+    private string? BuildReportUrl(long runId, string token)
     {
         if (!Uri.TryCreate(reportOptions.PublicBaseUrl, UriKind.Absolute, out var baseUri) || baseUri.Scheme != Uri.UriSchemeHttps)
         {
@@ -109,7 +128,8 @@ public sealed class ScheduledReportService(
             return null;
         }
 
-        return new Uri(baseUri, $"reports/runs/{runId}").AbsoluteUri;
+        var reportUri = new Uri(baseUri, $"reports/runs/{runId}");
+        return QueryHelpers.AddQueryString(reportUri.AbsoluteUri, "token", token);
     }
 
     private static async Task<string> BuildBodyAsync(ApplicationDbContext db, string reportType, DateOnly localDate, CancellationToken cancellationToken)

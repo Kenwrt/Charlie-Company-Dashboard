@@ -162,6 +162,17 @@ try
     }
     app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
     app.UseHttpsRedirection();
+    app.Use(async (context, next) =>
+    {
+        if (context.Request.Path.StartsWithSegments("/reports/runs"))
+        {
+            context.Response.Headers.CacheControl = "no-store, private";
+            context.Response.Headers.Pragma = "no-cache";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.Headers["X-Robots-Tag"] = "noindex, nofollow, noarchive";
+        }
+        await next();
+    });
     app.UseStaticFiles();
 
     app.UseSerilogRequestLogging();

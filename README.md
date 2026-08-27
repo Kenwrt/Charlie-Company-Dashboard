@@ -82,6 +82,7 @@ Remote services that use the included buffered forwarder also configure:
 
 ```text
 Observability__ForwardingUrl=https://<ccv-host>/api/observability/events
+```
 
 ## Scheduled report delivery
 
@@ -93,8 +94,7 @@ Set the public HTTPS application address in the production environment before en
 ScheduledReports__PublicBaseUrl=https://<charlie-company-host>/
 ```
 
-Email reports contain the report body. Text reports contain a short notice and a secure application link. A text recipient must match a Charlie Company user with a verified phone number and current transactional consent. The linked report requires sign-in and is limited to administrators or an assigned recipient whose account email or phone matches the distribution-list entry.
-```
+Email reports contain the report body. Text reports contain a short notice and a secure application link. A text recipient must match a Charlie Company user with a verified phone number and current transactional consent. Text links use a recipient-specific cryptographic bearer token. Only a SHA-256 hash is stored, and the link expires after `ScheduledReports__AccessLinkHours` (seven days by default). The report can be read without signing in, and the page provides a login action that returns the user to the relevant Charlie Company workflow.
 
 Every multi-service workflow should keep the same `correlationId` across Housecall Pro, CompanyCam, CentCom, pricing, approval, and delivery steps. The ingestion endpoint is rate limited, deduplicates `eventId`, redacts common secret patterns, and rejects unknown local-operation identifiers. CSV diagnostic export requires the Administrator role.
 
