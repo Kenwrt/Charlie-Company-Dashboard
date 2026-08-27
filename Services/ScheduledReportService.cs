@@ -351,12 +351,12 @@ public sealed class ScheduledReportService(
             .ToList();
         var expiringWindowEnd = localDate.AddDays(9);
         var estimatesExpiringSoon = estimates
-            .Where(x => x.ExpiresAt.HasValue)
-            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) >= localDate)
-            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) <= expiringWindowEnd)
+            .Where(x => EffectiveEstimateExpirationDate(x).HasValue)
+            .Where(x => DateOnly.FromDateTime(EffectiveEstimateExpirationDate(x)!.Value.Date) >= localDate)
+            .Where(x => DateOnly.FromDateTime(EffectiveEstimateExpirationDate(x)!.Value.Date) <= expiringWindowEnd)
             .Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
             .Where(x => !IsExpiredEstimate(x))
-            .OrderBy(x => x.ExpiresAt)
+            .OrderBy(EffectiveEstimateExpirationDate)
             .ToList();
         return reportType switch
         {
@@ -430,7 +430,7 @@ public sealed class ScheduledReportService(
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
         var rows = estimates.Select(estimate => new ScheduledReportRow([
-            estimate.ExpiresAt!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
+            EffectiveEstimateExpirationDate(estimate)!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
             Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
         rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
         return new("Estimates Expiring in the Next Ten Days", reportDate,
@@ -439,7 +439,10 @@ public sealed class ScheduledReportService(
     }
 
     private static DateTimeOffset? EffectiveExpiredEstimateDate(HousecallProEstimate estimate)
-        => estimate.ExpiresAt ?? estimate.EstimateDate;
+        => EffectiveEstimateExpirationDate(estimate);
+
+    private static DateTimeOffset? EffectiveEstimateExpirationDate(HousecallProEstimate estimate)
+        => estimate.ExpiresAt ?? estimate.EstimateDate?.AddDays(30);
 
     private static bool IsExpiredEstimate(HousecallProEstimate estimate) =>
         string.Equals(estimate.Status, "expired", StringComparison.OrdinalIgnoreCase) ||
