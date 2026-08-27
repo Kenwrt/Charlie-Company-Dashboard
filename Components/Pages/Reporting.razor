@@ -76,11 +76,22 @@
         }
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(preview))
+    @if (previewDocument is not null)
     {
         <article class="card overflow-hidden">
-            <div class="p-3 border-bottom"><strong>Report preview</strong></div>
-            <div>@((MarkupString)preview)</div>
+            <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+                <strong>Report preview</strong>
+                <span>Page @currentPage of @TotalPages</span>
+            </div>
+            <div>@((MarkupString)PagedPreviewHtml)</div>
+            @if (TotalPages > 1)
+            {
+                <div class="p-3 border-top d-flex justify-content-between align-items-center">
+                    <button class="btn btn-outline-secondary" type="button" disabled="@(currentPage == 1)" @onclick="PreviousPage">Previous</button>
+                    <span>Rows @FirstVisibleRow through @LastVisibleRow of @previewDocument.Rows.Count</span>
+                    <button class="btn btn-outline-secondary" type="button" disabled="@(currentPage == TotalPages)" @onclick="NextPage">Next</button>
+                </div>
+            }
         </article>
     }
 </section>
@@ -96,10 +107,24 @@
     private bool sending;
     private bool succeeded;
     private string? status;
-    private string? preview;
+    private ScheduledReportDocument? previewDocument;
+    private int currentPage = 1;
+    private const int PreviewPageSize = 50;
 
     private bool HasDestination => Choices.Values.Any(x => x.Email || x.Sms) || !string.IsNullOrWhiteSpace(adHocEmail) || !string.IsNullOrWhiteSpace(adHocPhone);
-    private bool CanSend => preview is not null && sendConfirmed && HasDestination && !sending;
+    private bool CanSend => previewDocument is not null && sendConfirmed && HasDestination && !sending;
+    private int TotalPages => previewDocument is null ? 1 : Math.Max(1, (int)Math.Ceiling(previewDocument.Rows.Count / (double)PreviewPageSize));
+    private int FirstVisibleRow => previewDocument is null || previewDocument.Rows.Count == 0 ? 0 : ((currentPage - 1) * PreviewPageSize) + 1;
+    private int LastVisibleRow => previewDocument is null ? 0 : Math.Min(currentPage * PreviewPageSize, previewDocument.Rows.Count);
+    private string PagedPreviewHtml
+    {
+        get
+        {
+            if (previewDocument is null) return string.Empty;
+            var rows = previewDocument.Rows.Skip((currentPage - 1) * PreviewPageSize).Take(PreviewPageSize).ToList();
+            return ScheduledReportFormatter.ToHtml(previewDocument with { Rows = rows });
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -115,7 +140,8 @@
         try
         {
             var result = await ReportService.PreviewAsync(reportType, LocalDate(), CancellationToken.None);
-            preview = result.Html;
+            previewDocument = result.Document;
+            currentPage = 1;
             succeeded = true;
             status = "Report generated. Review it below before sending.";
         }
@@ -150,13 +176,17 @@
 
     private void ReportChanged()
     {
-        preview = null;
+        previewDocument = null;
+        currentPage = 1;
         status = null;
         sendConfirmed = false;
     }
 
     private static bool CanReceiveEmail(NotificationRecipient recipient) => recipient.EnableEmail && !string.IsNullOrWhiteSpace(recipient.EmailAddress);
     private static bool CanReceiveText(NotificationRecipient recipient) => recipient.EnableSms && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber);
+
+    private void PreviousPage() => currentPage = Math.Max(1, currentPage - 1);
+    private void NextPage() => currentPage = Math.Min(TotalPages, currentPage + 1);
 
     private static DateOnly LocalDate()
     {

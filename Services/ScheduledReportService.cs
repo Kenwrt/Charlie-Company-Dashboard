@@ -17,6 +17,8 @@ public static class ScheduledReportCatalog
         ["daily-operations"] = "Daily operations summary",
         ["estimate-follow-up"] = "Estimate follow-up",
         ["expired-estimates"] = "Expired estimates, last month",
+        ["expired-estimates-current-month"] = "Expired Estimates for the Current Month",
+        ["estimates-expiring-next-ten-days"] = "Estimates Expiring in the Next Ten Days",
         ["job-blockers"] = "Job blockers",
         ["receivables"] = "Outstanding receivables"
     };
@@ -35,7 +37,7 @@ public sealed class ScheduledReportService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var document = await BuildDocumentAsync(db, reportType, localDate, cancellationToken);
-        return new(ScheduledReportFormatter.ToPlainText(document), ScheduledReportFormatter.ToHtml(document));
+        return new(ScheduledReportFormatter.ToPlainText(document), ScheduledReportFormatter.ToHtml(document), document);
     }
 
     public async Task<ScheduledReportTestResult> SendManualAsync(
@@ -336,12 +338,32 @@ public sealed class ScheduledReportService(
             .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) <= expiredWindowEnd)
             .OrderByDescending(EffectiveExpiredEstimateDate)
             .ToList();
+        var currentMonthExpiredEstimates = estimates
+            .Where(x => string.Equals(x.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase))
+            .Where(x => EffectiveExpiredEstimateDate(x).HasValue)
+            .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) >= currentMonthStart)
+            .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) <= localDate)
+            .OrderByDescending(EffectiveExpiredEstimateDate)
+            .ToList();
+        var expiringWindowEnd = localDate.AddDays(9);
+        var estimatesExpiringSoon = estimates
+            .Where(x => x.ExpiresAt.HasValue)
+            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) >= localDate)
+            .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) <= expiringWindowEnd)
+            .Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !string.Equals(x.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.ExpiresAt)
+            .ToList();
         return reportType switch
         {
             "estimate-follow-up" => BuildEstimateFollowUpReport(reportDate, estimates),
-            "expired-estimates" => BuildExpiredEstimatesReport(reportDate, expiredWindowStart, expiredWindowEnd, expiredEstimates),
+            "expired-estimates" => BuildExpiredEstimatesReport("Expired estimates", reportDate,
+                $"Housecall Pro estimates marked expired from {expiredWindowStart:MMMM d, yyyy} through {expiredWindowEnd:MMMM d, yyyy}.", expiredEstimates),
+            "expired-estimates-current-month" => BuildExpiredEstimatesReport("Expired Estimates for the Current Month", reportDate,
+                $"Housecall Pro estimates marked expired from {currentMonthStart:MMMM d, yyyy} through {localDate:MMMM d, yyyy}.", currentMonthExpiredEstimates),
+            "estimates-expiring-next-ten-days" => BuildEstimatesExpiringReport(reportDate, localDate, expiringWindowEnd, estimatesExpiringSoon),
             "job-blockers" => BuildJobBlockersReport(reportDate, jobs),
-            "receivables" => BuildReceivablesReport(reportDate, jobs),
+            "receivables" => BuildReceivablesReport(reportDate, localDate, jobs),
             _ => BuildDailyOperationsReport(reportDate, localDate, jobs, estimates)
         };
     }
@@ -384,17 +406,32 @@ public sealed class ScheduledReportService(
     }
 
     private static ScheduledReportDocument BuildExpiredEstimatesReport(
+        string reportName,
         string reportDate,
-        DateOnly windowStart,
-        DateOnly windowEnd,
+        string description,
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
         var rows = estimates.Select(estimate => new ScheduledReportRow([
             EffectiveExpiredEstimateDate(estimate)!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
             Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
         rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new("Expired estimates", reportDate, $"Housecall Pro estimates marked expired from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}.",
+        return new(reportName, reportDate, description,
             [new("Expired estimate date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
+    }
+
+    private static ScheduledReportDocument BuildEstimatesExpiringReport(
+        string reportDate,
+        DateOnly windowStart,
+        DateOnly windowEnd,
+        IReadOnlyCollection<HousecallProEstimate> estimates)
+    {
+        var rows = estimates.Select(estimate => new ScheduledReportRow([
+            estimate.ExpiresAt!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
+            Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+        rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
+        return new("Estimates Expiring in the Next Ten Days", reportDate,
+            $"Unapproved Housecall Pro estimates expiring from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}.",
+            [new("Expiration date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
     }
 
     private static DateTimeOffset? EffectiveExpiredEstimateDate(HousecallProEstimate estimate)
@@ -413,16 +450,17 @@ public sealed class ScheduledReportService(
             [new("Job"), new("Customer"), new("Blocker"), new("Started"), new("Next action"), new("Revenue at risk", true)], rows);
     }
 
-    private static ScheduledReportDocument BuildReceivablesReport(string reportDate, IReadOnlyCollection<HousecallProJob> jobs)
+    private static ScheduledReportDocument BuildReceivablesReport(string reportDate, DateOnly localDate, IReadOnlyCollection<HousecallProJob> jobs)
     {
-        var items = jobs.Where(job => job.OutstandingBalance > 0).OrderBy(job => job.ScheduledStart).ToList();
+        var currentYearStart = new DateTimeOffset(localDate.Year, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var items = jobs.Where(job => job.OutstandingBalance > 0 && job.ScheduledStart >= currentYearStart).OrderBy(job => job.ScheduledStart).ToList();
         var rows = items.Select(job => new ScheduledReportRow([
             Value(job.JobNumber, "Not provided"), Value(job.CustomerName, "Not recorded"), Value(job.WorkStatus, "Unknown"),
             job.ScheduledStart?.ToString("MM/dd/yyyy") ?? "Not scheduled", job.JobPrice.ToString("C0", CultureInfo.CurrentCulture),
             job.OutstandingBalance.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
         rows.Add(new(["Total", $"{items.Count:N0} jobs", "", "", items.Sum(job => job.JobPrice).ToString("C0", CultureInfo.CurrentCulture),
             items.Sum(job => job.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new("Outstanding receivables", reportDate, "Jobs with an uncollected customer balance.",
+        return new("Outstanding receivables", reportDate, $"Jobs dated {localDate.Year} or later with an uncollected customer balance.",
             [new("Job"), new("Customer"), new("Status"), new("Job date"), new("Price", true), new("Uncollected", true)], rows);
     }
 
@@ -433,7 +471,7 @@ public sealed class ScheduledReportService(
 }
 
 public sealed record ScheduledReportTestResult(bool Delivered, string Message, string? ReportUrl);
-public sealed record ScheduledReportPreview(string PlainText, string Html);
+public sealed record ScheduledReportPreview(string PlainText, string Html, ScheduledReportDocument Document);
 public sealed record ManualReportRecipientSelection(int RecipientId, bool SendEmail, bool SendSms);
 
 public sealed class ScheduledReportWorker(
