@@ -29,7 +29,7 @@ public sealed class EmailNotificationSender(
                 await resend.SendAsync(
                     recipient.EmailAddress,
                     message.Subject,
-                    $"<p>{WebUtility.HtmlEncode(message.Body).Replace(Environment.NewLine, "<br />")}</p>",
+                    message.HtmlBody ?? $"<p>{WebUtility.HtmlEncode(message.Body).Replace(Environment.NewLine, "<br />")}</p>",
                     message.Body,
                     cancellationToken);
                 logger.LogInformation("Resend notification sent to {EmailAddress} for {EventType}.", recipient.EmailAddress, message.EventType);
@@ -49,7 +49,10 @@ public sealed class EmailNotificationSender(
                 emailOptions.FromAddress,
                 recipient.EmailAddress,
                 message.Subject,
-                message.Body);
+                message.HtmlBody ?? message.Body)
+            {
+                IsBodyHtml = !string.IsNullOrWhiteSpace(message.HtmlBody)
+            };
 
             using var smtpClient = new SmtpClient(emailOptions.SmtpHost, emailOptions.SmtpPort)
             {

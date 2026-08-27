@@ -2,6 +2,8 @@
 @using System.Security.Cryptography
 @using System.Text
 @using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Components
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
 
@@ -15,7 +17,16 @@
     else
     {
         <div class="dashboard-header"><div><p class="eyebrow">Secure scheduled report</p><h1>@run.Title</h1><p class="dashboard-subtitle">@run.ScheduledLocalDate.ToString("MMMM d, yyyy")</p></div></div>
-        <article class="card p-4"><div style="white-space:pre-wrap">@run.Body</div></article>
+        <article class="card overflow-hidden">
+            @if (reportDocument is not null)
+            {
+                @((MarkupString)ScheduledReportFormatter.ToHtml(reportDocument))
+            }
+            else
+            {
+                <div class="p-4" style="white-space:pre-wrap">@run.Body</div>
+            }
+        </article>
         <div class="card p-4 mt-3">
             <h2 class="h5">Ready to take action?</h2>
             <p>Log in to Charlie Company to review the current records and begin resolving the items in this report.</p>
@@ -28,6 +39,7 @@
     [Parameter] public long RunId { get; set; }
     [SupplyParameterFromQuery(Name = "token")] public string? Token { get; set; }
     private CharleyCompany.Dashboard.Web.Data.ScheduledReportRun? run;
+    private ScheduledReportDocument? reportDocument;
 
     private string LoginUrl
     {
@@ -42,6 +54,7 @@
     protected override async Task OnParametersSetAsync()
     {
         run = null;
+        reportDocument = null;
         if (string.IsNullOrWhiteSpace(Token) || Token.Length > 200) return;
         var suppliedHash = SHA256.HashData(Encoding.UTF8.GetBytes(Token));
         await using var db = await DbFactory.CreateDbContextAsync();
@@ -54,5 +67,6 @@
         access.LastAccessedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         run = access.ScheduledReportRun;
+        _ = ScheduledReportFormatter.TryDeserialize(run.Body, out reportDocument);
     }
 }

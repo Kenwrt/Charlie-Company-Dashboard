@@ -3,6 +3,7 @@
 @attribute [Authorize(Roles = ApplicationRoles.Administrator)]
 @using CharleyCompany.Dashboard.Web.Data
 @using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Components
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
 @inject ScheduledReportService ReportService
@@ -66,7 +67,7 @@
                     @if (!string.IsNullOrWhiteSpace(testStatus)) { <div class="alert @(testSucceeded ? "alert-success" : "alert-warning") mt-3 mb-0">@testStatus</div> }
                     @if (!string.IsNullOrWhiteSpace(preview))
                     {
-                        <article class="bg-light border rounded p-3 mt-3"><strong>Report preview</strong><div class="mt-2" style="white-space:pre-wrap">@preview</div></article>
+                        <article class="border rounded mt-3"><div class="p-3 border-bottom"><strong>Report preview</strong></div><div>@((MarkupString)preview)</div></article>
                     }
                 </div>
             }
@@ -101,12 +102,13 @@
         await using var db = await DbFactory.CreateDbContextAsync();
         recipients = await db.NotificationRecipients.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.DisplayName).ToListAsync();
         schedules = await db.ScheduledReportDefinitions.AsNoTracking().Include(x => x.Recipients).OrderBy(x => x.Name).ToListAsync();
-        Choices = recipients.ToDictionary(x => x.Id, _ => new Choice());
+        Choices = DefaultChoices();
     }
     private async Task SaveAsync()
     {
         if (!TimeOnly.TryParse(runAt, out var time)) { status = "Enter a valid daily time."; return; }
         try { _ = TimeZoneInfo.FindSystemTimeZoneById(model.TimeZoneId); } catch { status = "Enter a valid time zone, such as America/Chicago."; return; }
+        if (!Choices.Any(choice => choice.Value.Email || choice.Value.Sms)) { status = "Select at least one email or text distribution method before saving the schedule."; return; }
         await using var db = await DbFactory.CreateDbContextAsync();
         ScheduledReportDefinition entity;
         if (model.Id == 0) { entity = model; db.ScheduledReportDefinitions.Add(entity); }
@@ -124,7 +126,8 @@
     }
     private async Task PreviewAsync()
     {
-        preview = await ReportService.PreviewAsync(model.ReportType, LocalDate(), CancellationToken.None);
+        var result = await ReportService.PreviewAsync(model.ReportType, LocalDate(), CancellationToken.None);
+        preview = result.Html;
         testStatus = "Preview generated. No message was sent.";
         testSucceeded = true;
     }
@@ -146,11 +149,18 @@
         }
         finally { testSending = false; }
     }
-    private void Reset() { model = NewModel(); runAt = "07:00"; Choices = recipients.ToDictionary(x => x.Id, _ => new Choice()); ResetTest(); }
+    private void Reset() { model = NewModel(); runAt = "07:00"; Choices = DefaultChoices(); ResetTest(); }
     private DateOnly LocalDate()
     {
         try { return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(model.TimeZoneId)).Date); }
         catch { return DateOnly.FromDateTime(DateTime.UtcNow.Date); }
+    }
+    private Dictionary<int, Choice> DefaultChoices()
+    {
+        var choices = recipients.ToDictionary(recipient => recipient.Id, _ => new Choice());
+        var defaultEmailRecipient = recipients.FirstOrDefault(recipient => recipient.EnableEmail && !string.IsNullOrWhiteSpace(recipient.EmailAddress));
+        if (defaultEmailRecipient is not null) choices[defaultEmailRecipient.Id].Email = true;
+        return choices;
     }
     private void ResetTest() { testRecipientId = 0; testEmail = true; testSms = false; testConfirmed = false; testSending = false; testSucceeded = false; testStatus = null; preview = null; }
     private static ScheduledReportDefinition NewModel() => new() { Name = "Daily operations summary", ReportType = "daily-operations", TimeZoneId = "America/Chicago", IsActive = true };

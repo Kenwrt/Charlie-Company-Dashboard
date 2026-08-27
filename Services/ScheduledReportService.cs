@@ -30,10 +30,11 @@ public sealed class ScheduledReportService(
 {
     private readonly ScheduledReportOptions reportOptions = options.Value;
 
-    public async Task<string> PreviewAsync(string reportType, DateOnly localDate, CancellationToken cancellationToken)
+    public async Task<ScheduledReportPreview> PreviewAsync(string reportType, DateOnly localDate, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await BuildBodyAsync(db, reportType, localDate, cancellationToken);
+        var document = await BuildDocumentAsync(db, reportType, localDate, cancellationToken);
+        return new(ScheduledReportFormatter.ToPlainText(document), ScheduledReportFormatter.ToHtml(document));
     }
 
     public async Task<ScheduledReportTestResult> SendTestAsync(
@@ -52,13 +53,16 @@ public sealed class ScheduledReportService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var definition = await db.ScheduledReportDefinitions.SingleAsync(x => x.Id == definitionId, cancellationToken);
         var recipient = await db.NotificationRecipients.SingleAsync(x => x.Id == recipientId && x.IsActive, cancellationToken);
+        var document = await BuildDocumentAsync(db, definition.ReportType, localDate, cancellationToken);
+        var plainText = ScheduledReportFormatter.ToPlainText(document);
+        var html = ScheduledReportFormatter.ToHtml(document);
         var run = new ScheduledReportRun
         {
             ScheduledReportDefinitionId = definition.Id,
             ScheduledLocalDate = localDate,
             IsTest = true,
             Title = $"[TEST] {definition.Name}",
-            Body = await BuildBodyAsync(db, definition.ReportType, localDate, cancellationToken),
+            Body = ScheduledReportFormatter.Serialize(document),
             Status = "Completed",
             CompletedAt = DateTimeOffset.UtcNow
         };
@@ -77,7 +81,7 @@ public sealed class ScheduledReportService(
             {
                 await emailSender.SendAsync(
                     recipient,
-                    new NotificationMessage(run.Title, run.Body, "scheduled-report-test", DateTimeOffset.UtcNow),
+                    new NotificationMessage(run.Title, plainText, "scheduled-report-test", DateTimeOffset.UtcNow, html),
                     cancellationToken);
                 outcomes.Add($"Test email was submitted for delivery to {recipient.EmailAddress}.");
                 delivered = true;
@@ -170,7 +174,10 @@ public sealed class ScheduledReportService(
 
         try
         {
-            run.Body = await BuildBodyAsync(db, definition.ReportType, localDate, cancellationToken);
+            var document = await BuildDocumentAsync(db, definition.ReportType, localDate, cancellationToken);
+            var plainText = ScheduledReportFormatter.ToPlainText(document);
+            var html = ScheduledReportFormatter.ToHtml(document);
+            run.Body = ScheduledReportFormatter.Serialize(document);
             run.Status = "Completed";
             run.CompletedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
@@ -180,7 +187,7 @@ public sealed class ScheduledReportService(
                 var recipient = assignment.NotificationRecipient;
                 if (assignment.SendEmail && recipient.EnableEmail)
                 {
-                    await emailSender.SendAsync(recipient, new NotificationMessage(run.Title, run.Body, "scheduled-report", DateTimeOffset.UtcNow), cancellationToken);
+                    await emailSender.SendAsync(recipient, new NotificationMessage(run.Title, plainText, "scheduled-report", DateTimeOffset.UtcNow, html), cancellationToken);
                 }
 
                 if (assignment.SendSms && recipient.EnableSms && textMessaging.IsConfigured)
@@ -245,11 +252,11 @@ public sealed class ScheduledReportService(
         return QueryHelpers.AddQueryString(reportUri.AbsoluteUri, "token", token);
     }
 
-    private static async Task<string> BuildBodyAsync(ApplicationDbContext db, string reportType, DateOnly localDate, CancellationToken cancellationToken)
+    private static async Task<ScheduledReportDocument> BuildDocumentAsync(ApplicationDbContext db, string reportType, DateOnly localDate, CancellationToken cancellationToken)
     {
         var jobs = await db.HousecallProJobs.AsNoTracking().Include(x => x.Blockers).ToListAsync(cancellationToken);
         var estimates = await db.HousecallProEstimates.AsNoTracking().ToListAsync(cancellationToken);
-        var heading = $"Report date: {localDate:MMMM d, yyyy}";
+        var reportDate = $"Report date: {localDate:MMMM d, yyyy}";
         var expiredWindowStart = localDate.AddMonths(-2);
         var expiredEstimates = estimates
             .Where(x => x.ExpiresAt.HasValue)
@@ -260,43 +267,99 @@ public sealed class ScheduledReportService(
             .ToList();
         return reportType switch
         {
-            "estimate-follow-up" => $"{heading}{Environment.NewLine}{Environment.NewLine}Estimates requiring follow-up: {estimates.Count(x => x.InternalStatus == HousecallProEstimateStatuses.FollowUp || x.InternalStatus == HousecallProEstimateStatuses.FollowUpPending):N0}{Environment.NewLine}Open estimate value: {estimates.Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)).Sum(x => x.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)}",
-            "expired-estimates" => BuildExpiredEstimatesReport(heading, expiredWindowStart, localDate, expiredEstimates),
-            "job-blockers" => $"{heading}{Environment.NewLine}{Environment.NewLine}Open blockers: {jobs.Sum(x => x.Blockers.Count(b => b.ResolvedOn == null)):N0}{Environment.NewLine}Revenue at risk: {jobs.SelectMany(x => x.Blockers).Where(x => x.ResolvedOn == null).Sum(x => x.RevenueAtRisk).ToString("C0", CultureInfo.CurrentCulture)}",
-            "receivables" => $"{heading}{Environment.NewLine}{Environment.NewLine}Jobs with outstanding balances: {jobs.Count(x => x.OutstandingBalance > 0):N0}{Environment.NewLine}Outstanding total: {jobs.Sum(x => x.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)}",
-            _ => $"{heading}{Environment.NewLine}{Environment.NewLine}Active jobs: {jobs.Count(x => !string.Equals(x.WorkStatus, "completed", StringComparison.OrdinalIgnoreCase)):N0}{Environment.NewLine}Scheduled today: {jobs.Count(x => x.ScheduledStart.HasValue && DateOnly.FromDateTime(x.ScheduledStart.Value.Date) == localDate):N0}{Environment.NewLine}Open estimates: {estimates.Count(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)):N0}{Environment.NewLine}Open blockers: {jobs.Sum(x => x.Blockers.Count(b => b.ResolvedOn == null)):N0}{Environment.NewLine}Outstanding receivables: {jobs.Sum(x => x.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)}"
+            "estimate-follow-up" => BuildEstimateFollowUpReport(reportDate, estimates),
+            "expired-estimates" => BuildExpiredEstimatesReport(reportDate, expiredWindowStart, localDate, expiredEstimates),
+            "job-blockers" => BuildJobBlockersReport(reportDate, jobs),
+            "receivables" => BuildReceivablesReport(reportDate, jobs),
+            _ => BuildDailyOperationsReport(reportDate, localDate, jobs, estimates)
         };
     }
 
-    private static string BuildExpiredEstimatesReport(
-        string heading,
+    private static ScheduledReportDocument BuildDailyOperationsReport(
+        string reportDate,
+        DateOnly localDate,
+        IReadOnlyCollection<HousecallProJob> jobs,
+        IReadOnlyCollection<HousecallProEstimate> estimates)
+    {
+        var activeJobs = jobs.Where(job => !string.Equals(job.WorkStatus, "completed", StringComparison.OrdinalIgnoreCase)).ToList();
+        var scheduledToday = jobs.Where(job => job.ScheduledStart.HasValue && DateOnly.FromDateTime(job.ScheduledStart.Value.Date) == localDate).ToList();
+        var openEstimates = estimates.Where(estimate => !string.Equals(estimate.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)).ToList();
+        var blockers = jobs.SelectMany(job => job.Blockers).Where(blocker => blocker.ResolvedOn == null).ToList();
+        var receivables = jobs.Where(job => job.OutstandingBalance > 0).ToList();
+        var rows = new List<ScheduledReportRow>
+        {
+            Row("Active jobs", activeJobs.Count, activeJobs.Sum(job => job.JobPrice), "Scheduled, unscheduled, and in-progress work"),
+            Row("Scheduled today", scheduledToday.Count, scheduledToday.Sum(job => job.JobPrice), "Jobs scheduled for the report date"),
+            Row("Open estimates", openEstimates.Count, openEstimates.Sum(estimate => estimate.TotalAmount), "Estimates awaiting a decision"),
+            Row("Open blockers", blockers.Count, blockers.Sum(blocker => blocker.RevenueAtRisk), "Revenue currently at risk"),
+            Row("Outstanding receivables", receivables.Count, receivables.Sum(job => job.OutstandingBalance), "Uncollected customer balances"),
+            new(["Total categories", "5", "See category totals", "Categories overlap, so financial values are not added together"], true)
+        };
+        return new("Daily operations summary", reportDate, "Current operating workload, estimates, blockers, and receivables.",
+            [new("Category"), new("Records", true), new("Financial value", true), new("Description")], rows);
+    }
+
+    private static ScheduledReportDocument BuildEstimateFollowUpReport(string reportDate, IReadOnlyCollection<HousecallProEstimate> estimates)
+    {
+        var items = estimates.Where(estimate => estimate.InternalStatus is HousecallProEstimateStatuses.FollowUp or HousecallProEstimateStatuses.FollowUpPending)
+            .OrderBy(estimate => estimate.EstimateDate).ToList();
+        var rows = items.Select(estimate => new ScheduledReportRow([
+            Value(estimate.EstimateNumber, "Not provided"), Value(estimate.CustomerName, "Not recorded"),
+            estimate.EstimateDate?.ToString("MM/dd/yyyy") ?? "Not provided", Value(estimate.InternalStatus, "Follow up"),
+            estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+        rows.Add(new(["Total", $"{items.Count:N0} estimates", "", "", items.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
+        return new("Estimate follow-up", reportDate, "Estimates that require an additional customer follow-up.",
+            [new("Estimate"), new("Customer"), new("Estimate date"), new("Status"), new("Amount", true)], rows);
+    }
+
+    private static ScheduledReportDocument BuildExpiredEstimatesReport(
+        string reportDate,
         DateOnly windowStart,
         DateOnly windowEnd,
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
-        var body = new StringBuilder()
-            .AppendLine(heading)
-            .AppendLine()
-            .AppendLine($"Expiration window: {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}")
-            .AppendLine($"Expired estimates: {estimates.Count:N0}")
-            .AppendLine($"Expired estimate value: {estimates.Sum(x => x.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)}");
-
-        if (estimates.Count > 0)
-        {
-            body.AppendLine();
-            foreach (var estimate in estimates)
-            {
-                var number = string.IsNullOrWhiteSpace(estimate.EstimateNumber) ? "No estimate number" : estimate.EstimateNumber;
-                var customer = string.IsNullOrWhiteSpace(estimate.CustomerName) ? "Customer not recorded" : estimate.CustomerName;
-                body.AppendLine($"{estimate.ExpiresAt!.Value:MMM d, yyyy} | {number} | {customer} | {estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)}");
-            }
-        }
-
-        return body.ToString().TrimEnd();
+        var rows = estimates.Select(estimate => new ScheduledReportRow([
+            estimate.ExpiresAt!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
+            Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+        rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
+        return new("Expired estimates", reportDate, $"Unapproved estimates expiring from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}.",
+            [new("Expiration date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
     }
+
+    private static ScheduledReportDocument BuildJobBlockersReport(string reportDate, IReadOnlyCollection<HousecallProJob> jobs)
+    {
+        var items = jobs.SelectMany(job => job.Blockers.Where(blocker => blocker.ResolvedOn == null).Select(blocker => (Job: job, Blocker: blocker)))
+            .OrderBy(item => item.Blocker.StartedOn).ToList();
+        var rows = items.Select(item => new ScheduledReportRow([
+            Value(item.Job.JobNumber, "Not provided"), Value(item.Job.CustomerName, "Not recorded"), item.Blocker.BlockerType,
+            item.Blocker.StartedOn.ToString("MM/dd/yyyy"), Value(item.Blocker.NextAction, "Not recorded"),
+            item.Blocker.RevenueAtRisk.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+        rows.Add(new(["Total", $"{items.Count:N0} blockers", "", "", "", items.Sum(item => item.Blocker.RevenueAtRisk).ToString("C0", CultureInfo.CurrentCulture)], true));
+        return new("Job blockers", reportDate, "Unresolved job blockers and their associated revenue at risk.",
+            [new("Job"), new("Customer"), new("Blocker"), new("Started"), new("Next action"), new("Revenue at risk", true)], rows);
+    }
+
+    private static ScheduledReportDocument BuildReceivablesReport(string reportDate, IReadOnlyCollection<HousecallProJob> jobs)
+    {
+        var items = jobs.Where(job => job.OutstandingBalance > 0).OrderBy(job => job.ScheduledStart).ToList();
+        var rows = items.Select(job => new ScheduledReportRow([
+            Value(job.JobNumber, "Not provided"), Value(job.CustomerName, "Not recorded"), Value(job.WorkStatus, "Unknown"),
+            job.ScheduledStart?.ToString("MM/dd/yyyy") ?? "Not scheduled", job.JobPrice.ToString("C0", CultureInfo.CurrentCulture),
+            job.OutstandingBalance.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+        rows.Add(new(["Total", $"{items.Count:N0} jobs", "", "", items.Sum(job => job.JobPrice).ToString("C0", CultureInfo.CurrentCulture),
+            items.Sum(job => job.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)], true));
+        return new("Outstanding receivables", reportDate, "Jobs with an uncollected customer balance.",
+            [new("Job"), new("Customer"), new("Status"), new("Job date"), new("Price", true), new("Uncollected", true)], rows);
+    }
+
+    private static ScheduledReportRow Row(string category, int count, decimal amount, string description) =>
+        new([category, count.ToString("N0"), amount.ToString("C0", CultureInfo.CurrentCulture), description]);
+
+    private static string Value(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value;
 }
 
 public sealed record ScheduledReportTestResult(bool Delivered, string Message, string? ReportUrl);
+public sealed record ScheduledReportPreview(string PlainText, string Html);
 
 public sealed class ScheduledReportWorker(
     IServiceScopeFactory scopeFactory,
