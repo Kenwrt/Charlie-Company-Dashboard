@@ -1,0 +1,163 @@
+@page "/admin/reporting"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ScheduledReportService ReportService
+
+<PageTitle>Reporting</PageTitle>
+
+<section class="dashboard-shell">
+    <div class="dashboard-header">
+        <div>
+            <p class="eyebrow">Manual distribution</p>
+            <h1>Reporting</h1>
+            <p class="dashboard-subtitle">Run a report on demand, review its contents, and send it to a notification recipient by email or text.</p>
+        </div>
+    </div>
+
+    <div class="card p-4 mb-4">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label">Report</label>
+                <InputSelect class="form-select" @bind-Value="reportType" @bind-Value:after="ReportChanged">
+                    @foreach (var type in ScheduledReportCatalog.Types)
+                    {
+                        <option value="@type.Key">@type.Value</option>
+                    }
+                </InputSelect>
+            </div>
+            <div class="col-md-5">
+                <label class="form-label">Delivery recipient</label>
+                <InputSelect class="form-select" @bind-Value="recipientId" @bind-Value:after="RecipientChanged">
+                    <option value="0">Select a notification recipient</option>
+                    @foreach (var recipient in recipients)
+                    {
+                        <option value="@recipient.Id">@recipient.DisplayName</option>
+                    }
+                </InputSelect>
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-outline-primary w-100" type="button" disabled="@running" @onclick="RunAsync">@(running ? "Running..." : "Run report")</button>
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <label class="me-3"><input type="checkbox" @bind="sendEmail" disabled="@(!RecipientCanEmail)" /> Email</label>
+            <label><input type="checkbox" @bind="sendSms" disabled="@(!RecipientCanText)" /> Text</label>
+        </div>
+        @if (SelectedRecipient is not null && !RecipientCanText)
+        {
+            <small class="d-block text-warning mt-1">Text unavailable. Add a mobile number and enable SMS on the <a href="/notifications">notification-recipient profile</a>.</small>
+        }
+
+        <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" id="confirm-manual-send" @bind="sendConfirmed" />
+            <label class="form-check-label" for="confirm-manual-send">I understand this immediately sends the selected report to this recipient.</label>
+        </div>
+        <button class="btn btn-primary mt-3" type="button" disabled="@(!CanSend)" @onclick="SendAsync">@(sending ? "Sending..." : "Send report")</button>
+
+        @if (!string.IsNullOrWhiteSpace(status))
+        {
+            <div class="alert @(succeeded ? "alert-success" : "alert-warning") mt-3 mb-0">@status</div>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(preview))
+    {
+        <article class="card overflow-hidden">
+            <div class="p-3 border-bottom"><strong>Report preview</strong></div>
+            <div>@((MarkupString)preview)</div>
+        </article>
+    }
+</section>
+
+@code {
+    private List<NotificationRecipient> recipients = [];
+    private string reportType = "daily-operations";
+    private int recipientId;
+    private bool sendEmail = true;
+    private bool sendSms;
+    private bool sendConfirmed;
+    private bool running;
+    private bool sending;
+    private bool succeeded;
+    private string? status;
+    private string? preview;
+
+    private NotificationRecipient? SelectedRecipient => recipients.FirstOrDefault(x => x.Id == recipientId);
+    private bool RecipientCanEmail => SelectedRecipient is { EnableEmail: true } recipient && !string.IsNullOrWhiteSpace(recipient.EmailAddress);
+    private bool RecipientCanText => SelectedRecipient is { EnableSms: true } recipient && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber);
+    private bool CanSend => recipientId > 0 && preview is not null && sendConfirmed && !sending && ((sendEmail && RecipientCanEmail) || (sendSms && RecipientCanText));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        recipients = await db.NotificationRecipients.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.DisplayName).ToListAsync();
+    }
+
+    private async Task RunAsync()
+    {
+        running = true;
+        status = null;
+        try
+        {
+            var result = await ReportService.PreviewAsync(reportType, LocalDate(), CancellationToken.None);
+            preview = result.Html;
+            succeeded = true;
+            status = "Report generated. Review it below before sending.";
+        }
+        catch
+        {
+            succeeded = false;
+            status = "The report could not be generated. Review the server log and try again.";
+        }
+        finally { running = false; }
+    }
+
+    private async Task SendAsync()
+    {
+        if (!CanSend) return;
+        sendConfirmed = false;
+        sending = true;
+        try
+        {
+            var result = await ReportService.SendManualAsync(reportType, recipientId, sendEmail, sendSms, LocalDate(), CancellationToken.None);
+            succeeded = result.Delivered;
+            status = result.Message;
+        }
+        catch
+        {
+            succeeded = false;
+            status = "The report could not be sent. Review the server log and try again.";
+        }
+        finally { sending = false; }
+    }
+
+    private void ReportChanged()
+    {
+        preview = null;
+        status = null;
+        sendConfirmed = false;
+    }
+
+    private void RecipientChanged()
+    {
+        sendEmail = RecipientCanEmail;
+        sendSms = false;
+        sendConfirmed = false;
+        status = null;
+    }
+
+    private static DateOnly LocalDate()
+    {
+        try
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
+            return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone).Date);
+        }
+        catch { return DateOnly.FromDateTime(DateTime.UtcNow.Date); }
+    }
+}

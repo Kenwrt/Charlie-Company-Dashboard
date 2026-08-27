@@ -16,7 +16,7 @@
     }
     else
     {
-        <div class="dashboard-header"><div><p class="eyebrow">Secure scheduled report</p><h1>@run.Title</h1><p class="dashboard-subtitle">@run.ScheduledLocalDate.ToString("MMMM d, yyyy")</p></div></div>
+        <div class="dashboard-header"><div><p class="eyebrow">Secure report</p><h1>@run.Title</h1><p class="dashboard-subtitle">@run.ScheduledLocalDate.ToString("MMMM d, yyyy")</p></div></div>
         <article class="card overflow-hidden">
             @if (reportDocument is not null)
             {
@@ -45,11 +45,11 @@
     {
         get
         {
-            var destination = run?.ScheduledReportDefinition.ReportType is "expired-estimates" or "estimate-follow-up" ? "/estimates" : "/";
+            var destination = run?.ReportType is "expired-estimates" or "estimate-follow-up" ? "/estimates" : "/";
             return $"Account/Login?returnUrl={Uri.EscapeDataString(destination)}";
         }
     }
-    private string LoginLabel => run?.ScheduledReportDefinition.ReportType is "expired-estimates" or "estimate-follow-up" ? "Log in to review estimates" : "Log in to Charlie Company";
+    private string LoginLabel => run?.ReportType is "expired-estimates" or "estimate-follow-up" ? "Log in to review estimates" : "Log in to Charlie Company";
 
     protected override async Task OnParametersSetAsync()
     {

@@ -37,8 +37,8 @@ public sealed class ScheduledReportService(
         return new(ScheduledReportFormatter.ToPlainText(document), ScheduledReportFormatter.ToHtml(document));
     }
 
-    public async Task<ScheduledReportTestResult> SendTestAsync(
-        int definitionId,
+    public async Task<ScheduledReportTestResult> SendManualAsync(
+        string reportType,
         int recipientId,
         bool sendEmail,
         bool sendSms,
@@ -47,21 +47,25 @@ public sealed class ScheduledReportService(
     {
         if (!sendEmail && !sendSms)
         {
-            return new(false, "Select Email, Text, or both before sending the test.", null);
+            return new(false, "Select Email, Text, or both before sending the report.", null);
+        }
+
+        if (!ScheduledReportCatalog.Types.TryGetValue(reportType, out var reportName))
+        {
+            return new(false, "Select a valid report before sending.", null);
         }
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var definition = await db.ScheduledReportDefinitions.SingleAsync(x => x.Id == definitionId, cancellationToken);
         var recipient = await db.NotificationRecipients.SingleAsync(x => x.Id == recipientId && x.IsActive, cancellationToken);
-        var document = await BuildDocumentAsync(db, definition.ReportType, localDate, cancellationToken);
+        var document = await BuildDocumentAsync(db, reportType, localDate, cancellationToken);
         var plainText = ScheduledReportFormatter.ToPlainText(document);
         var html = ScheduledReportFormatter.ToHtml(document);
         var run = new ScheduledReportRun
         {
-            ScheduledReportDefinitionId = definition.Id,
+            ReportType = reportType,
             ScheduledLocalDate = localDate,
-            IsTest = true,
-            Title = $"[TEST] {definition.Name}",
+            IsTest = false,
+            Title = reportName,
             Body = ScheduledReportFormatter.Serialize(document),
             Status = "Completed",
             CompletedAt = DateTimeOffset.UtcNow
@@ -81,9 +85,9 @@ public sealed class ScheduledReportService(
             {
                 await emailSender.SendAsync(
                     recipient,
-                    new NotificationMessage(run.Title, plainText, "scheduled-report-test", DateTimeOffset.UtcNow, html),
+                    new NotificationMessage(run.Title, plainText, "manual-report", DateTimeOffset.UtcNow, html),
                     cancellationToken);
-                outcomes.Add($"Test email was submitted for delivery to {recipient.EmailAddress}.");
+                outcomes.Add($"The report email was submitted for delivery to {recipient.EmailAddress}.");
                 delivered = true;
             }
         }
@@ -132,12 +136,12 @@ public sealed class ScheduledReportService(
                         await textMessaging.SendOperationalAsync(
                             user.Id,
                             user.PhoneNumber!,
-                            $"TEST - Charlie Company: {definition.Name} is ready.",
-                            $"charlie-company:scheduled-report-test:{run.Id}:{recipient.Id}",
+                            $"Charlie Company: {reportName} is ready.",
+                            $"charlie-company:manual-report:{run.Id}:{recipient.Id}",
                             cancellationToken,
                             reportUrl,
-                            "View test report");
-                        outcomes.Add($"Test text was submitted for delivery to {recipient.DisplayName}.");
+                            "View report");
+                        outcomes.Add($"The report text was submitted for delivery to {recipient.DisplayName}.");
                         delivered = true;
                     }
                 }
@@ -163,6 +167,7 @@ public sealed class ScheduledReportService(
         var run = new ScheduledReportRun
         {
             ScheduledReportDefinitionId = definition.Id,
+            ReportType = definition.ReportType,
             ScheduledLocalDate = localDate,
             Title = definition.Name,
             Body = "Preparing report"

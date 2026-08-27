@@ -193,6 +193,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(x => x.Status).HasMaxLength(30);
             entity.Property(x => x.Title).HasMaxLength(200);
             entity.Property(x => x.Error).HasMaxLength(500);
+            entity.Property(x => x.ReportType).HasMaxLength(60);
             entity.HasOne(x => x.ScheduledReportDefinition).WithMany(x => x.Runs).HasForeignKey(x => x.ScheduledReportDefinitionId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<ScheduledReportAccessToken>(entity =>

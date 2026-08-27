@@ -30,8 +30,9 @@ public sealed class ScheduledReportRecipient
 public sealed class ScheduledReportRun
 {
     public long Id { get; set; }
-    public int ScheduledReportDefinitionId { get; set; }
-    public ScheduledReportDefinition ScheduledReportDefinition { get; set; } = null!;
+    public int? ScheduledReportDefinitionId { get; set; }
+    public ScheduledReportDefinition? ScheduledReportDefinition { get; set; }
+    [Required, StringLength(60)] public string ReportType { get; set; } = "daily-operations";
     public DateOnly ScheduledLocalDate { get; set; }
     public bool IsTest { get; set; }
     [Required, StringLength(30)] public string Status { get; set; } = "Running";
