@@ -32,8 +32,12 @@
                 <div class="border rounded p-3 mb-2">
                     <strong>@recipient.DisplayName</strong>
                     <label class="ms-3"><input type="checkbox" @bind="choice.Email" /> Email</label>
-                    <label class="ms-3"><input type="checkbox" @bind="choice.Sms" /> Text</label>
-                    @if (choice.Sms) { <small class="d-block text-muted">Text delivery occurs only when this number matches a verified Charlie user with transactional consent.</small> }
+                    <label class="ms-3"><input type="checkbox" @bind="choice.Sms" disabled="@(!CanReceiveText(recipient))" /> Text</label>
+                    @if (!CanReceiveText(recipient))
+                    {
+                        <small class="d-block text-warning">Text unavailable. Add a mobile number and enable SMS on the <a href="/notifications">notification-recipient profile</a>.</small>
+                    }
+                    else if (choice.Sms) { <small class="d-block text-muted">Text delivery also requires a matching verified Charlie user with current transactional consent.</small> }
                 </div>
             }
             <button class="btn btn-primary mt-3" type="submit">Save schedule</button>
@@ -75,7 +79,30 @@
     </div>
     @foreach (var item in schedules)
     {
-        <article class="card p-3 mb-2"><div class="d-flex justify-content-between"><div><strong>@item.Name</strong><div>@ScheduledReportCatalog.Types.GetValueOrDefault(item.ReportType, item.ReportType) at @item.RunAtLocalTime.ToString("h:mm tt") @item.TimeZoneId</div><small>@item.Recipients.Count recipient assignments</small></div><button class="btn btn-outline-primary" @onclick="() => Edit(item.Id)">Edit</button></div></article>
+        <article class="card p-3 mb-2">
+            <div class="d-flex justify-content-between gap-3">
+                <div>
+                    <strong>@item.Name</strong>
+                    <div>@ScheduledReportCatalog.Types.GetValueOrDefault(item.ReportType, item.ReportType) at @item.RunAtLocalTime.ToString("h:mm tt") @item.TimeZoneId</div>
+                    @foreach (var assignment in item.Recipients.OrderBy(assignment => assignment.NotificationRecipient.DisplayName))
+                    {
+                        <small class="d-block">@assignment.NotificationRecipient.DisplayName: @ChannelLabel(assignment)</small>
+                    }
+                </div>
+                <div class="d-flex gap-2 align-items-start">
+                    <button class="btn btn-outline-primary" @onclick="() => Edit(item.Id)">Edit</button>
+                    @if (pendingDeleteId == item.Id)
+                    {
+                        <button class="btn btn-danger" @onclick="() => DeleteAsync(item.Id)">Confirm delete</button>
+                        <button class="btn btn-outline-secondary" @onclick="CancelDelete">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-outline-danger" @onclick="() => RequestDelete(item.Id)">Delete</button>
+                    }
+                </div>
+            </div>
+        </article>
     }
 </section>
 
@@ -94,6 +121,7 @@
     private bool testSucceeded;
     private string? testStatus;
     private string? preview;
+    private int? pendingDeleteId;
     private bool CanSendTest => testRecipientId > 0 && (testEmail || testSms) && testConfirmed && !testSending;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -101,7 +129,8 @@
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         recipients = await db.NotificationRecipients.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.DisplayName).ToListAsync();
-        schedules = await db.ScheduledReportDefinitions.AsNoTracking().Include(x => x.Recipients).OrderBy(x => x.Name).ToListAsync();
+        schedules = await db.ScheduledReportDefinitions.AsNoTracking().Where(schedule => schedule.DeletedAt == null)
+            .Include(x => x.Recipients).ThenInclude(x => x.NotificationRecipient).OrderBy(x => x.Name).ToListAsync();
         Choices = DefaultChoices();
     }
     private async Task SaveAsync()
@@ -110,12 +139,26 @@
         try { _ = TimeZoneInfo.FindSystemTimeZoneById(model.TimeZoneId); } catch { status = "Enter a valid time zone, such as America/Chicago."; return; }
         if (!Choices.Any(choice => choice.Value.Email || choice.Value.Sms)) { status = "Select at least one email or text distribution method before saving the schedule."; return; }
         await using var db = await DbFactory.CreateDbContextAsync();
+        var selectedAssignments = Choices.Where(choice => choice.Value.Email || choice.Value.Sms)
+            .ToDictionary(choice => choice.Key, choice => (choice.Value.Email, choice.Value.Sms));
+        var possibleDuplicates = await db.ScheduledReportDefinitions.AsNoTracking().Include(schedule => schedule.Recipients)
+            .Where(schedule => schedule.DeletedAt == null && schedule.Id != model.Id && schedule.ReportType == model.ReportType && schedule.RunAtLocalTime == time && schedule.TimeZoneId == model.TimeZoneId)
+            .ToListAsync();
+        if (possibleDuplicates.Any(schedule => SameDistribution(schedule.Recipients, selectedAssignments)))
+        {
+            status = "An identical schedule already exists for this report, time, time zone, and distribution list. Edit the existing schedule or choose a different distribution.";
+            return;
+        }
         ScheduledReportDefinition entity;
         if (model.Id == 0) { entity = model; db.ScheduledReportDefinitions.Add(entity); }
         else { entity = await db.ScheduledReportDefinitions.Include(x => x.Recipients).SingleAsync(x => x.Id == model.Id); db.ScheduledReportRecipients.RemoveRange(entity.Recipients); entity.Name = model.Name; entity.ReportType = model.ReportType; entity.TimeZoneId = model.TimeZoneId; entity.IsActive = model.IsActive; }
         entity.RunAtLocalTime = time; entity.UpdatedAt = DateTimeOffset.UtcNow;
         entity.Recipients = Choices.Where(x => x.Value.Email || x.Value.Sms).Select(x => new ScheduledReportRecipient { NotificationRecipientId = x.Key, SendEmail = x.Value.Email, SendSms = x.Value.Sms }).ToList();
-        await db.SaveChangesAsync(); status = "The report schedule was saved."; Reset(); await LoadAsync();
+        await db.SaveChangesAsync();
+        var savedId = entity.Id;
+        status = "The report schedule was saved.";
+        await LoadAsync();
+        await Edit(savedId);
     }
     private async Task Edit(int id)
     {
@@ -123,6 +166,23 @@
         model = await db.ScheduledReportDefinitions.AsNoTracking().Include(x => x.Recipients).SingleAsync(x => x.Id == id);
         runAt = model.RunAtLocalTime.ToString("HH:mm"); Choices = recipients.ToDictionary(x => x.Id, x => { var a = model.Recipients.FirstOrDefault(y => y.NotificationRecipientId == x.Id); return new Choice { Email = a?.SendEmail == true, Sms = a?.SendSms == true }; });
         ResetTest();
+        pendingDeleteId = null;
+    }
+    private void RequestDelete(int id) { pendingDeleteId = id; status = "Confirm deletion of the selected schedule. Prior delivery history will be retained for audit purposes."; }
+    private void CancelDelete() { pendingDeleteId = null; status = null; }
+    private async Task DeleteAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var schedule = await db.ScheduledReportDefinitions.SingleOrDefaultAsync(item => item.Id == id && item.DeletedAt == null);
+        if (schedule is null) { status = "The selected schedule no longer exists."; pendingDeleteId = null; return; }
+        schedule.IsActive = false;
+        schedule.DeletedAt = DateTimeOffset.UtcNow;
+        schedule.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        status = "The report schedule was deleted. Its prior delivery history was retained.";
+        pendingDeleteId = null;
+        Reset();
+        await LoadAsync();
     }
     private async Task PreviewAsync()
     {
@@ -161,6 +221,13 @@
         var defaultEmailRecipient = recipients.FirstOrDefault(recipient => recipient.EnableEmail && !string.IsNullOrWhiteSpace(recipient.EmailAddress));
         if (defaultEmailRecipient is not null) choices[defaultEmailRecipient.Id].Email = true;
         return choices;
+    }
+    private static bool CanReceiveText(NotificationRecipient recipient) => recipient.EnableSms && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber);
+    private static string ChannelLabel(ScheduledReportRecipient assignment) => assignment.SendEmail && assignment.SendSms ? "Email and Text" : assignment.SendSms ? "Text" : "Email";
+    private static bool SameDistribution(IEnumerable<ScheduledReportRecipient> assignments, IReadOnlyDictionary<int, (bool Email, bool Sms)> selected)
+    {
+        var values = assignments.ToList();
+        return values.Count == selected.Count && values.All(assignment => selected.TryGetValue(assignment.NotificationRecipientId, out var choice) && choice.Email == assignment.SendEmail && choice.Sms == assignment.SendSms);
     }
     private void ResetTest() { testRecipientId = 0; testEmail = true; testSms = false; testConfirmed = false; testSending = false; testSucceeded = false; testStatus = null; preview = null; }
     private static ScheduledReportDefinition NewModel() => new() { Name = "Daily operations summary", ReportType = "daily-operations", TimeZoneId = "America/Chicago", IsActive = true };

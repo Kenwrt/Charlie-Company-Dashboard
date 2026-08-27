@@ -10,6 +10,7 @@ public sealed class ScheduledReportDefinition
     [Required, StringLength(80)] public string TimeZoneId { get; set; } = "America/Chicago";
     public TimeOnly RunAtLocalTime { get; set; } = new(7, 0);
     public bool IsActive { get; set; } = true;
+    public DateTimeOffset? DeletedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<ScheduledReportRecipient> Recipients { get; set; } = [];

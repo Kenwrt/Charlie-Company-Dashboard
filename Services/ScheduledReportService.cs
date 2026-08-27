@@ -150,6 +150,12 @@ public sealed class ScheduledReportService(
     public async Task ExecuteAsync(int definitionId, DateOnly localDate, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (await db.ScheduledReportRuns.AsNoTracking().AnyAsync(run =>
+            run.ScheduledReportDefinitionId == definitionId && run.ScheduledLocalDate == localDate && !run.IsTest,
+            cancellationToken))
+        {
+            return;
+        }
         var definition = await db.ScheduledReportDefinitions
             .Include(x => x.Recipients).ThenInclude(x => x.NotificationRecipient)
             .SingleAsync(x => x.Id == definitionId, cancellationToken);
@@ -378,7 +384,7 @@ public sealed class ScheduledReportWorker(
                 using var scope = scopeFactory.CreateScope();
                 var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>();
                 await using var db = await factory.CreateDbContextAsync(stoppingToken);
-                var definitions = await db.ScheduledReportDefinitions.AsNoTracking().Where(x => x.IsActive).ToListAsync(stoppingToken);
+                var definitions = await db.ScheduledReportDefinitions.AsNoTracking().Where(x => x.IsActive && x.DeletedAt == null).ToListAsync(stoppingToken);
                 foreach (var definition in definitions)
                 {
                     var zone = TimeZoneInfo.FindSystemTimeZoneById(definition.TimeZoneId);
