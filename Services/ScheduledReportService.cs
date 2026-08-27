@@ -30,6 +30,119 @@ public sealed class ScheduledReportService(
 {
     private readonly ScheduledReportOptions reportOptions = options.Value;
 
+    public async Task<string> PreviewAsync(string reportType, DateOnly localDate, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await BuildBodyAsync(db, reportType, localDate, cancellationToken);
+    }
+
+    public async Task<ScheduledReportTestResult> SendTestAsync(
+        int definitionId,
+        int recipientId,
+        bool sendEmail,
+        bool sendSms,
+        DateOnly localDate,
+        CancellationToken cancellationToken)
+    {
+        if (!sendEmail && !sendSms)
+        {
+            return new(false, "Select Email, Text, or both before sending the test.", null);
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var definition = await db.ScheduledReportDefinitions.SingleAsync(x => x.Id == definitionId, cancellationToken);
+        var recipient = await db.NotificationRecipients.SingleAsync(x => x.Id == recipientId && x.IsActive, cancellationToken);
+        var run = new ScheduledReportRun
+        {
+            ScheduledReportDefinitionId = definition.Id,
+            ScheduledLocalDate = localDate,
+            IsTest = true,
+            Title = $"[TEST] {definition.Name}",
+            Body = await BuildBodyAsync(db, definition.ReportType, localDate, cancellationToken),
+            Status = "Completed",
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        db.ScheduledReportRuns.Add(run);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var outcomes = new List<string>();
+        var delivered = false;
+        if (sendEmail)
+        {
+            if (!recipient.EnableEmail || string.IsNullOrWhiteSpace(recipient.EmailAddress))
+            {
+                outcomes.Add("Email was skipped because the recipient does not have email delivery enabled with an address.");
+            }
+            else
+            {
+                await emailSender.SendAsync(
+                    recipient,
+                    new NotificationMessage(run.Title, run.Body, "scheduled-report-test", DateTimeOffset.UtcNow),
+                    cancellationToken);
+                outcomes.Add($"Test email was submitted for delivery to {recipient.EmailAddress}.");
+                delivered = true;
+            }
+        }
+
+        string? reportUrl = null;
+        if (sendSms)
+        {
+            if (!recipient.EnableSms || string.IsNullOrWhiteSpace(recipient.CellPhoneNumber))
+            {
+                outcomes.Add("Text was skipped because the recipient does not have text delivery enabled with a mobile number.");
+            }
+            else if (!textMessaging.IsConfigured)
+            {
+                outcomes.Add("Text was skipped because the messaging provider is not configured.");
+            }
+            else
+            {
+                var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x =>
+                    x.PhoneNumber == recipient.CellPhoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted,
+                    cancellationToken);
+                if (user is null)
+                {
+                    outcomes.Add("Text was skipped because no Charlie Company user has this verified number with current transactional consent.");
+                }
+                else
+                {
+                    var rawToken = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+                    var accessToken = new ScheduledReportAccessToken
+                    {
+                        ScheduledReportRunId = run.Id,
+                        NotificationRecipientId = recipient.Id,
+                        TokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))),
+                        ExpiresAt = DateTimeOffset.UtcNow.AddHours(Math.Clamp(reportOptions.AccessLinkHours, 1, 720))
+                    };
+                    db.ScheduledReportAccessTokens.Add(accessToken);
+                    await db.SaveChangesAsync(cancellationToken);
+                    reportUrl = BuildReportUrl(run.Id, rawToken);
+                    if (string.IsNullOrWhiteSpace(reportUrl))
+                    {
+                        db.ScheduledReportAccessTokens.Remove(accessToken);
+                        await db.SaveChangesAsync(cancellationToken);
+                        outcomes.Add("Text was skipped because the public HTTPS report URL is not configured.");
+                    }
+                    else
+                    {
+                        await textMessaging.SendOperationalAsync(
+                            user.Id,
+                            user.PhoneNumber!,
+                            $"TEST - Charlie Company: {definition.Name} is ready.",
+                            $"charlie-company:scheduled-report-test:{run.Id}:{recipient.Id}",
+                            cancellationToken,
+                            reportUrl,
+                            "View test report");
+                        outcomes.Add($"Test text was submitted for delivery to {recipient.DisplayName}.");
+                        delivered = true;
+                    }
+                }
+            }
+        }
+
+        return new(delivered, string.Join(" ", outcomes), reportUrl);
+    }
+
     public async Task ExecuteAsync(int definitionId, DateOnly localDate, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -182,6 +295,8 @@ public sealed class ScheduledReportService(
         return body.ToString().TrimEnd();
     }
 }
+
+public sealed record ScheduledReportTestResult(bool Delivered, string Message, string? ReportUrl);
 
 public sealed class ScheduledReportWorker(
     IServiceScopeFactory scopeFactory,

@@ -5,6 +5,7 @@
 @using CharleyCompany.Dashboard.Web.Services
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ScheduledReportService ReportService
 
 <PageTitle>Scheduled Reports</PageTitle>
 
@@ -36,6 +37,39 @@
             }
             <button class="btn btn-primary mt-3" type="submit">Save schedule</button>
             @if (model.Id != 0) { <button class="btn btn-outline-secondary mt-3 ms-2" type="button" @onclick="Reset">New schedule</button> }
+            @if (model.Id != 0)
+            {
+                <div class="border rounded p-3 mt-4">
+                    <h2 class="h5">Preview and test delivery</h2>
+                    <p class="text-muted">Test runs are labeled TEST, do not replace the daily run, and are sent only to the recipient selected here.</p>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-5">
+                            <label class="form-label">Test recipient</label>
+                            <InputSelect class="form-select" @bind-Value="testRecipientId">
+                                <option value="0">Select a recipient</option>
+                                @foreach (var recipient in recipients) { <option value="@recipient.Id">@recipient.DisplayName</option> }
+                            </InputSelect>
+                        </div>
+                        <div class="col-md-3 pb-2">
+                            <label class="me-3"><input type="checkbox" @bind="testEmail" /> Email</label>
+                            <label><input type="checkbox" @bind="testSms" /> Text</label>
+                        </div>
+                        <div class="col-md-4">
+                            <button class="btn btn-outline-primary me-2" type="button" @onclick="PreviewAsync">Preview report</button>
+                            <button class="btn btn-warning" type="button" disabled="@(!CanSendTest)" @onclick="SendTestAsync">@(testSending ? "Sending..." : "Send test")</button>
+                        </div>
+                    </div>
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="confirm-test-send" @bind="testConfirmed" />
+                        <label class="form-check-label" for="confirm-test-send">I understand this immediately sends a test only to the selected recipient.</label>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(testStatus)) { <div class="alert @(testSucceeded ? "alert-success" : "alert-warning") mt-3 mb-0">@testStatus</div> }
+                    @if (!string.IsNullOrWhiteSpace(preview))
+                    {
+                        <article class="bg-light border rounded p-3 mt-3"><strong>Report preview</strong><div class="mt-2" style="white-space:pre-wrap">@preview</div></article>
+                    }
+                </div>
+            }
         </EditForm>
     </div>
     @foreach (var item in schedules)
@@ -51,6 +85,15 @@
     private List<NotificationRecipient> recipients = [];
     private List<ScheduledReportDefinition> schedules = [];
     private Dictionary<int, Choice> Choices = [];
+    private int testRecipientId;
+    private bool testEmail = true;
+    private bool testSms;
+    private bool testConfirmed;
+    private bool testSending;
+    private bool testSucceeded;
+    private string? testStatus;
+    private string? preview;
+    private bool CanSendTest => testRecipientId > 0 && (testEmail || testSms) && testConfirmed && !testSending;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
     private async Task LoadAsync()
@@ -77,8 +120,39 @@
         await using var db = await DbFactory.CreateDbContextAsync();
         model = await db.ScheduledReportDefinitions.AsNoTracking().Include(x => x.Recipients).SingleAsync(x => x.Id == id);
         runAt = model.RunAtLocalTime.ToString("HH:mm"); Choices = recipients.ToDictionary(x => x.Id, x => { var a = model.Recipients.FirstOrDefault(y => y.NotificationRecipientId == x.Id); return new Choice { Email = a?.SendEmail == true, Sms = a?.SendSms == true }; });
+        ResetTest();
     }
-    private void Reset() { model = NewModel(); runAt = "07:00"; Choices = recipients.ToDictionary(x => x.Id, _ => new Choice()); }
+    private async Task PreviewAsync()
+    {
+        preview = await ReportService.PreviewAsync(model.ReportType, LocalDate(), CancellationToken.None);
+        testStatus = "Preview generated. No message was sent.";
+        testSucceeded = true;
+    }
+    private async Task SendTestAsync()
+    {
+        if (!CanSendTest) return;
+        testConfirmed = false;
+        testSending = true;
+        try
+        {
+            var result = await ReportService.SendTestAsync(model.Id, testRecipientId, testEmail, testSms, LocalDate(), CancellationToken.None);
+            testSucceeded = result.Delivered;
+            testStatus = result.Message;
+        }
+        catch
+        {
+            testSucceeded = false;
+            testStatus = "The test could not be sent. Review the server log for the delivery error and try again.";
+        }
+        finally { testSending = false; }
+    }
+    private void Reset() { model = NewModel(); runAt = "07:00"; Choices = recipients.ToDictionary(x => x.Id, _ => new Choice()); ResetTest(); }
+    private DateOnly LocalDate()
+    {
+        try { return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(model.TimeZoneId)).Date); }
+        catch { return DateOnly.FromDateTime(DateTime.UtcNow.Date); }
+    }
+    private void ResetTest() { testRecipientId = 0; testEmail = true; testSms = false; testConfirmed = false; testSending = false; testSucceeded = false; testStatus = null; preview = null; }
     private static ScheduledReportDefinition NewModel() => new() { Name = "Daily operations summary", ReportType = "daily-operations", TimeZoneId = "America/Chicago", IsActive = true };
     private sealed class Choice { public bool Email { get; set; } public bool Sms { get; set; } }
 }

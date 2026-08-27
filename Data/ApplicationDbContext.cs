@@ -187,7 +187,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         });
         builder.Entity<ScheduledReportRun>(entity =>
         {
-            entity.HasIndex(x => new { x.ScheduledReportDefinitionId, x.ScheduledLocalDate }).IsUnique();
+            entity.HasIndex(x => new { x.ScheduledReportDefinitionId, x.ScheduledLocalDate })
+                .IsUnique()
+                .HasFilter("\"IsTest\" = FALSE");
             entity.Property(x => x.Status).HasMaxLength(30);
             entity.Property(x => x.Title).HasMaxLength(200);
             entity.Property(x => x.Error).HasMaxLength(500);

@@ -32,6 +32,7 @@ public sealed class ScheduledReportRun
     public int ScheduledReportDefinitionId { get; set; }
     public ScheduledReportDefinition ScheduledReportDefinition { get; set; } = null!;
     public DateOnly ScheduledLocalDate { get; set; }
+    public bool IsTest { get; set; }
     [Required, StringLength(30)] public string Status { get; set; } = "Running";
     [Required, StringLength(200)] public string Title { get; set; } = string.Empty;
     [Required] public string Body { get; set; } = string.Empty;
