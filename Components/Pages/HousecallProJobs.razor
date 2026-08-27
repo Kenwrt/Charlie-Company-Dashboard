@@ -223,7 +223,10 @@
             status.Equals(NeedsSchedulingStatus, StringComparison.OrdinalIgnoreCase);
         if (ReceivablesFilter is "expected" or "over30" or "aging")
         {
-            query = query.Where(x => x.OutstandingBalance > 0);
+            var currentYearStart = new DateTimeOffset(DateTime.Today.Year, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            query = query.Where(x =>
+                x.OutstandingBalance > 0 &&
+                (x.ScheduledStart ?? x.SourceUpdatedAt ?? x.LastSyncedAt) >= currentYearStart);
         }
         if (ReceivablesFilter == "over30")
         {

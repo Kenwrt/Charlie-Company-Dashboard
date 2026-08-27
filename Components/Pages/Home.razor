@@ -73,7 +73,7 @@
     <section class="activity-panel">
         <div>
             <h2>Accounts Receivable</h2>
-            <p>@(IsEntityView ? $"Uncollected Housecall Pro job balances for {currentSnapshot.EntityName}." : "Uncollected Housecall Pro job balances across the active local operations.")</p>
+            <p>@(IsEntityView ? $"Uncollected Housecall Pro job balances from January 1, {DateTime.Today.Year} forward for {currentSnapshot.EntityName}." : $"Uncollected Housecall Pro job balances from January 1, {DateTime.Today.Year} forward across the active local operations.")</p>
         </div>
 
         <div class="metric-grid finance-metric-grid">
@@ -512,6 +512,7 @@
         }
 
         await using var db = await DbContextFactory.CreateDbContextAsync();
+        var currentYearStart = new DateTimeOffset(DateTime.Today.Year, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var receivables = await db.HousecallProJobs.AsNoTracking()
             .Where(job => operationIds.Contains(job.LocalOperationId))
             .Where(job =>
@@ -519,6 +520,7 @@
                 job.WorkStatus != "pro canceled" &&
                 job.WorkStatus != "pro-canceled" &&
                 job.OutstandingBalance > 0)
+            .Where(job => (job.ScheduledStart ?? job.SourceUpdatedAt ?? job.LastSyncedAt) >= currentYearStart)
             .Select(job => new
             {
                 job.OutstandingBalance,

@@ -328,21 +328,25 @@ public sealed class ScheduledReportService(
         var jobs = await db.HousecallProJobs.AsNoTracking().Include(x => x.Blockers).ToListAsync(cancellationToken);
         var estimates = await db.HousecallProEstimates.AsNoTracking().ToListAsync(cancellationToken);
         var reportDate = $"Report date: {localDate:MMMM d, yyyy}";
+        var currentYearStart = new DateTimeOffset(localDate.Year, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        jobs = jobs.Where(job => ReportableJobDate(job) >= currentYearStart).ToList();
+        estimates = estimates.Where(estimate => ReportableEstimateDate(estimate) >= currentYearStart).ToList();
         var currentMonthStart = new DateOnly(localDate.Year, localDate.Month, 1);
+        var currentMonthEnd = currentMonthStart.AddMonths(1).AddDays(-1);
         var expiredWindowStart = currentMonthStart.AddMonths(-1);
         var expiredWindowEnd = currentMonthStart.AddDays(-1);
         var expiredEstimates = estimates
-            .Where(x => string.Equals(x.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase))
+            .Where(IsExpiredEstimate)
             .Where(x => EffectiveExpiredEstimateDate(x).HasValue)
             .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) >= expiredWindowStart)
             .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) <= expiredWindowEnd)
             .OrderByDescending(EffectiveExpiredEstimateDate)
             .ToList();
         var currentMonthExpiredEstimates = estimates
-            .Where(x => string.Equals(x.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase))
+            .Where(IsExpiredEstimate)
             .Where(x => EffectiveExpiredEstimateDate(x).HasValue)
             .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) >= currentMonthStart)
-            .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) <= localDate)
+            .Where(x => DateOnly.FromDateTime(EffectiveExpiredEstimateDate(x)!.Value.Date) <= currentMonthEnd)
             .OrderByDescending(EffectiveExpiredEstimateDate)
             .ToList();
         var expiringWindowEnd = localDate.AddDays(9);
@@ -351,7 +355,7 @@ public sealed class ScheduledReportService(
             .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) >= localDate)
             .Where(x => DateOnly.FromDateTime(x.ExpiresAt!.Value.Date) <= expiringWindowEnd)
             .Where(x => !string.Equals(x.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
-            .Where(x => !string.Equals(x.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !IsExpiredEstimate(x))
             .OrderBy(x => x.ExpiresAt)
             .ToList();
         return reportType switch
@@ -360,9 +364,9 @@ public sealed class ScheduledReportService(
             "expired-estimates" => BuildExpiredEstimatesReport("Expired estimates", reportDate,
                 $"Housecall Pro estimates marked expired from {expiredWindowStart:MMMM d, yyyy} through {expiredWindowEnd:MMMM d, yyyy}.", expiredEstimates),
             "expired-estimates-current-month" => BuildExpiredEstimatesReport("Expired Estimates for the Current Month", reportDate,
-                $"Housecall Pro estimates marked expired from {currentMonthStart:MMMM d, yyyy} through {localDate:MMMM d, yyyy}.", currentMonthExpiredEstimates),
+                $"Housecall Pro estimates marked expired from {currentMonthStart:MMMM d, yyyy} through {currentMonthEnd:MMMM d, yyyy}.", currentMonthExpiredEstimates),
             "estimates-expiring-next-ten-days" => BuildEstimatesExpiringReport(reportDate, localDate, expiringWindowEnd, estimatesExpiringSoon),
-            "job-blockers" => BuildJobBlockersReport(reportDate, jobs),
+            "job-blockers" => BuildJobBlockersReport(reportDate, localDate, jobs),
             "receivables" => BuildReceivablesReport(reportDate, localDate, jobs),
             _ => BuildDailyOperationsReport(reportDate, localDate, jobs, estimates)
         };
@@ -374,11 +378,11 @@ public sealed class ScheduledReportService(
         IReadOnlyCollection<HousecallProJob> jobs,
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
-        var activeJobs = jobs.Where(job => !string.Equals(job.WorkStatus, "completed", StringComparison.OrdinalIgnoreCase)).ToList();
+        var activeJobs = jobs.Where(job => !IsCanceledJob(job) && !string.Equals(job.WorkStatus, "completed", StringComparison.OrdinalIgnoreCase)).ToList();
         var scheduledToday = jobs.Where(job => job.ScheduledStart.HasValue && DateOnly.FromDateTime(job.ScheduledStart.Value.Date) == localDate).ToList();
         var openEstimates = estimates.Where(estimate => !string.Equals(estimate.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)).ToList();
-        var blockers = jobs.SelectMany(job => job.Blockers).Where(blocker => blocker.ResolvedOn == null).ToList();
-        var receivables = jobs.Where(job => job.OutstandingBalance > 0).ToList();
+        var blockers = jobs.SelectMany(job => job.Blockers).Where(blocker => blocker.ResolvedOn == null && blocker.StartedOn.Year >= localDate.Year).ToList();
+        var receivables = jobs.Where(job => !IsCanceledJob(job) && job.OutstandingBalance > 0).ToList();
         var rows = new List<ScheduledReportRow>
         {
             Row("Active jobs", activeJobs.Count, activeJobs.Sum(job => job.JobPrice), "Scheduled, unscheduled, and in-progress work"),
@@ -388,7 +392,7 @@ public sealed class ScheduledReportService(
             Row("Outstanding receivables", receivables.Count, receivables.Sum(job => job.OutstandingBalance), "Uncollected customer balances"),
             new(["Total categories", "5", "See category totals", "Categories overlap, so financial values are not added together"], true)
         };
-        return new("Daily operations summary", reportDate, "Current operating workload, estimates, blockers, and receivables.",
+        return new("Daily operations summary", reportDate, $"Current operating workload, estimates, blockers, and receivables from January 1, {localDate.Year} forward.",
             [new("Category"), new("Records", true), new("Financial value", true), new("Description")], rows);
     }
 
@@ -437,32 +441,47 @@ public sealed class ScheduledReportService(
     private static DateTimeOffset? EffectiveExpiredEstimateDate(HousecallProEstimate estimate)
         => estimate.ExpiresAt ?? estimate.EstimateDate;
 
-    private static ScheduledReportDocument BuildJobBlockersReport(string reportDate, IReadOnlyCollection<HousecallProJob> jobs)
+    private static bool IsExpiredEstimate(HousecallProEstimate estimate) =>
+        string.Equals(estimate.Status, "expired", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(estimate.ApprovalStatus, "expired", StringComparison.OrdinalIgnoreCase);
+
+    private static ScheduledReportDocument BuildJobBlockersReport(string reportDate, DateOnly localDate, IReadOnlyCollection<HousecallProJob> jobs)
     {
-        var items = jobs.SelectMany(job => job.Blockers.Where(blocker => blocker.ResolvedOn == null).Select(blocker => (Job: job, Blocker: blocker)))
+        var items = jobs.SelectMany(job => job.Blockers.Where(blocker => blocker.ResolvedOn == null && blocker.StartedOn.Year >= localDate.Year).Select(blocker => (Job: job, Blocker: blocker)))
             .OrderBy(item => item.Blocker.StartedOn).ToList();
         var rows = items.Select(item => new ScheduledReportRow([
             Value(item.Job.JobNumber, "Not provided"), Value(item.Job.CustomerName, "Not recorded"), item.Blocker.BlockerType,
             item.Blocker.StartedOn.ToString("MM/dd/yyyy"), Value(item.Blocker.NextAction, "Not recorded"),
             item.Blocker.RevenueAtRisk.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
         rows.Add(new(["Total", $"{items.Count:N0} blockers", "", "", "", items.Sum(item => item.Blocker.RevenueAtRisk).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new("Job blockers", reportDate, "Unresolved job blockers and their associated revenue at risk.",
+        return new("Job blockers", reportDate, $"Unresolved job blockers from January 1, {localDate.Year} forward and their associated revenue at risk.",
             [new("Job"), new("Customer"), new("Blocker"), new("Started"), new("Next action"), new("Revenue at risk", true)], rows);
     }
 
     private static ScheduledReportDocument BuildReceivablesReport(string reportDate, DateOnly localDate, IReadOnlyCollection<HousecallProJob> jobs)
     {
-        var currentYearStart = new DateTimeOffset(localDate.Year, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var items = jobs.Where(job => job.OutstandingBalance > 0 && job.ScheduledStart >= currentYearStart).OrderBy(job => job.ScheduledStart).ToList();
+        var items = jobs.Where(job => !IsCanceledJob(job) && job.OutstandingBalance > 0)
+            .OrderBy(job => job.ScheduledStart ?? job.SourceUpdatedAt ?? job.LastSyncedAt).ToList();
         var rows = items.Select(job => new ScheduledReportRow([
             Value(job.JobNumber, "Not provided"), Value(job.CustomerName, "Not recorded"), Value(job.WorkStatus, "Unknown"),
             job.ScheduledStart?.ToString("MM/dd/yyyy") ?? "Not scheduled", job.JobPrice.ToString("C0", CultureInfo.CurrentCulture),
             job.OutstandingBalance.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
         rows.Add(new(["Total", $"{items.Count:N0} jobs", "", "", items.Sum(job => job.JobPrice).ToString("C0", CultureInfo.CurrentCulture),
             items.Sum(job => job.OutstandingBalance).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new("Outstanding receivables", reportDate, $"Jobs dated {localDate.Year} or later with an uncollected customer balance.",
+        return new("Outstanding receivables", reportDate, $"Non-canceled jobs from January 1, {localDate.Year} forward with an uncollected customer balance. Unscheduled jobs are included using their Housecall Pro update date.",
             [new("Job"), new("Customer"), new("Status"), new("Job date"), new("Price", true), new("Uncollected", true)], rows);
     }
+
+    private static DateTimeOffset ReportableJobDate(HousecallProJob job) =>
+        job.ScheduledStart ?? job.SourceUpdatedAt ?? job.LastSyncedAt;
+
+    private static DateTimeOffset ReportableEstimateDate(HousecallProEstimate estimate) =>
+        estimate.EstimateDate ?? estimate.SourceUpdatedAt ?? estimate.LastSyncedAt;
+
+    private static bool IsCanceledJob(HousecallProJob job) =>
+        string.Equals(job.WorkStatus, "user canceled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(job.WorkStatus, "pro canceled", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(job.WorkStatus, "pro-canceled", StringComparison.OrdinalIgnoreCase);
 
     private static ScheduledReportRow Row(string category, int count, decimal amount, string description) =>
         new([category, count.ToString("N0"), amount.ToString("C0", CultureInfo.CurrentCulture), description]);
