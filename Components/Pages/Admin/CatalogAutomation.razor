@@ -33,9 +33,29 @@
 
 <section class="activity-panel mb-4"><h2>Provider synchronization</h2><p>Jobs remain queued until a provider endpoint and secret reference are configured.</p><div class="row g-2"><div class="col-md-4"><InputSelect class="form-select" @bind-Value="syncVendorId"><option value="0">Select vendor…</option>@foreach (var v in vendors) { <option value="@v.Id">@v.Name</option> }</InputSelect></div><div class="col-md-3"><InputText class="form-control" @bind-Value="syncProvider" placeholder="Provider" /></div><div class="col-md-3"><button class="btn btn-outline-primary" @onclick="QueueSyncAsync">Queue catalog sync</button></div></div></section>
 
-<section class="mt-5"><h2>Import review queue</h2><div class="table-responsive"><table class="table"><thead><tr><th>Vendor / file</th><th>SKU</th><th>Description</th><th>Proposed</th><th>Match</th><th>Status</th><th></th></tr></thead><tbody>
-@foreach (var row in rows) { <tr><td>@row.PriceImportDocument.SupplyVendor.Name<br /><small>@row.PriceImportDocument.OriginalFileName</small></td><td>@row.VendorSku</td><td>@row.Description</td><td>@row.ProposedUnitPrice.ToString("C2")</td><td>@(row.VendorProduct?.Product.Name ?? "Unmatched")<br /><small>@row.MatchConfidence.ToString("P0") confidence</small></td><td>@row.ReviewStatus</td><td>@if (row.ReviewStatus == "Pending" && row.VendorProductId is not null) { <button class="btn btn-sm btn-success" @onclick="() => ApproveRowAsync(row)">Approve</button> <button class="btn btn-sm btn-outline-secondary" @onclick="() => RejectRowAsync(row)">Reject</button> }</td></tr> }
-</tbody></table></div></section>
+<section class="mt-5"><h2>Import review queue</h2>
+<p>Review prices by vendor, SKU and purchase date. Approve the price to use for that date and reject unwanted alternatives. Approval does not replace a different price already recorded for the same date.</p>
+<div class="row g-3 mb-3">
+ <div class="col-md-4"><label for="review-vendor" class="form-label">Review vendor</label><select id="review-vendor" class="form-select" @bind="reviewVendorId" @bind:after="ResetReviewAsync"><option value="0">All vendors</option>@foreach (var vendor in vendors) { <option value="@vendor.Id">@vendor.Name</option> }</select></div>
+ <div class="col-md-3"><label for="review-status" class="form-label">Review status</label><select id="review-status" class="form-select" @bind="reviewStatus" @bind:after="ResetReviewAsync"><option value="Pending">Pending</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option><option value="Return">Return</option><option value="">All statuses</option></select></div>
+ <div class="col-md-5"><label for="review-search" class="form-label">SKU or description</label><input id="review-search" class="form-control" @bind="reviewSearch" @bind:after="ResetReviewAsync" /></div>
+</div>
+<p role="status">@reviewCount matching rows. Page @(reviewPage + 1) of @ReviewPages.</p>
+<div class="table-responsive"><table class="table"><thead><tr><th>Vendor / file</th><th>SKU</th><th>Description / source</th><th>Purchase / effective date</th><th>Proposed unit price</th><th>Recorded price on date</th><th>Match</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+@foreach (var row in rows)
+{
+ <tr @key="row.Id"><td>@row.PriceImportDocument.SupplyVendor.Name<br /><small>@row.PriceImportDocument.OriginalFileName</small></td><td>@row.VendorSku</td><td>@row.Description</td><td>@row.EffectiveDate.ToString("MM/dd/yyyy")</td><td>@row.ProposedUnitPrice.ToString("C4")</td><td>@RecordedPrice(row)</td><td>@(row.VendorProduct?.Product.Name ?? "Unmatched")<br /><small>@row.MatchConfidence.ToString("P0") confidence</small></td><td>@row.ReviewStatus</td><td>
+ @if (row.ReviewStatus == "Pending")
+ {
+  @if (row.VendorProductId is not null) { <button class="btn btn-sm btn-success" @onclick="() => ApproveRowAsync(row)">Approve</button> }
+  <button class="btn btn-sm btn-outline-secondary" @onclick="() => RejectRowAsync(row)">Reject</button>
+ }
+ </td></tr>
+}
+@if (rows.Count == 0) { <tr><td colspan="9">No rows match these filters.</td></tr> }
+</tbody></table></div>
+<div class="d-flex gap-2"><button class="btn btn-outline-primary" disabled="@(reviewPage == 0)" @onclick="PreviousReviewAsync">Previous</button><button class="btn btn-outline-primary" disabled="@(reviewPage + 1 >= ReviewPages)" @onclick="NextReviewAsync">Next</button></div>
+</section>
 
 <section class="mt-5"><h2>Current vendor price comparison</h2><div class="table-responsive"><table class="table"><thead><tr><th>Product</th><th>Vendor</th><th>SKU</th><th>Current price</th><th>Effective</th></tr></thead><tbody>
 @foreach (var item in comparison) { <tr><td>@item.Product</td><td>@item.Vendor</td><td>@item.Sku</td><td>@item.Price.ToString("C2")</td><td>@item.EffectiveDate.ToString("MM/dd/yyyy")</td></tr> }
@@ -44,11 +64,65 @@
 @code {
  private List<SupplyVendor> vendors = []; private List<PriceImportRow> rows = []; private List<ComparisonRow> comparison = []; private int selectedVendorId; private DateOnly effectiveDate = DateOnly.FromDateTime(DateTime.Today); private RuleInput ruleInput = new(); private int syncVendorId; private string syncProvider = "VendorApi"; private string? message;
  protected override Task OnInitializedAsync() => ReloadAsync();
- private async Task ReloadAsync() { vendors = await DbContext.SupplyVendors.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); rows = await DbContext.PriceImportRows.AsNoTracking().Include(x => x.PriceImportDocument).ThenInclude(x => x.SupplyVendor).Include(x => x.VendorProduct).ThenInclude(x => x!.Product).OrderByDescending(x => x.Id).Take(100).ToListAsync(); var today = DateOnly.FromDateTime(DateTime.Today); comparison = await DbContext.VendorPrices.AsNoTracking().Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today)).OrderBy(x => x.VendorProduct.Product.Name).ThenBy(x => x.UnitPrice).Select(x => new ComparisonRow(x.VendorProduct.Product.Name, x.VendorProduct.SupplyVendor.Name, x.VendorProduct.VendorSku, x.UnitPrice, x.EffectiveDate)).ToListAsync(); }
+ private async Task ReloadAsync() { vendors = await DbContext.SupplyVendors.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); await LoadReviewAsync(); var today = DateOnly.FromDateTime(DateTime.Today); comparison = await DbContext.VendorPrices.AsNoTracking().Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today)).OrderBy(x => x.VendorProduct.Product.Name).ThenBy(x => x.UnitPrice).Select(x => new ComparisonRow(x.VendorProduct.Product.Name, x.VendorProduct.SupplyVendor.Name, x.VendorProduct.VendorSku, x.UnitPrice, x.EffectiveDate)).ToListAsync(); }
  private async Task UploadAsync(InputFileChangeEventArgs e) { if (!vendors.Any(x => x.Id == selectedVendorId)) { message = "Select a vendor before uploading."; return; } var file = e.File; var ext = Path.GetExtension(file.Name).ToLowerInvariant(); if (ext is not ".csv" and not ".pdf") { message = "Only CSV and PDF files are accepted."; return; } await using var input = file.OpenReadStream(20 * 1024 * 1024); using var memory = new MemoryStream(); await input.CopyToAsync(memory); var bytes = memory.ToArray(); var hash = Convert.ToHexString(SHA256.HashData(bytes)); if (await DbContext.PriceImportDocuments.AnyAsync(x => x.Sha256 == hash)) { message = "This exact document has already been imported."; return; } var root = Configuration["CatalogImports:StoragePath"] ?? Path.Combine(Environment.ContentRootPath, "CatalogImports"); Directory.CreateDirectory(root); var storedName = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}{ext}"; var path = Path.Combine(root, storedName); await File.WriteAllBytesAsync(path, bytes); var document = new PriceImportDocument { SupplyVendorId = selectedVendorId, OriginalFileName = Path.GetFileName(file.Name), StoragePath = path, Sha256 = hash, ContentType = file.ContentType, Status = ext == ".pdf" ? "Awaiting OCR Review" : "Staged" }; DbContext.PriceImportDocuments.Add(document); if (ext == ".csv") await StageCsvAsync(document, Encoding.UTF8.GetString(bytes)); await DbContext.SaveChangesAsync(); message = ext == ".pdf" ? "PDF preserved and queued for OCR review." : $"CSV staged with {document.Rows.Count} row(s)."; await ReloadAsync(); }
  private async Task StageCsvAsync(PriceImportDocument document, string text) { var products = await DbContext.VendorProducts.Include(x => x.Product).Where(x => x.SupplyVendorId == selectedVendorId).ToListAsync(); foreach (var raw in text.Split(['\r','\n'], StringSplitOptions.RemoveEmptyEntries).Skip(1)) { var cells = raw.Split(',').Select(x => x.Trim().Trim('"')).ToArray(); if (cells.Length < 3 || !decimal.TryParse(cells[2], out var price)) continue; var sku=cells[0]; var description=cells[1]; var exact=products.FirstOrDefault(x => x.VendorSku.Equals(sku,StringComparison.OrdinalIgnoreCase)); var name=exact is null ? products.FirstOrDefault(x => Normalize(x.Product.Name)==Normalize(description)) : null; var match=exact ?? name; document.Rows.Add(new PriceImportRow { VendorSku=sku, Description=description, ProposedUnitPrice=price, EffectiveDate=effectiveDate, VendorProductId=match?.Id, MatchConfidence=exact is not null ? 1m : name is not null ? .85m : 0m }); } }
- private async Task ApproveRowAsync(PriceImportRow row) { if (row.VendorProductId is null) return; var current=await DbContext.VendorPrices.Where(x=>x.VendorProductId==row.VendorProductId && x.ExpirationDate==null).OrderByDescending(x=>x.EffectiveDate).FirstOrDefaultAsync(); if(current is not null && current.EffectiveDate<row.EffectiveDate) current.ExpirationDate=row.EffectiveDate.AddDays(-1); DbContext.VendorPrices.Add(new VendorPrice { VendorProductId=row.VendorProductId.Value, UnitPrice=row.ProposedUnitPrice, EffectiveDate=row.EffectiveDate, SourceType="Price List", SourceReference=row.PriceImportDocument.OriginalFileName }); var tracked=await DbContext.PriceImportRows.FindAsync(row.Id); if(tracked is not null) tracked.ReviewStatus="Approved"; await DbContext.SaveChangesAsync(); message="Staged price approved and added to history."; await ReloadAsync(); }
- private async Task RejectRowAsync(PriceImportRow row) { var tracked=await DbContext.PriceImportRows.FindAsync(row.Id); if(tracked is not null) tracked.ReviewStatus="Rejected"; await DbContext.SaveChangesAsync(); await ReloadAsync(); }
+ private const int ReviewPageSize = 50;
+ private int reviewVendorId, reviewPage, reviewCount;
+ private string reviewStatus = "Pending", reviewSearch = "";
+ private List<VendorPrice> reviewPrices = [];
+ private int ReviewPages => Math.Max(1, (reviewCount + ReviewPageSize - 1) / ReviewPageSize);
+ private async Task ResetReviewAsync() { reviewPage = 0; await LoadReviewAsync(); }
+ private async Task PreviousReviewAsync() { if (reviewPage > 0) reviewPage--; await LoadReviewAsync(); }
+ private async Task NextReviewAsync() { if (reviewPage + 1 < ReviewPages) reviewPage++; await LoadReviewAsync(); }
+ private async Task LoadReviewAsync()
+ {
+  var query = DbContext.PriceImportRows.AsNoTracking().AsQueryable();
+  if (reviewVendorId != 0) query = query.Where(x => x.PriceImportDocument.SupplyVendorId == reviewVendorId);
+  if (reviewStatus.Length > 0) query = query.Where(x => x.ReviewStatus == reviewStatus);
+  var search = reviewSearch.Trim();
+  if (search.Length > 0) query = query.Where(x => x.VendorSku.Contains(search) || x.Description.Contains(search));
+  reviewCount = await query.CountAsync();
+  reviewPage = Math.Min(reviewPage, ReviewPages - 1);
+  rows = await query.Include(x => x.PriceImportDocument).ThenInclude(x => x.SupplyVendor)
+   .Include(x => x.VendorProduct).ThenInclude(x => x!.Product)
+   .OrderBy(x => x.PriceImportDocument.SupplyVendorId).ThenBy(x => x.VendorSku).ThenBy(x => x.EffectiveDate).ThenBy(x => x.Id)
+   .Skip(reviewPage * ReviewPageSize).Take(ReviewPageSize).ToListAsync();
+  var productIds = rows.Where(x => x.VendorProductId.HasValue).Select(x => x.VendorProductId!.Value).Distinct().ToList();
+  reviewPrices = await DbContext.VendorPrices.AsNoTracking().Where(x => productIds.Contains(x.VendorProductId)).ToListAsync();
+ }
+ private string RecordedPrice(PriceImportRow row) => reviewPrices
+  .Where(x => x.VendorProductId == row.VendorProductId && x.EffectiveDate <= row.EffectiveDate && (x.ExpirationDate == null || x.ExpirationDate >= row.EffectiveDate))
+  .OrderByDescending(x => x.EffectiveDate).Select(x => x.UnitPrice.ToString("C4")).FirstOrDefault() ?? "None";
+ private async Task ApproveRowAsync(PriceImportRow row)
+ {
+  var tracked = await DbContext.PriceImportRows.FindAsync(row.Id);
+  if (tracked is null || tracked.ReviewStatus != "Pending" || tracked.VendorProductId is null) { await ReloadAsync(); return; }
+  var prices = await DbContext.VendorPrices.Where(x => x.VendorProductId == tracked.VendorProductId).OrderBy(x => x.EffectiveDate).ToListAsync();
+  var sameDate = prices.FirstOrDefault(x => x.EffectiveDate == tracked.EffectiveDate);
+  if (sameDate is not null && sameDate.UnitPrice != tracked.ProposedUnitPrice)
+  {
+   message = "A different price is already recorded for this SKU and date. This row remains pending; reject it if the recorded price is correct.";
+   await ReloadAsync(); return;
+  }
+  if (sameDate is null)
+  {
+   var previous = prices.LastOrDefault(x => x.EffectiveDate < tracked.EffectiveDate);
+   var next = prices.FirstOrDefault(x => x.EffectiveDate > tracked.EffectiveDate);
+   if (previous is not null && (previous.ExpirationDate == null || previous.ExpirationDate >= tracked.EffectiveDate)) previous.ExpirationDate = tracked.EffectiveDate.AddDays(-1);
+   DbContext.VendorPrices.Add(new VendorPrice { VendorProductId = tracked.VendorProductId.Value, UnitPrice = tracked.ProposedUnitPrice, EffectiveDate = tracked.EffectiveDate, ExpirationDate = next?.EffectiveDate.AddDays(-1), SourceType = "Price List", SourceReference = row.PriceImportDocument.OriginalFileName });
+  }
+  tracked.ReviewStatus = "Approved";
+  await DbContext.SaveChangesAsync();
+  message = "Price approved. Review any remaining alternatives for this SKU and date.";
+  await ReloadAsync();
+ }
+ private async Task RejectRowAsync(PriceImportRow row)
+ {
+  var tracked = await DbContext.PriceImportRows.FindAsync(row.Id);
+  if (tracked is not null && tracked.ReviewStatus == "Pending") { tracked.ReviewStatus = "Rejected"; await DbContext.SaveChangesAsync(); }
+  await ReloadAsync();
+ }
  private async Task SaveRuleAsync() { int? vendorId=ruleInput.SupplyVendorId==0?null:ruleInput.SupplyVendorId; var rule=await DbContext.PriceApprovalRules.SingleOrDefaultAsync(x=>x.SupplyVendorId==vendorId); if(rule is null){rule=new PriceApprovalRule{SupplyVendorId=vendorId};DbContext.Add(rule);} rule.AutoApprovePercentThreshold=ruleInput.Percent;rule.AutoApproveDollarThreshold=ruleInput.Dollars;rule.AutoApproveTrustedApiChanges=ruleInput.TrustedApi;await DbContext.SaveChangesAsync();message="Approval rule saved."; }
  private async Task QueueSyncAsync() { if(!vendors.Any(x=>x.Id==syncVendorId)||string.IsNullOrWhiteSpace(syncProvider)){message="Select a vendor and provider.";return;} DbContext.CatalogSyncJobs.Add(new CatalogSyncJob { SupplyVendorId=syncVendorId, Provider=syncProvider.Trim(), Status="Waiting for Provider Configuration", Message="Configure provider endpoint and secret reference before execution." });await DbContext.SaveChangesAsync();message="Synchronization job recorded safely; no external call was made."; }
  private static string Normalize(string value)=>new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
