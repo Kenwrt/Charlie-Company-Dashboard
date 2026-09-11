@@ -37,14 +37,14 @@
 <p>Review prices by vendor, SKU and purchase date. Approve the price to use for that date and reject unwanted alternatives. Approval does not replace a different price already recorded for the same date.</p>
 <div class="row g-3 mb-3">
  <div class="col-md-4"><label for="review-vendor" class="form-label">Review vendor</label><select id="review-vendor" class="form-select" @bind="reviewVendorId" @bind:after="ResetReviewAsync"><option value="0">All vendors</option>@foreach (var vendor in vendors) { <option value="@vendor.Id">@vendor.Name</option> }</select></div>
- <div class="col-md-3"><label for="review-status" class="form-label">Review status</label><select id="review-status" class="form-select" @bind="reviewStatus" @bind:after="ResetReviewAsync"><option value="Pending">Pending</option><option value="Approved">Approved</option><option value="Rejected">Rejected</option><option value="Return">Return</option><option value="">All statuses</option></select></div>
+ <div class="col-md-3"><label for="review-status" class="form-label">Review status</label><select id="review-status" class="form-select" @bind="reviewStatus" @bind:after="ResetReviewAsync"><option value="Pending">Pending</option><option value="Rejected">Rejected</option><option value="Return">Return</option><option value="">All unapproved statuses</option></select></div>
  <div class="col-md-5"><label for="review-search" class="form-label">SKU or description</label><input id="review-search" class="form-control" @bind="reviewSearch" @bind:after="ResetReviewAsync" /></div>
 </div>
 <p role="status">@reviewCount matching rows. Page @(reviewPage + 1) of @ReviewPages.</p>
 <div class="table-responsive"><table class="table"><thead><tr><th>Vendor / file</th><th>SKU</th><th>Description / source</th><th>Purchase / effective date</th><th>Proposed unit price</th><th>Recorded price on date</th><th>Match</th><th>Status</th><th>Actions</th></tr></thead><tbody>
 @foreach (var row in rows)
 {
- <tr @key="row.Id"><td>@row.PriceImportDocument.SupplyVendor.Name<br /><small>@row.PriceImportDocument.OriginalFileName</small></td><td>@row.VendorSku</td><td>@row.Description</td><td>@row.EffectiveDate.ToString("MM/dd/yyyy")</td><td>@row.ProposedUnitPrice.ToString("C4")</td><td>@RecordedPrice(row)</td><td>@(row.VendorProduct?.Product.Name ?? "Unmatched")<br /><small>@row.MatchConfidence.ToString("P0") confidence</small></td><td>@row.ReviewStatus</td><td>
+ <tr @key="row.Id"><td>@row.PriceImportDocument.SupplyVendor.Name<br /><small>@row.PriceImportDocument.OriginalFileName</small></td><td>@row.VendorSku</td><td>@row.Description</td><td>@row.EffectiveDate.ToString("MM/dd/yyyy")</td><td>@row.ProposedUnitPrice.ToString("C2")</td><td>@RecordedPrice(row)</td><td>@(row.VendorProduct?.Product.Name ?? "Unmatched")<br /><small>@row.MatchConfidence.ToString("P0") confidence</small></td><td>@row.ReviewStatus</td><td>
  @if (row.ReviewStatus == "Pending")
  {
   @if (row.VendorProductId is not null) { <button class="btn btn-sm btn-success" @onclick="() => ApproveRowAsync(row)">Approve</button> }
@@ -77,7 +77,7 @@
  private async Task NextReviewAsync() { if (reviewPage + 1 < ReviewPages) reviewPage++; await LoadReviewAsync(); }
  private async Task LoadReviewAsync()
  {
-  var query = DbContext.PriceImportRows.AsNoTracking().AsQueryable();
+  var query = DbContext.PriceImportRows.AsNoTracking().Where(x => x.ReviewStatus != "Approved");
   if (reviewVendorId != 0) query = query.Where(x => x.PriceImportDocument.SupplyVendorId == reviewVendorId);
   if (reviewStatus.Length > 0) query = query.Where(x => x.ReviewStatus == reviewStatus);
   var search = reviewSearch.Trim();
@@ -93,7 +93,7 @@
  }
  private string RecordedPrice(PriceImportRow row) => reviewPrices
   .Where(x => x.VendorProductId == row.VendorProductId && x.EffectiveDate <= row.EffectiveDate && (x.ExpirationDate == null || x.ExpirationDate >= row.EffectiveDate))
-  .OrderByDescending(x => x.EffectiveDate).Select(x => x.UnitPrice.ToString("C4")).FirstOrDefault() ?? "None";
+  .OrderByDescending(x => x.EffectiveDate).Select(x => x.UnitPrice.ToString("C2")).FirstOrDefault() ?? "None";
  private async Task ApproveRowAsync(PriceImportRow row)
  {
   var tracked = await DbContext.PriceImportRows.FindAsync(row.Id);
