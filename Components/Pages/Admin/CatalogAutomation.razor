@@ -102,8 +102,9 @@
   var sameDate = prices.FirstOrDefault(x => x.EffectiveDate == tracked.EffectiveDate);
   if (sameDate is not null && sameDate.UnitPrice != tracked.ProposedUnitPrice)
   {
-   message = "A different price is already recorded for this SKU and date. This row remains pending; reject it if the recorded price is correct.";
-   await ReloadAsync(); return;
+   sameDate.UnitPrice = tracked.ProposedUnitPrice;
+   sameDate.SourceType = "Price List";
+   sameDate.SourceReference = row.PriceImportDocument.OriginalFileName;
   }
   if (sameDate is null)
   {
