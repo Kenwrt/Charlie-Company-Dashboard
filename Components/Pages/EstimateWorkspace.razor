@@ -323,7 +323,7 @@ else
 
                                 @if (assumptionItems.Count > 0)
                                 {
-                                    <details class="analysis-note-disclosure assumption-notes border rounded mb-3">
+                                    <details class="analysis-note-disclosure assumption-notes border rounded mb-3" open="@expandedReviewAnalysisIds.Contains(analysis.Id)">
                                         <summary class="analysis-note-summary">
                                             <span><strong>Assumptions</strong><small>@pendingAssumptionItems.Count item(s) requiring estimator review</small></span>
                                             <span class="badge @(pendingAssumptionItems.Count == 0 ? "text-bg-success" : "text-bg-warning")">@(pendingAssumptionItems.Count == 0 ? "Complete" : "Review")</span>
@@ -400,7 +400,7 @@ else
                                 }
                                 @if (warningItems.Count > 0)
                                 {
-                                    <details class="analysis-note-disclosure warning-notes border rounded mb-3">
+                                    <details class="analysis-note-disclosure warning-notes border rounded mb-3" open="@expandedReviewAnalysisIds.Contains(analysis.Id)">
                                         <summary class="analysis-note-summary">
                                             <span><strong>Questions and warnings</strong><small>@pendingReviewItems.Count item(s) requiring estimator review</small></span>
                                             <span class="badge @(AllReviewItemsResolved(analysis) ? "text-bg-success" : "text-bg-warning")">@(AllReviewItemsResolved(analysis) ? "Complete" : "Review")</span>
@@ -448,7 +448,7 @@ else
                                                     </article>
                                                 }
                                             </div>
-                                            <button type="button" class="btn btn-primary mt-3" disabled="@(!AllReviewItemsResolved(analysis))" @onclick="() => ReanalyzeWithResolutionsAsync(task, analysis)">Reanalyze with resolutions</button>
+                                            <button type="button" class="btn btn-primary mt-3" disabled="@(!CanSubmitAnalysis(analysis))" @onclick="() => ReanalyzeWithResolutionsAsync(task, analysis)">Reanalyze with resolutions</button>
                                         </div>
                                     </details>
                                 }
@@ -641,10 +641,18 @@ else
                                 }
                             }
 
+                            @if (analysis is not null && analysis.ReviewItems.Any(IsReviewItemOutstanding))
+                            {
+                                <div class="alert alert-warning mt-3" role="status">
+                                    Reanalysis requires decisions on @analysis.ReviewItems.Count(IsReviewItemOutstanding) outstanding review item(s).
+                                    Open Assumptions and Questions and warnings, then accept, resolve, or mark each item not applicable.
+                                    Approving vendor catalog prices does not resolve these estimate-specific questions.
+                                </div>
+                            }
                             <div class="d-flex gap-2 flex-wrap mt-3">
                                 <button type="button"
                                         class="btn btn-outline-primary"
-                                        disabled="@(!CanSubmitOrReanalyze(analysis))"
+                                        disabled="@(!CanSubmitAnalysis(analysis))"
                                         @onclick="() => SubmitOrReanalyzeAsync(task, analysis)">
                                     @(analysis is null ? "Analyze" : analysis.ReviewItems.Count > 0 ? "Reanalyze with resolutions" : "Reanalyze")
                                 </button>
@@ -953,6 +961,7 @@ else
     private bool projectTasksExpanded = true;
     private readonly HashSet<int> expandedTaskIds = [];
     private readonly HashSet<int> editingAnalysisIds = [];
+    private readonly HashSet<int> expandedReviewAnalysisIds = [];
     private readonly HashSet<int> replacingMaterialIds = [];
     private readonly Dictionary<int, int> reviewCatalogSelections = [];
     private readonly HashSet<int> localOnlyReviewItemIds = [];
@@ -1676,6 +1685,7 @@ else
     {
         if (!AllReviewItemsResolved(analysis))
         {
+            expandedReviewAnalysisIds.Add(analysis.Id);
             message = "Accept, resolve, or mark every review item not applicable before reanalyzing.";
             return;
         }
