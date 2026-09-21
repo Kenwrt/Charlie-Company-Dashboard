@@ -1,0 +1,44 @@
+default_permissions = "wrightserver-project"
+
+[features]
+network_proxy = true
+
+[permissions.wrightserver-project]
+description = "Project source, build, and test access with protected secrets and approval boundaries."
+extends = ":workspace"
+
+[permissions.wrightserver-project.filesystem]
+glob_scan_max_depth = 6
+
+[permissions.wrightserver-project.filesystem.":workspace_roots"]
+".git" = "read"
+".keys" = "deny"
+"**/.keys" = "deny"
+"**/*.env" = "deny"
+"**/.env" = "deny"
+"**/.env.*" = "deny"
+"**/*.pfx" = "deny"
+"**/*.p12" = "deny"
+"**/*.pem" = "deny"
+"**/*.key" = "deny"
+"**/*.keystore" = "deny"
+"**/*.jks" = "deny"
+".codex-*" = "deny"
+
+[permissions.wrightserver-project.network]
+enabled = true
+allow_local_binding = false
+
+[permissions.wrightserver-project.network.domains]
+"api.nuget.org" = "allow"
+"**.nuget.org" = "allow"
+"github.com" = "allow"
+"**.github.com" = "allow"
+"objects.githubusercontent.com" = "allow"
+"registry.npmjs.org" = "allow"
+"127.0.0.1" = "allow"
+"localhost" = "allow"
+"10.168.168.5" = "allow"
+"10.168.168.7" = "allow"
+"10.168.168.8" = "allow"
+"10.168.168.9" = "allow"

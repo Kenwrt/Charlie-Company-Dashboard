@@ -378,7 +378,10 @@ public sealed class ScheduledReportService(
         IReadOnlyCollection<HousecallProJob> jobs,
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
-        var activeJobs = jobs.Where(job => !IsCanceledJob(job) && !string.Equals(job.WorkStatus, "completed", StringComparison.OrdinalIgnoreCase)).ToList();
+        // Match the Jobs page: internal status takes precedence over the imported status.
+        var activeJobs = jobs.Where(job => !IsCanceledJob(job) &&
+            (job.InternalStatus ?? job.WorkStatus) is
+                "scheduled" or "unscheduled" or "needs scheduling" or "in progress").ToList();
         var scheduledToday = jobs.Where(job => job.ScheduledStart.HasValue && DateOnly.FromDateTime(job.ScheduledStart.Value.Date) == localDate).ToList();
         var openEstimates = estimates.Where(estimate => !string.Equals(estimate.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)).ToList();
         var blockers = jobs.SelectMany(job => job.Blockers).Where(blocker => blocker.ResolvedOn == null && blocker.StartedOn.Year >= localDate.Year).ToList();
