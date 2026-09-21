@@ -368,7 +368,9 @@ public sealed class ScheduledReportService(
             "estimates-expiring-next-ten-days" => BuildEstimatesExpiringReport(reportDate, localDate, expiringWindowEnd, estimatesExpiringSoon),
             "job-blockers" => BuildJobBlockersReport(reportDate, localDate, jobs),
             "receivables" => BuildReceivablesReport(reportDate, localDate, jobs),
-            _ => BuildDailyOperationsReport(reportDate, localDate, jobs, estimates)
+            _ => BuildDailyOperationsReport(reportDate, localDate, jobs,
+                await db.HousecallProEstimates.AsNoTracking()
+                    .OutstandingForYear(localDate.Year).ToListAsync(cancellationToken))
         };
     }
 
@@ -383,7 +385,7 @@ public sealed class ScheduledReportService(
             (job.InternalStatus ?? job.WorkStatus) is
                 "scheduled" or "unscheduled" or "needs scheduling" or "in progress").ToList();
         var scheduledToday = jobs.Where(job => job.ScheduledStart.HasValue && DateOnly.FromDateTime(job.ScheduledStart.Value.Date) == localDate).ToList();
-        var openEstimates = estimates.Where(estimate => !string.Equals(estimate.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase)).ToList();
+        var openEstimates = estimates; // Already filtered by the shared dashboard query.
         var blockers = jobs.SelectMany(job => job.Blockers).Where(blocker => blocker.ResolvedOn == null && blocker.StartedOn.Year >= localDate.Year).ToList();
         var receivables = jobs.Where(job => !IsCanceledJob(job) && job.OutstandingBalance > 0).ToList();
         var rows = new List<ScheduledReportRow>

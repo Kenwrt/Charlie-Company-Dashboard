@@ -8,15 +8,6 @@ public sealed class HousecallProDashboardDataSource(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     DashboardNotificationService notifications) : IDashboardDataSource
 {
-    private static readonly string[] ClosedEstimateStatuses =
-    [
-        "canceled",
-        "deleted",
-        "created job from estimate",
-        "complete rated",
-        "complete unrated"
-    ];
-
     public async Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
         (await GetVentureSnapshotAsync(cancellationToken)).Rollup;
 
@@ -104,10 +95,7 @@ public sealed class HousecallProDashboardDataSource(
 
         var outstandingEstimates = await db.HousecallProEstimates.AsNoTracking()
             .Where(estimate => estimate.LocalOperationId == operation.Id)
-            .Where(estimate => estimate.EstimateDate >= yearStart && estimate.EstimateDate < nextYearStart)
-            .Where(estimate => estimate.InternalStatus != HousecallProEstimateStatuses.FollowUpComplete)
-            .Where(estimate => estimate.ApprovalStatus == null || estimate.ApprovalStatus == "")
-            .Where(estimate => estimate.Status == null || !ClosedEstimateStatuses.Contains(estimate.Status))
+            .OutstandingForYear(year)
             .CountAsync(cancellationToken);
 
         return new DashboardSnapshot(
