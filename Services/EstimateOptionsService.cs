@@ -321,6 +321,7 @@ public sealed class EstimateOptionsService(
         var changed = false;
         foreach (var entry in document.Tasks)
         {
+            var taskNumber = document.Tasks.OrderBy(item => item.SortOrder).ToList().IndexOf(entry) + 1;
             var option = entry.Options.SingleOrDefault(item => item.Id == entry.PriceOptionId);
             if (option is null) continue;
             if (option.IsReady && !option.RequiresCentComAnalysis && (!option.HasPlanningInputs || option.IsCalculationCurrent)) continue;
@@ -330,9 +331,18 @@ public sealed class EstimateOptionsService(
                 .Include(item => item.ReviewItems)
                 .Where(item => item.QuoteProjectTaskId == task.Id && item.EstimateOptionId == option.Id)
                 .OrderByDescending(item => item.RevisionNumber).FirstOrDefaultAsync();
+            var sourceSignature = analysis is null ? null : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+                {
+                    analysis.Id, analysis.Status, analysis.DeliveryAllowance, analysis.TaxAllowance, analysis.OtherAllowance,
+                    Materials = analysis.Materials.OrderBy(item => item.Id).Select(item => new
+                    { item.Id, item.Description, item.Quantity, item.Unit, item.UnitCost, item.WastePercent, item.IsRemoved, item.VendorSku }),
+                    Fees = analysis.ReviewItems.OrderBy(item => item.Id).Select(item => new { item.Id, item.AdditionalFeeAmount, item.Status })
+                }))));
             var current = analysis?.InputSignature == EstimateOptions.AnalysisSignature(task, option);
             if (option.IsReady && option.IsCalculationCurrent && current && option.SourceAnalysisId == analysis!.Id
-                && (analysis.Status == QuoteTaskAnalysisStatuses.Accepted && !option.IsProvisionalPrice
+                && option.PricingSourceSignature == sourceSignature
+                && (analysis.Status == QuoteTaskAnalysisStatuses.Accepted
                     || analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview && option.IsProvisionalPrice)) continue;
             if (option.IsReady || entry.SelectedOptionId is not null)
             {
@@ -343,31 +353,31 @@ public sealed class EstimateOptionsService(
             if (analysis is null || !current)
             {
                 if (!string.IsNullOrWhiteSpace(task.ScopeOfWork)) queue.Add(option.Id);
-                else notices.Add($"Enter a scope of work for task {entry.SortOrder} to calculate its price.");
+                else notices.Add($"Enter a scope of work for task {taskNumber} to calculate its price.");
                 continue;
             }
             if (analysis.Status is QuoteTaskAnalysisStatuses.Queued or QuoteTaskAnalysisStatuses.Processing)
             {
-                notices.Add($"CentCom is calculating task {entry.SortOrder}. Prices will update automatically.");
+                notices.Add($"CentCom is calculating task {taskNumber}. Prices will update automatically.");
                 continue;
             }
             if (analysis.Status is not QuoteTaskAnalysisStatuses.Accepted and not QuoteTaskAnalysisStatuses.NeedsReview)
             {
-                notices.Add($"Retry the analysis for task {entry.SortOrder} before its price can be calculated.");
+                notices.Add($"Retry the analysis for task {taskNumber} before its price can be calculated.");
                 continue;
             }
             var materials = analysis.Materials.Where(item => !item.IsRemoved).ToList();
-            if (materials.Count == 0 || materials.Any(item => item.UnitCost <= 0 || item.Quantity <= 0))
-            {
-                notices.Add($"Task {entry.SortOrder} needs material prices in its CentCom analysis before the estimate can be calculated.");
-                continue;
-            }
+            var missingPrices = materials.Count == 0 || materials.Any(item => item.UnitCost <= 0 || item.Quantity <= 0);
             CopyMaterials(option, analysis);
+            // Keep unresolved lines in the analysis; only valid quantities contribute to this running subtotal.
+            option.Materials.RemoveAll(item => item.Quantity <= 0);
+            option.HasUnpricedMaterials = missingPrices;
+            option.PricingSourceSignature = sourceSignature;
             option.AdditionalBaselineCost = analysis.DeliveryAllowance + analysis.TaxAllowance + analysis.OtherAllowance
                 + analysis.ReviewItems.Sum(item => item.AdditionalFeeAmount);
             await PriceOptionAsync(db, version, document, entry, option, task);
             option.IsReady = true;
-            option.IsProvisionalPrice = analysis.Status != QuoteTaskAnalysisStatuses.Accepted;
+            option.IsProvisionalPrice = missingPrices || analysis.Status != QuoteTaskAnalysisStatuses.Accepted;
             changed = true;
         }
         if (changed)
@@ -436,6 +446,8 @@ public sealed class EstimateOptionsService(
             throw new InvalidOperationException("Choose one priced option for every required task before accepting the estimate.");
         if (version.DiscountAmount > options.CustomerPrice)
             throw new InvalidOperationException("The discount exceeds the selected price. Update the discount before acceptance.");
+        if (options.Selected.Any(option => option.HasUnpricedMaterials))
+            throw new InvalidOperationException("Resolve missing material prices before accepting the estimate.");
         await RequireAcceptedAnalysesAsync(db, version, options, requireApproval: true);
         WriteSelectedLines(version, options);
         version.Status = "Approved";

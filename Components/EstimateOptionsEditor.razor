@@ -149,13 +149,17 @@
         <p class="mt-3"><button type="button" class="btn btn-outline-secondary me-2" disabled="@busy" @onclick="LoadAsync">Reload saved options</button><a class="btn btn-outline-primary" href="@($"/estimates/{loaded.QuoteCaseId}/versions/{loaded.Id}/options")">Present saved options to homeowner</a></p>
         @if (SummaryOnly)
         {
-        <SelectedOptionMaterials Version="loaded" />
+
         @if (options.HasCalculatedCosts)
         {
+            @if (options.Selected.Any(option => option.HasUnpricedMaterials))
+            {
+                <p class="text-warning" role="status">Incomplete price: some materials have no price yet and are excluded from the running total. This is not a final quote.</p>
+            }
         <p>Selected internal cost: @options.InternalCost.ToString("C2") · Selected market value: @options.MarketValue.ToString("C2") · Selected customer price before discount and tax: @options.CustomerPrice.ToString("C2")</p>
             @if (options.Selected.Any(option => option.IsProvisionalPrice))
             {
-                <p class="text-warning">Calculated estimate. CentCom material review is still required before homeowner acceptance.</p>
+                <p class="text-warning">Running estimate based on currently priced materials and costs. It updates as CentCom issues are resolved; review is required before homeowner acceptance.</p>
             }
         }
         else

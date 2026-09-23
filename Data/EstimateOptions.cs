@@ -83,6 +83,8 @@ public sealed class EstimateOption
     public decimal CustomerPrice { get; set; }
     public bool IsReady { get; set; }
     public bool IsProvisionalPrice { get; set; }
+    public bool HasUnpricedMaterials { get; set; }
+    public string? PricingSourceSignature { get; set; }
     public bool RequiresCentComAnalysis { get; set; }
     public int? SourceAnalysisId { get; set; }
     public string? CostBasis { get; set; }

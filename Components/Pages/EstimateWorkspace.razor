@@ -2399,7 +2399,7 @@ else
         var task = new QuoteProjectTask
         {
             QuoteCaseId = quote.Id,
-            SortOrder = nextSortOrder + 1,
+            SortOrder = Math.Max(0, nextSortOrder) + 1,
             TaskType = newTaskType
         };
         db.QuoteProjectTasks.Add(task);
