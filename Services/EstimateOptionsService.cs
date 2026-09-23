@@ -119,6 +119,7 @@ public sealed class EstimateOptionsService(
         if (snapshot is not null)
             options.Tasks[^1].Options[0].CustomerPrice += snapshot.SuggestedCustomerPrice - options.CustomerPrice;
         Validate(options);
+        SynchronizePricePlans(options);
         version.OptionsJson = options.Write();
         WriteSelectedLines(version, options);
         await AuditAsync(db, version, "Task options enabled from saved pricing. Prior versions and snapshots retained.");
@@ -139,6 +140,7 @@ public sealed class EstimateOptionsService(
             ?? throw new InvalidOperationException("This option was already removed.");
         task.Options.Remove(option);
         if (task.SelectedOptionId == optionId) task.SelectedOptionId = null;
+        SynchronizePricePlans(document);
         version.OptionsJson = document.Write();
         WriteSelectedLines(version, document);
         await db.QuoteProcessingJobs.Where(job => job.QuoteCaseId == version.QuoteCaseId
@@ -262,10 +264,50 @@ public sealed class EstimateOptionsService(
         await RequireAcceptedAnalysesAsync(db, version, options);
         version.TaxRate = taxRate;
         version.DiscountAmount = discount;
+        SynchronizePricePlans(options);
         version.OptionsJson = options.Write();
         WriteSelectedLines(version, options);
         await AuditAsync(db, version, "Task options, separate costs, market values, and customer prices saved. Changed selections require homeowner review.");
         await db.SaveChangesAsync();
+    }
+
+    public async Task SelectPricePlanAsync(int versionId, string expectedJson, int taskId, Guid? optionId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var version = await LoadAsync(db, versionId);
+        await RequireDraftAsync(db, version, expectedJson);
+        var document = EstimateOptions.Read(expectedJson);
+        RequireCurrentTasks(version, document);
+        var task = document.Tasks.SingleOrDefault(item => item.TaskId == taskId)
+            ?? throw new InvalidOperationException("This task is no longer available.");
+        if (optionId is not null && !task.Options.Any(option => option.Id == optionId))
+            throw new InvalidOperationException("Choose an option belonging to this task.");
+        task.PriceOptionId = optionId;
+        task.SelectedOptionId = null;
+        SynchronizePricePlans(document);
+        await RequireAcceptedAnalysesAsync(db, version, document);
+        SynchronizePricePlans(document);
+        version.OptionsJson = document.Write();
+        WriteSelectedLines(version, document);
+        await AuditAsync(db, version, $"Pricing plan selected for task {task.SortOrder}.");
+        await db.SaveChangesAsync();
+    }
+
+    private static void SynchronizePricePlans(EstimateOptions document)
+    {
+        foreach (var task in document.Tasks)
+        {
+            if (task.PriceOptionId is not null && !task.Options.Any(option => option.Id == task.PriceOptionId))
+                task.PriceOptionId = null;
+            if (task.PriceOptionId is null && task.IsRequired && task.Options.Count == 1)
+                task.PriceOptionId = task.Options[0].Id;
+            if (task.PriceOptionId is not null)
+            {
+                var planned = task.Options.Single(option => option.Id == task.PriceOptionId);
+                task.SelectedOptionId = planned.IsReady && (!planned.HasPlanningInputs || planned.IsCalculationCurrent)
+                    ? planned.Id : null;
+            }
+        }
     }
 
     public async Task SelectAsync(int versionId, string expectedJson, int taskId, Guid? optionId)
@@ -281,6 +323,8 @@ public sealed class EstimateOptionsService(
             throw new InvalidOperationException("Choose a priced option offered for this task.");
         await RequireAcceptedAnalysesAsync(db, version, options);
         task.SelectedOptionId = optionId;
+        task.PriceOptionId = optionId;
+        SynchronizePricePlans(options);
         version.OptionsJson = options.Write();
         WriteSelectedLines(version, options);
         await AuditAsync(db, version, $"Homeowner choice recorded by estimator for task {task.SortOrder}: {task.Options.SingleOrDefault(option => option.Id == optionId)?.Name ?? "No selection"}.");
@@ -346,6 +390,7 @@ public sealed class EstimateOptionsService(
         copy.RequiresCentComAnalysis = true;
         copy.IsReady = false;
         task.Options.Add(copy);
+        SynchronizePricePlans(document);
         version.OptionsJson = document.Write();
         await AuditAsync(db, version, $"Task {task.SortOrder}: '{copy.Name}' copied from '{source.Name}' with independent materials, crew, duration, costs, and prices. Substitution analysis required.");
         await db.SaveChangesAsync();
@@ -400,6 +445,7 @@ public sealed class EstimateOptionsService(
             }
         }
         if (reserved.Count == 0) return 0;
+        SynchronizePricePlans(document);
         version.OptionsJson = document.Write();
         WriteSelectedLines(version, document);
         await AuditAsync(db, version, $"{reserved.Count} separate option calculation(s) queued for CentCom.");

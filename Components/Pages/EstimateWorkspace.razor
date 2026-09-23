@@ -669,6 +669,21 @@ else
                             </section>
                         }
                         </details>
+                        @if (version?.OptionsJson is not null)
+                        {
+                            <div class="my-3">
+                                <label class="form-label" for="@($"price-plan-{task.Id}")">Price</label>
+                                <select id="@($"price-plan-{task.Id}")" class="form-select" aria-label="Price option plan"
+                                    value="@PricePlanOptionId(task.Id)" disabled="@(changingRailing || !TaskOptions(task.Id).Any())"
+                                    @onchange="args => ChangePricePlanAsync(task.Id, args.Value?.ToString())">
+                                    @if (TaskOptions(task.Id).Count() != 1) { <option value="">Plan</option> }
+                                    @foreach (var option in TaskOptions(task.Id))
+                                    {
+                                        <option value="@option.Id">@option.Name</option>
+                                    }
+                                </select>
+                            </div>
+                        }
                         <div class="project-task-actions">
                             <button type="button"
                                     class="btn btn-outline-danger"
@@ -993,6 +1008,27 @@ else
     private string newTaskType = ProjectTaskTypes.All[0];
     private bool addingProjectTask;
     private bool changingRailing;
+    private Guid? PricePlanOptionId(int taskId)
+    {
+        if (version?.OptionsJson is null) return null;
+        var task = EstimateOptions.Read(version.OptionsJson).Tasks.SingleOrDefault(item => item.TaskId == taskId);
+        return task?.PriceOptionId ?? task?.SelectedOptionId ?? (task?.Options.Count == 1 ? task.Options[0].Id : null);
+    }
+
+    private async Task ChangePricePlanAsync(int taskId, string? value)
+    {
+        if (changingRailing || version?.OptionsJson is null) return;
+        changingRailing = true;
+        try
+        {
+            Guid? optionId = Guid.TryParse(value, out var parsed) ? parsed : null;
+            await OptionsService.SelectPricePlanAsync(version.Id, version.OptionsJson, taskId, optionId);
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The estimate changed. Reload before choosing the pricing plan."; }
+        finally { changingRailing = false; }
+    }
     private bool deletingProjectTask;
     private bool CanSaveEstimate => version?.Status == "Draft" && quote?.ProjectTasks.Count > 0
         && (version.OptionsJson is not null ? EstimateOptionsService.ForEditing(version).HasCalculatedCosts
