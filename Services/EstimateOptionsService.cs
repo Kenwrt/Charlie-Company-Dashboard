@@ -123,6 +123,41 @@ public sealed class EstimateOptionsService(
         await db.SaveChangesAsync();
     }
 
+    public async Task SaveScopeAsync(int versionId, string expectedJson, EstimateOptions edited,
+        decimal taxRate, decimal discount, int? taskId, bool summaryOnly, string? projectOverview = null)
+    {
+        if (taskId is null && !summaryOnly)
+        {
+            await SaveAsync(versionId, expectedJson, edited, taxRate, discount, projectOverview);
+            return;
+        }
+        var current = await LoadAsync(versionId);
+        if (current.OptionsJson is null) throw new InvalidOperationException("Reload the estimate before saving.");
+        var original = EstimateOptions.Read(expectedJson);
+        var merged = ForEditing(current);
+        if (taskId is int id)
+        {
+            var before = original.Tasks.SingleOrDefault(task => task.TaskId == id);
+            var saved = EstimateOptions.Read(current.OptionsJson).Tasks.SingleOrDefault(task => task.TaskId == id);
+            if (JsonSerializer.Serialize(before) != JsonSerializer.Serialize(saved))
+                throw new InvalidOperationException("This task changed while you were editing. Reload its saved options before saving.");
+            var candidate = edited.Tasks.SingleOrDefault(task => task.TaskId == id)
+                ?? throw new InvalidOperationException("This task is no longer available.");
+            var index = merged.Tasks.FindIndex(task => task.TaskId == id);
+            if (index < 0) throw new InvalidOperationException("This task was removed. Reload the estimate.");
+            merged.Tasks[index] = candidate;
+            // Other task editors may have saved since this editor loaded.
+            await SaveAsync(versionId, current.OptionsJson, merged, current.TaxRate, current.DiscountAmount);
+        }
+        else
+        {
+            // Shared totals never submit another task editor's stale option snapshot.
+            if (current.OptionsJson != expectedJson)
+                throw new InvalidOperationException("The estimate changed. Reload saved totals before saving.");
+            await SaveAsync(versionId, current.OptionsJson, merged, taxRate, discount, projectOverview);
+        }
+    }
+
     public async Task SaveAsync(int versionId, string expectedJson, EstimateOptions options, decimal taxRate, decimal discount, string? projectOverview = null)
     {
         await using var db = await factory.CreateDbContextAsync();

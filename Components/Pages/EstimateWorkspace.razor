@@ -132,9 +132,9 @@ else
                     </InputSelect>
                     <button type="button"
                             class="btn btn-primary text-nowrap"
-                            disabled="@string.IsNullOrWhiteSpace(newTaskType)"
+                            disabled="@(addingProjectTask || string.IsNullOrWhiteSpace(newTaskType))"
                             @onclick="AddProjectTaskAsync">
-                        Add Project Task
+                        @(addingProjectTask ? "Adding task..." : "Add Project Task")
                     </button>
                 </div>
 
@@ -180,7 +180,7 @@ else
                                     <option value="@option.Id">@option.Name</option>
                                 }
                             </select>
-                            <p class="text-muted">Create and save alternatives in Task options below. Each option has its own analysis and material review.</p>
+                            <p class="text-muted">Create and save alternatives in this task’s options. Each option has its own analysis and material review.</p>
                         }
                         <div class="row g-4">
                             @if (version?.OptionsJson is null)
@@ -694,6 +694,10 @@ else
                             </div>
                             </div>
                         </details>
+                        @if (version?.OptionsJson is not null)
+                        {
+                            <EstimateOptionsEditor TaskId="task.Id" VersionId="version.Id" RefreshStamp="quote.UpdatedAt" Saved="ReloadAsync" ReviewRequested="ShowOptionReview" />
+                        }
                         <div class="project-task-actions">
                             <button type="button"
                                     class="btn btn-outline-danger"
@@ -714,7 +718,7 @@ else
         {
             @if (version.OptionsJson is not null)
             {
-                <EstimateOptionsEditor @ref="optionsEditor" VersionId="version.Id" RefreshStamp="quote.UpdatedAt" ProjectOverview="quote.WorkDescription" Saved="ReloadAsync" ReviewRequested="ShowOptionReview" />
+                <EstimateOptionsEditor @ref="optionsEditor" SummaryOnly="true" VersionId="version.Id" RefreshStamp="quote.UpdatedAt" ProjectOverview="quote.WorkDescription" Saved="ReloadAsync" ReviewRequested="ShowOptionReview" />
             }
             else if (version.Status == "Draft")
             {
@@ -1014,6 +1018,7 @@ else
     private string? pricingAdjustmentReason;
     private string? message;
     private string newTaskType = string.Empty;
+    private bool addingProjectTask;
     private bool projectTasksExpanded = true;
     private readonly HashSet<int> expandedTaskIds = [];
     private readonly HashSet<int> editingAnalysisIds = [];
@@ -2203,10 +2208,14 @@ else
 
     private async Task AddProjectTaskAsync()
     {
-        if (quote is null || !ProjectTaskTypes.All.Contains(newTaskType)) return;
+        if (addingProjectTask || quote is null || !ProjectTaskTypes.All.Contains(newTaskType)) return;
+        addingProjectTask = true;
+        try
+        {
         await using var db = await DbFactory.CreateDbContextAsync();
         if (!await RequireEditableVersionAsync(db)) return;
-        var nextSortOrder = await db.QuoteProjectTasks
+        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        var nextSortOrder = await db.QuoteProjectTasks.IgnoreQueryFilters()
             .Where(x => x.QuoteCaseId == quote.Id)
             .Select(x => (int?)x.SortOrder)
             .MaxAsync() ?? 0;
@@ -2219,11 +2228,36 @@ else
         db.QuoteProjectTasks.Add(task);
         await AddAuditEventAsync(db, quote, $"Project Task {task.SortOrder} ({task.TaskType}) added.");
         await db.SaveChangesAsync();
+        var current = db.QuoteVersions.Local.Single(item => item.Id == version!.Id);
+        if (current.OptionsJson is not null)
+        {
+            var options = EstimateOptions.Read(current.OptionsJson);
+            options.Tasks.Add(new EstimateTaskOptions
+            {
+                TaskId = task.Id, SortOrder = task.SortOrder, TaskType = task.TaskType,
+                ScopeOfWork = task.ScopeOfWork, Measurements = task.Measurements,
+                Options = [new EstimateOption { Name = "Option 1", RequiresCentComAnalysis = true, EstimatedDays = task.EstimatedDays }]
+            });
+            foreach (var entry in options.Tasks)
+            {
+                entry.SelectedOptionId = null;
+                foreach (var option in entry.Options) option.IsReady = false;
+            }
+            current.OptionsJson = options.Write();
+            EstimateOptionsService.WriteSelectedLines(current, options);
+            await db.SaveChangesAsync();
+        }
+        await transaction.CommitAsync();
         message = $"Project Task {task.SortOrder} added.";
         newTaskType = string.Empty;
         expandedTaskIds.Clear();
         expandedTaskIds.Add(task.Id);
+        projectTasksExpanded = true;
         await ReloadAsync();
+        }
+        catch (DbUpdateException) { message = "The task could not be added because the estimate changed. Reload and try again."; }
+        catch (Npgsql.PostgresException) { message = "The estimate was changed by another action. Reload and add the task again."; }
+        finally { addingProjectTask = false; }
     }
 
     private async Task SaveEstimateAsync()
