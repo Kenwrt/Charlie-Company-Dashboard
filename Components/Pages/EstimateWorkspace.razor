@@ -123,16 +123,15 @@ else
             {
             <div class="project-tasks-body">
                 <div class="project-task-add-controls">
-                    <InputSelect class="form-select" @bind-Value="newTaskType">
-                        <option value="">Select task type</option>
+                    <select class="form-select" aria-label="New project task type" @bind="newTaskType">
                         @foreach (var taskType in ProjectTaskTypes.All)
                         {
                             <option value="@taskType">@taskType</option>
                         }
-                    </InputSelect>
+                    </select>
                     <button type="button"
                             class="btn btn-primary text-nowrap"
-                            disabled="@(addingProjectTask || string.IsNullOrWhiteSpace(newTaskType))"
+                            disabled="@addingProjectTask"
                             @onclick="AddProjectTaskAsync">
                         @(addingProjectTask ? "Adding task..." : "Add Project Task")
                     </button>
@@ -141,7 +140,7 @@ else
         @if (quote.ProjectTasks.Count == 0)
         {
             <div class="alert alert-light border mb-0">
-                <p class="mb-0">No project tasks have been added. Select a project task type above to begin.</p>
+                <p class="mb-0">No project tasks have been added. Choose the task type or keep the default, then click Add Project Task.</p>
             </div>
         }
 
@@ -1017,7 +1016,7 @@ else
     private decimal pricingTaxRate;
     private string? pricingAdjustmentReason;
     private string? message;
-    private string newTaskType = string.Empty;
+    private string newTaskType = ProjectTaskTypes.All[0];
     private bool addingProjectTask;
     private bool projectTasksExpanded = true;
     private readonly HashSet<int> expandedTaskIds = [];
@@ -2208,7 +2207,8 @@ else
 
     private async Task AddProjectTaskAsync()
     {
-        if (addingProjectTask || quote is null || !ProjectTaskTypes.All.Contains(newTaskType)) return;
+        if (addingProjectTask || quote is null) return;
+        if (!ProjectTaskTypes.All.Contains(newTaskType)) newTaskType = ProjectTaskTypes.All[0];
         addingProjectTask = true;
         try
         {
@@ -2249,7 +2249,6 @@ else
         }
         await transaction.CommitAsync();
         message = $"Project Task {task.SortOrder} added.";
-        newTaskType = string.Empty;
         expandedTaskIds.Clear();
         expandedTaskIds.Add(task.Id);
         projectTasksExpanded = true;
