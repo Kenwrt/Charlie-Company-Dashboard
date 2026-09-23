@@ -14,7 +14,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject OperationalEventPublisher OperationalEvents
 @inject NavigationManager Navigation
-@inject IJSRuntime JS
+@inject ILogger<Estimates> Logger
 
 <PageTitle>Start Estimate</PageTitle>
 
@@ -298,11 +298,6 @@
     {
         if (deletingQuoteId is not null) return;
         var estimateReference = quote.HousecallProEstimateNumber ?? quote.HousecallProQuoteId ?? $"CCV-E-{quote.Id:D6}";
-        var confirmed = await JS.InvokeAsync<bool>(
-            "confirm",
-            $"Do you really want to delete estimate workspace {estimateReference} for {quote.CustomerName}? This removes its CCV tasks, photos, pricing, and history. The Housecall Pro estimate will not be deleted.");
-        if (!confirmed) return;
-
         deletingQuoteId = quote.Id;
         message = null;
         try
@@ -325,8 +320,17 @@
                 .ToList();
             var localOperationId = tracked.LocalOperationId;
             var deletedQuoteId = tracked.Id;
-            db.QuoteCases.Remove(tracked);
-            await db.SaveChangesAsync();
+            // Pricing snapshots restrict deletion of their tasks. Remove the owning
+            // version snapshots first, then delete the workspace atomically.
+            await using (var transaction = await db.Database.BeginTransactionAsync())
+            {
+                await db.QuoteCostSnapshots
+                    .Where(snapshot => snapshot.QuoteVersion.QuoteCaseId == tracked.Id)
+                    .ExecuteDeleteAsync();
+                db.QuoteCases.Remove(tracked);
+                await db.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
 
             foreach (var storedPath in storedPaths)
             {
@@ -353,8 +357,9 @@
             message = $"Estimate workspace {estimateReference} was deleted from CCV. Housecall Pro was not changed.";
             await ReloadAsync();
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException exception)
         {
+            Logger.LogError("Estimate workspace {QuoteCaseId} deletion failed with {ErrorType}.", quote.Id, exception.GetType().Name);
             message = "The estimate workspace could not be deleted because related records are still in use.";
         }
         finally
