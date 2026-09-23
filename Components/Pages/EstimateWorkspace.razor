@@ -217,7 +217,7 @@ else
                         </details>
 
                         <details class="border rounded p-3 my-3">
-                        <summary class="fw-semibold">Task options · @TaskOptions(task.Id).Count() option(s)</summary>
+                        <summary class="fw-semibold">Options · @TaskOptions(task.Id).Count() option(s)</summary>
                         @if (version?.OptionsJson is not null)
                         {
                             <button type="button" class="btn btn-primary mt-3" disabled="@changingRailing" @onclick="() => AddTaskOptionAsync(task)">Add option</button>
