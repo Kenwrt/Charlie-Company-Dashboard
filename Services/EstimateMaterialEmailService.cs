@@ -25,6 +25,7 @@ public sealed class EstimateMaterialEmailService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var quote = await db.QuoteCases.AsSplitQuery()
             .Include(item => item.LocalOperation)
+            .Include(item => item.Versions)
             .Include(item => item.ProjectTasks).ThenInclude(item => item.Analyses).ThenInclude(item => item.Materials)
                 .ThenInclude(item => item.VendorProduct).ThenInclude(item => item!.SupplyVendor)
             .SingleOrDefaultAsync(item => item.Id == quoteId, cancellationToken)
@@ -47,6 +48,29 @@ public sealed class EstimateMaterialEmailService(
                 .Select(material => new MaterialEmailLine(item.Task, material, VendorName(material))))
             .ToList();
 
+        var currentVersion = quote.Versions.OrderByDescending(version => version.VersionNumber).FirstOrDefault();
+        if (currentVersion?.OptionsJson is not null)
+        {
+            var options = EstimateOptions.Read(currentVersion.OptionsJson);
+            if (!options.IsComplete) return new EstimateMaterialEmailResult(0, [], false);
+            if (currentVersion.Status != "Approved" &&
+                (quote.ProjectTasks.Count != options.Tasks.Count || options.Tasks.Any(item => !quote.ProjectTasks.Any(task =>
+                    task.Id == item.TaskId && task.ScopeOfWork == item.ScopeOfWork && task.Measurements == item.Measurements))))
+                return new EstimateMaterialEmailResult(0, [], false);
+            // Purchase lists contain the selected option only, using its captured costs.
+            lines = options.Tasks.OrderBy(task => task.SortOrder).SelectMany(task =>
+            {
+                var selected = task.Options.SingleOrDefault(option => option.Id == task.SelectedOptionId);
+                return (selected?.Materials ?? []).Select((material, index) => new MaterialEmailLine(
+                    new QuoteProjectTask { Id = task.TaskId, SortOrder = task.SortOrder, TaskType = $"{task.TaskType}: {selected!.Name}" },
+                    new QuoteTaskAnalysisMaterial
+                    {
+                        SortOrder = index + 1, Description = material.Description, Quantity = material.Quantity,
+                        Unit = material.Unit, UnitCost = material.UnitCost, WastePercent = material.WastePercent,
+                        VendorSku = material.VendorSku
+                    }, material.VendorName));
+            }).ToList();
+        }
         var materialSignature = MaterialSignature(lines);
         if (string.Equals(quote.LastMaterialEmailSignature, materialSignature, StringComparison.Ordinal))
             return new EstimateMaterialEmailResult(0, [], false);

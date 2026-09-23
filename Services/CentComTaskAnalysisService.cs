@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
-public sealed class CentComTaskAnalysisService(
+public sealed partial class CentComTaskAnalysisService(
     IDbContextFactory<ApplicationDbContext> dbFactory,
     CentComChatClient centCom,
     HomeDepotCatalogLookupService homeDepot,
@@ -31,14 +31,30 @@ public sealed class CentComTaskAnalysisService(
                 .ThenInclude(task => task.QuoteCase)
             .SingleOrDefaultAsync(item => item.Id == jobId, cancellationToken);
         if (job?.QuoteProjectTask is null) return;
+        if (job.EstimateOptionId is not null)
+        {
+            var claimed = await db.QuoteProcessingJobs.Where(item => item.Id == jobId && item.Status == "Queued")
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "Processing"), cancellationToken);
+            if (claimed == 0) return;
+            job.Status = "Processing";
+        }
 
         var analysis = await db.QuoteTaskAnalyses
             .Include(item => item.Materials)
             .Include(item => item.Exclusions)
             .Include(item => item.ReviewItems)
-            .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId)
+            .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId && item.EstimateOptionId == job.EstimateOptionId
+                && (job.QuoteTaskAnalysisId == null || item.Id == job.QuoteTaskAnalysisId))
             .OrderByDescending(item => item.RevisionNumber)
             .FirstOrDefaultAsync(cancellationToken);
+        if ((analysis is null && job.QuoteTaskAnalysisId is not null)
+            || (analysis is not null && analysis.Status is not QuoteTaskAnalysisStatuses.Queued and not QuoteTaskAnalysisStatuses.Processing))
+        {
+            job.Status = "Failed";
+            job.Message = "The reserved analysis is missing or already reviewed. Submit a new calculation.";
+            await db.SaveChangesAsync(cancellationToken);
+            return;
+        }
         if (analysis is null)
         {
             var revision = (await db.QuoteTaskAnalyses
@@ -48,6 +64,7 @@ public sealed class CentComTaskAnalysisService(
             analysis = new QuoteTaskAnalysis
             {
                 QuoteProjectTaskId = job.QuoteProjectTask.Id,
+                EstimateOptionId = job.EstimateOptionId,
                 RevisionNumber = revision,
                 Status = QuoteTaskAnalysisStatuses.Processing
             };
@@ -61,12 +78,13 @@ public sealed class CentComTaskAnalysisService(
         var priorAnalysis = await db.QuoteTaskAnalyses.AsNoTracking()
             .Include(item => item.Materials)
             .Include(item => item.ReviewItems)
-            .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId && item.RevisionNumber < analysis.RevisionNumber)
+            .Where(item => item.QuoteProjectTaskId == job.QuoteProjectTaskId && item.EstimateOptionId == job.EstimateOptionId && item.RevisionNumber < analysis.RevisionNumber)
             .OrderByDescending(item => item.RevisionNumber)
             .FirstOrDefaultAsync(cancellationToken);
         var resolvedReviewHistory = await db.QuoteTaskAnalysisReviewItems.AsNoTracking()
             .Include(item => item.QuoteTaskAnalysis)
             .Where(item => item.QuoteTaskAnalysis.QuoteProjectTaskId == job.QuoteProjectTaskId
+                && item.QuoteTaskAnalysis.EstimateOptionId == job.EstimateOptionId
                 && item.QuoteTaskAnalysis.RevisionNumber < analysis.RevisionNumber
                 && item.Status != AnalysisReviewStatuses.NeedsReview
                 && item.Status != AnalysisReviewStatuses.FieldVerification)
@@ -77,6 +95,7 @@ public sealed class CentComTaskAnalysisService(
         job.Status = "Processing";
         job.Message = "CentCom is generating a material plan.";
         analysis.Status = QuoteTaskAnalysisStatuses.Processing;
+        job.QuoteProjectTask.QuoteCase.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
 
         try
@@ -87,6 +106,38 @@ public sealed class CentComTaskAnalysisService(
                     "CentCom is not configured. Set CentCom__BaseUrl and CentCom__Model.");
             }
 
+            EstimateOption? offeredOption = null;
+            var taskContext = new QuoteProjectTask
+            {
+                Id = job.QuoteProjectTask.Id, TaskType = job.QuoteProjectTask.TaskType,
+                WorkType = job.QuoteProjectTask.WorkType, QuoteCase = job.QuoteProjectTask.QuoteCase,
+                ScopeOfWork = job.QuoteProjectTask.ScopeOfWork,
+                Measurements = job.QuoteProjectTask.Measurements
+            };
+            if (job.EstimateOptionId is not null)
+            {
+                var currentVersion = await db.QuoteVersions.AsNoTracking()
+                    .Where(version => version.QuoteCaseId == job.QuoteCaseId)
+                    .OrderByDescending(version => version.VersionNumber).FirstOrDefaultAsync(cancellationToken);
+                if (currentVersion?.Status != "Draft" || currentVersion.OptionsJson is null)
+                    throw new InvalidOperationException("The estimate version is locked or no longer offers this option.");
+                var offered = EstimateOptions.Read(currentVersion.OptionsJson).Tasks
+                    .SingleOrDefault(task => task.TaskId == job.QuoteProjectTaskId)?.Options
+                    .SingleOrDefault(option => option.Id == job.EstimateOptionId)
+                    ?? throw new InvalidOperationException("This option was removed or superseded.");
+                offeredOption = offered;
+                taskContext.WorkType = offered.HasPlanningInputs ? offered.WorkType : offered.WorkType ?? taskContext.WorkType;
+                var inputSignature = EstimateOptions.AnalysisSignature(taskContext, offered);
+                if (analysis.InputSignature is not null && analysis.InputSignature != inputSignature)
+                    throw new InvalidOperationException("This option or its measurements changed after submission. Submit a new calculation.");
+                analysis.InputSignature = inputSignature;
+                taskContext.EstimatedDays = offered.EstimatedDays ?? 1;
+                taskContext.CrewSizeOverride = offered.CrewSize;
+                taskContext.DailyCrewCostOverride = offered.DailyCrewCost;
+                taskContext.ScopeOfWork += $"\nOPTION: {offered.Name}\n{offered.Description}\nAnalyze only this option; do not combine alternative materials.";
+                taskContext.ScopeOfWork += $"\nOPTION PLAN: {offered.EstimatedDays?.ToString(CultureInfo.InvariantCulture) ?? "Unspecified"} workdays; crew {offered.CrewSize?.ToString(CultureInfo.InvariantCulture) ?? "Policy default"}. Labor is priced separately using this option's crew and duration.";
+            }
+            taskContext.ScopeOfWork += $"\nSHARED TASK MEASUREMENTS: {taskContext.Measurements}";
             var catalog = await LoadCatalogAsync(db, cancellationToken);
             var exclusionRules = await db.MaterialExclusionRules.AsNoTracking()
                 .Where(rule => rule.IsActive && (rule.TaskType == null || rule.TaskType == job.QuoteProjectTask.TaskType))
@@ -96,10 +147,15 @@ public sealed class CentComTaskAnalysisService(
                 .Where(rule => rule.IsActive && rule.TaskType == job.QuoteProjectTask.TaskType)
                 .OrderByDescending(rule => rule.CreatedAt)
                 .ToListAsync(cancellationToken);
+            if (offeredOption?.CopySource is not null)
+            {
+                reusableRules.Clear();
+                resolvedReviewHistory.Clear();
+            }
             var requestMessages = new CentComChatClient.RequestMessage[]
             {
-                new("system", BuildSystemPrompt()),
-                new("user", BuildTaskPrompt(job.QuoteProjectTask, resolvedReviewHistory, reusableRules))
+                new("system", BuildSystemPrompt() + (offeredOption?.CopySource is null ? "" : "\n" + CopiedOptionResponseInstructions)),
+                new("user", BuildTaskPrompt(taskContext, resolvedReviewHistory, reusableRules) + BuildCopiedOptionPrompt(offeredOption))
             };
             var response = await centCom.CompleteJsonAsync(requestMessages, cancellationToken);
             AnalysisResponse result;
@@ -126,15 +182,17 @@ public sealed class CentComTaskAnalysisService(
                 }
                 catch (JsonException repairException)
                 {
+                    if (offeredOption?.CopySource is not null)
+                        throw new InvalidOperationException("CentCom could not return a complete copied-option material plan. Retry the option analysis.", repairException);
                     logger.LogWarning(
                         repairException,
                         "CentCom JSON repair was still malformed for job {JobId}; deriving a safe material plan from the saved task scope.",
                         jobId);
-                    result = BuildScopeFallback(job.QuoteProjectTask);
+                    result = BuildScopeFallback(taskContext);
                 }
             }
 
-            if (result.Materials.Count == 0)
+            if (offeredOption?.CopySource is null && result.Materials.Count == 0)
             {
                 logger.LogWarning(
                     "CentCom returned no materials for job {JobId}; requesting one complete material-plan repair.",
@@ -152,15 +210,19 @@ public sealed class CentComTaskAnalysisService(
                 result = ParseResponse(response);
             }
 
-            if (result.Materials.Count == 0)
+            if (offeredOption?.CopySource is null && result.Materials.Count == 0)
             {
                 logger.LogWarning(
                     "CentCom repair still returned no materials for job {JobId}; deriving safe search intents from the saved task scope.",
                     jobId);
-                result = BuildScopeFallback(job.QuoteProjectTask);
+                result = BuildScopeFallback(taskContext);
             }
 
-            NormalizeDeckMaterialPlan(job.QuoteProjectTask, result);
+            IReadOnlyList<EstimateOptionMaterial> retainedMaterials = [];
+            if (offeredOption?.CopySource is not null)
+                retainedMaterials = ReconcileCopiedMaterials(offeredOption, result);
+            else
+                NormalizeDeckMaterialPlan(taskContext, result);
 
             db.QuoteTaskAnalysisMaterials.RemoveRange(analysis.Materials);
             db.QuoteTaskAnalysisExclusions.RemoveRange(analysis.Exclusions);
@@ -173,6 +235,20 @@ public sealed class CentComTaskAnalysisService(
             // and reject the batch on the unique analysis/item-key constraint.
             await db.SaveChangesAsync(cancellationToken);
             var sortOrder = 1;
+            foreach (var retained in retainedMaterials)
+            {
+                analysis.Materials.Add(new QuoteTaskAnalysisMaterial
+                {
+                    SortOrder = sortOrder++, VendorSku = retained.VendorSku,
+                    Description = retained.Description, OriginalDescription = retained.Description,
+                    Quantity = retained.Quantity, Unit = retained.Unit, UnitCost = retained.UnitCost,
+                    WastePercent = retained.WastePercent, SourceType = retained.VendorName,
+                    SourceReference = retained.IsPolicySupply ? "Copied option policy supply" : "Copied option material",
+                    MatchKind = MaterialMatchKinds.OneOff, ReviewDecision = MaterialReviewDecisions.Accepted,
+                    MatchConfidence = 1, IsUnmatched = false,
+                    Notes = "Retained unchanged from the copied source option."
+                });
+            }
             foreach (var proposed in result.Materials)
             {
                 var materialRule = FindReusableRule(reusableRules, CentComResolutionRuleKinds.Material, proposed.Description);
@@ -180,7 +256,7 @@ public sealed class CentComTaskAnalysisService(
                 {
                     continue;
                 }
-                var exclusion = exclusionRules.FirstOrDefault(rule =>
+                var exclusion = offeredOption?.CopySource is not null ? null : exclusionRules.FirstOrDefault(rule =>
                     proposed.Description.Contains(rule.MatchPhrase, StringComparison.OrdinalIgnoreCase));
                 if (exclusion is not null)
                 {
@@ -210,6 +286,9 @@ public sealed class CentComTaskAnalysisService(
                             Trim(proposed.Description, 160),
                             jobId);
                     }
+                    if (offeredOption?.CopySource is not null && remoteMatch is not null
+                        && !BrandCompatible(proposed.Description, remoteMatch.Title ?? "", null))
+                        remoteMatch = null;
                     if (remoteMatch?.MatchKind == HomeDepotMatchKinds.Exact)
                     {
                         match = await GetOrCreateHomeDepotCatalogItemAsync(db, remoteMatch, proposed.Unit, cancellationToken);
@@ -251,7 +330,7 @@ public sealed class CentComTaskAnalysisService(
                 });
             }
 
-            if (priorAnalysis is not null)
+            if (priorAnalysis is not null && offeredOption?.CopySource is null)
             {
                 foreach (var locked in priorAnalysis.Materials.Where(item => item.IsEstimatorLocked && !item.IsRemoved && item.VendorProductId is not null))
                 {
@@ -279,7 +358,7 @@ public sealed class CentComTaskAnalysisService(
                 .Where(item => FindReusableRule(reusableRules, CentComResolutionRuleKinds.Assumption, item.Body) is null)
                 .ToList();
             analysis.Assumptions = Trim(string.Join(Environment.NewLine, generatedAssumptionItems.Select(item => item.Body)), 4000);
-            var validationWarnings = ValidateDeckAnalysis(job.QuoteProjectTask, analysis.Materials, analysis.Exclusions);
+            var validationWarnings = ValidateDeckAnalysis(taskContext, analysis.Materials, analysis.Exclusions);
             var generatedReviewItems = ParseReviewItems(
                 string.Join(Environment.NewLine, result.Warnings
                     .Concat(validationWarnings)
@@ -329,6 +408,7 @@ public sealed class CentComTaskAnalysisService(
             analysis.TaxAllowance = Math.Max(0, result.TaxAllowance);
             analysis.OtherAllowance = Math.Max(0, result.OtherAllowance);
             analysis.CompletedAt = DateTimeOffset.UtcNow;
+            job.QuoteProjectTask.QuoteCase.UpdatedAt = DateTimeOffset.UtcNow;
             job.Status = "Completed";
             job.Message = $"{analysis.Materials.Count} material line(s) generated; {analysis.Exclusions.Count} suggestion(s) excluded by policy; administrator review required.";
             await db.SaveChangesAsync(cancellationToken);
@@ -338,6 +418,7 @@ public sealed class CentComTaskAnalysisService(
             logger.LogError(exception, "CentCom task analysis job {JobId} failed.", jobId);
             analysis.Status = QuoteTaskAnalysisStatuses.Failed;
             analysis.CompletedAt = DateTimeOffset.UtcNow;
+            job.QuoteProjectTask.QuoteCase.UpdatedAt = DateTimeOffset.UtcNow;
             analysis.QuestionsAndWarnings = Trim(exception.Message, 4000);
             job.Status = "Failed";
             job.Message = Trim(exception.Message, 500);
@@ -623,6 +704,8 @@ public sealed class CentComTaskAnalysisService(
         var result = JsonSerializer.Deserialize<AnalysisResponse>(json, JsonOptions)
             ?? throw new JsonException("CentCom returned an empty JSON response.");
         result.Materials ??= [];
+        result.SourceMaterialActions ??= [];
+        foreach (var material in result.Materials) material.ReplacesSourceLines ??= [];
         result.Assumptions ??= [];
         result.Warnings ??= [];
         return result;
@@ -786,7 +869,8 @@ public sealed class CentComTaskAnalysisService(
         if (!string.IsNullOrWhiteSpace(proposed.VendorSku))
         {
             var exactSkuMatches = catalog
-                .Where(item => item.Sku.Equals(proposed.VendorSku.Trim(), StringComparison.OrdinalIgnoreCase))
+                .Where(item => item.Sku.Equals(proposed.VendorSku.Trim(), StringComparison.OrdinalIgnoreCase)
+                    && BrandCompatible(proposed.Description, item.Description, item.ProductSystem))
                 .OrderByDescending(item => IsPreferredVendor(item.VendorName))
                 .ThenBy(item => item.UnitPrice)
                 .ToList();
@@ -974,6 +1058,11 @@ public sealed class CentComTaskAnalysisService(
 
     private static bool BrandCompatible(string requested, string candidate, string? productSystem)
     {
+        var candidateSystem = $"{candidate} {productSystem}";
+        if (ContainsAny(requested, "deckorator", "decorator"))
+            return ContainsAny(candidateSystem, "deckorator", "decorator");
+        if (ContainsAny(requested, "vinyl", "pvc"))
+            return ContainsAny(candidateSystem, "vinyl", "pvc");
         if (!requested.Contains("trex", StringComparison.OrdinalIgnoreCase)) return true;
         return candidate.Contains("trex", StringComparison.OrdinalIgnoreCase) ||
             (productSystem?.Contains("trex", StringComparison.OrdinalIgnoreCase) ?? false);
@@ -1003,6 +1092,7 @@ public sealed class CentComTaskAnalysisService(
 
     private sealed class AnalysisResponse
     {
+        public List<SourceMaterialAction> SourceMaterialActions { get; set; } = [];
         public List<string> Assumptions { get; set; } = [];
         public List<string> Warnings { get; set; } = [];
         public decimal DeliveryAllowance { get; set; }
@@ -1013,6 +1103,8 @@ public sealed class CentComTaskAnalysisService(
 
     private sealed class MaterialResponse
     {
+        public string? SubstitutionKey { get; set; }
+        public List<int> ReplacesSourceLines { get; set; } = [];
         public string? VendorSku { get; set; }
         public string Description { get; set; } = "";
         public decimal Quantity { get; set; }

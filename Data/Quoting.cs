@@ -143,6 +143,7 @@ public sealed class QuoteProjectTask
     [Required, StringLength(100)] public string TaskType { get; set; } = ProjectTaskTypes.All[0];
     [StringLength(60)] public string? WorkType { get; set; }
     [StringLength(4000)] public string ScopeOfWork { get; set; } = string.Empty;
+    [StringLength(4000)] public string Measurements { get; set; } = string.Empty;
     [Column(TypeName = "numeric(8,2)")] public decimal EstimatedDays { get; set; } = 1;
     [Column(TypeName = "numeric(8,2)")] public decimal? CrewSizeOverride { get; set; }
     [Column(TypeName = "numeric(18,2)")] public decimal? DailyCrewCostOverride { get; set; }
@@ -171,6 +172,8 @@ public static class QuoteTaskAnalysisStatuses
 public sealed class QuoteTaskAnalysis
 {
     public int Id { get; set; }
+    public Guid? EstimateOptionId { get; set; }
+    [StringLength(64)] public string? InputSignature { get; set; }
     public int QuoteProjectTaskId { get; set; }
     public QuoteProjectTask QuoteProjectTask { get; set; } = null!;
     public int RevisionNumber { get; set; } = 1;
@@ -343,9 +346,13 @@ public sealed class QuoteVersion
     [StringLength(450)] public string? ApprovedByUserId { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    // Null retains the original estimate workflow and its saved prices.
+    [Column(TypeName = "text"), ConcurrencyCheck] public string? OptionsJson { get; set; }
     public ICollection<QuoteLine> Lines { get; set; } = [];
     public ICollection<QuoteCostSnapshot> CostSnapshots { get; set; } = [];
-    [NotMapped] public decimal Subtotal => Lines.Sum(line => line.CustomerPrice);
+    [NotMapped] public decimal Subtotal => OptionsJson is null
+        ? Lines.Sum(line => line.CustomerPrice)
+        : EstimateOptions.Read(OptionsJson).CustomerPrice;
     [NotMapped] public decimal TaxAmount => decimal.Round(Math.Max(0, Subtotal - DiscountAmount) * TaxRate / 100m, 2);
     [NotMapped] public decimal Total => Math.Max(0, Subtotal - DiscountAmount) + TaxAmount;
 }
@@ -397,6 +404,8 @@ public sealed class QuoteAuditEvent
 public sealed class QuoteProcessingJob
 {
     public int Id { get; set; }
+    public Guid? EstimateOptionId { get; set; }
+    public int? QuoteTaskAnalysisId { get; set; }
     public int QuoteCaseId { get; set; }
     public QuoteCase QuoteCase { get; set; } = null!;
     public int? QuoteProjectTaskId { get; set; }

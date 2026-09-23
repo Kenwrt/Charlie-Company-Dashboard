@@ -49,7 +49,9 @@ public sealed class EstimateAdminAuditEmailService(
 
         var version = quote.Versions.OrderByDescending(item => item.VersionNumber).FirstOrDefault();
         var snapshot = version?.CostSnapshots.OrderByDescending(item => item.RevisionNumber).FirstOrDefault();
-        if (version is null || snapshot is null)
+        if (version is null || (snapshot is null && version.OptionsJson is null))
+            return new EstimateAdminAuditEmailResult(0, false, []);
+        if (version.OptionsJson is not null && version.Status != "Approved")
             return new EstimateAdminAuditEmailResult(0, false, []);
 
         var administrators = await userManager.GetUsersInRoleAsync(ApplicationRoles.Administrator);
@@ -66,8 +68,8 @@ public sealed class EstimateAdminAuditEmailService(
 
         var estimateNumber = quote.HousecallProEstimateNumber ?? quote.HousecallProQuoteId ?? $"CCV-E-{quote.Id:D6}";
         var subject = $"Estimate #: {estimateNumber} administrative audit and costing report";
-        var html = BuildHtml(quote, version, snapshot, estimateNumber);
-        var text = BuildText(quote, version, snapshot, estimateNumber);
+        var html = version.OptionsJson is null ? BuildHtml(quote, version, snapshot!, estimateNumber) : BuildOptionsHtml(version, estimateNumber);
+        var text = version.OptionsJson is null ? BuildText(quote, version, snapshot!, estimateNumber) : BuildOptionsText(version, estimateNumber);
         foreach (var recipient in recipients)
         {
             await SendEmailAsync(recipient, subject, html, text, cancellationToken);
@@ -102,6 +104,36 @@ public sealed class EstimateAdminAuditEmailService(
         if (!string.IsNullOrWhiteSpace(settings.Username)) client.Credentials = new NetworkCredential(settings.Username, settings.Password);
         await client.SendMailAsync(message, cancellationToken);
     }
+
+    private static string BuildOptionsText(QuoteVersion version, string estimateNumber)
+    {
+        var options = EstimateOptions.Read(version.OptionsJson!);
+        var text = new StringBuilder().AppendLine($"Estimate {estimateNumber}, version {version.VersionNumber}: {version.Status}")
+            .AppendLine($"Selected internal cost: {options.InternalCost:C2}; market value: {options.MarketValue:C2}")
+            .AppendLine($"Selected price: {version.Subtotal:C2}; discount: {version.DiscountAmount:C2}; tax: {version.TaxAmount:C2}; total: {version.Total:C2}");
+        foreach (var task in options.Tasks.OrderBy(task => task.SortOrder))
+        {
+            text.AppendLine($"Task {task.SortOrder}: {task.TaskType}; required: {task.IsRequired}")
+                .AppendLine($"Measurements: {task.Measurements}").AppendLine(task.ScopeOfWork);
+            foreach (var option in task.Options)
+            {
+                text.AppendLine($"{(option.Id == task.SelectedOptionId ? "SELECTED" : "Alternative")}: {option.Name}")
+                    .AppendLine(option.Description)
+                    .AppendLine(option.CopySource is null ? "" : $"Copied from {option.CopySource.Name}, option {option.CopySource.OptionId}, at {option.CopySource.CopiedAt:O}")
+                    .AppendLine(string.Join("; ", option.Substitutions.Select(EstimateOptionSubstitutions.Label)))
+                    .AppendLine($"Work type: {option.WorkType ?? "General"}; crew: {option.CrewSize:N2}; workdays: {option.EstimatedDays:N2}; daily cost per crew member: {option.DailyCostPerCrewMember:C2}; target margin: {option.TargetMarginPercent:N2}%")
+                    .AppendLine($"Baseline cost: {option.BaselineCost:C2}; option price including tax before estimate discount: {option.PriceIncludingTax(version.TaxRate):C2}")
+                    .AppendLine($"Materials {option.MaterialCost:C2}; labor {option.LaborCost:C2}; other internal costs {option.OtherInternalCost:C2}; total cost {option.InternalCost:C2}; market value {option.MarketValue:C2}; customer price {option.CustomerPrice:C2}")
+                    .AppendLine(option.CostBasis);
+                foreach (var material in option.Materials)
+                    text.AppendLine($"  {material.VendorName}: {material.Description}, {material.Quantity:N2} {material.Unit}, {material.ExtendedCost:C2}");
+            }
+        }
+        return text.ToString();
+    }
+
+    private static string BuildOptionsHtml(QuoteVersion version, string estimateNumber) =>
+        $"<!doctype html><html><body><h1>Task options and accepted pricing</h1><pre style=\"white-space:pre-wrap;font-family:Arial,sans-serif\">{H(BuildOptionsText(version, estimateNumber))}</pre></body></html>";
 
     private static string BuildHtml(QuoteCase quote, QuoteVersion version, QuoteCostSnapshot snapshot, string estimateNumber)
     {

@@ -263,7 +263,7 @@
                 : input.WorkDescription.Trim(),
             AssignedUserId = user.FindFirstValue(ClaimTypes.NameIdentifier)
         };
-        quote.Versions.Add(new QuoteVersion());
+        quote.Versions.Add(new QuoteVersion { OptionsJson = new EstimateOptions().Write() });
         quote.AuditEvents.Add(new QuoteAuditEvent
         {
             PreviousStatus = "",

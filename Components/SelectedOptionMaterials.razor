@@ -1,0 +1,53 @@
+@using CharleyCompany.Dashboard.Web.Data
+
+@if (Version.OptionsJson is not null)
+{
+    var saved = EstimateOptions.Read(Version.OptionsJson);
+    <section class="border rounded p-3 my-3">
+        <h3>Chosen option material lists</h3>
+        <p>Materials below come from the saved chosen option for each task. Alternative options are excluded.</p>
+        @if (!saved.IsComplete)
+        {
+            <p class="text-warning">Selections are incomplete. These are the materials for the choices recorded so far.</p>
+        }
+        @foreach (var task in saved.Tasks.OrderBy(item => item.SortOrder))
+        {
+            var selected = task.Options.SingleOrDefault(item => item.Id == task.SelectedOptionId);
+            if (selected is null) { continue; }
+            <h4>Task @task.SortOrder: @task.TaskType / @selected.Name</h4>
+            @if (selected.Materials.Count == 0)
+            {
+                <p>No materials recorded for this option.</p>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead><tr><th>Vendor</th><th>SKU</th><th>Material</th><th>Quantity</th><th>Waste %</th><th>Quantity with waste</th><th>Unit cost</th><th>Extended cost</th></tr></thead>
+                        <tbody>
+                            @foreach (var material in selected.Materials)
+                            {
+                                <tr>
+                                    <td>@material.VendorName</td>
+                                    <td>@material.VendorSku</td>
+                                    <td>@material.Description</td>
+                                    <td>@material.Quantity.ToString("N2") @material.Unit</td>
+                                    <td>@material.WastePercent.ToString("N2")</td>
+                                    <td>@((material.Quantity * (1 + material.WastePercent / 100m)).ToString("N2")) @material.Unit</td>
+                                    <td>@material.UnitCost.ToString("C2")</td>
+                                    <td>@material.ExtendedCost.ToString("C2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <p><strong>Chosen option materials: @selected.MaterialCost.ToString("C2")</strong></p>
+        }
+        <p><strong>Total materials for saved choices: @saved.Selected.Sum(option => option.MaterialCost).ToString("C2")</strong></p>
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public QuoteVersion Version { get; set; } = null!;
+}

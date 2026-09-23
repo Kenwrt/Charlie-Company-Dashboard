@@ -16,13 +16,15 @@
 @inject IEmailSender<ApplicationUser> EmailSender
 @inject NavigationManager NavigationManager
 @inject IJSRuntime JS
+@inject IServiceScopeFactory ScopeFactory
+@inject ILogger<Operators> Logger
 
 <PageTitle>User Administration</PageTitle>
 <h1>User administration</h1>
 <p>Create administrator or local operator accounts with a temporary password that must be changed at first login.</p>
 @if (!string.IsNullOrWhiteSpace(message)) { <div class="alert @messageClass" role="status">@message</div> }
 
-<section><h2>Create user</h2><EditForm Model="createInput" OnValidSubmit="CreateAsync" FormName="create-user" class="row g-3"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
+<fieldset disabled="@isSaving" class="border-0 p-0"><section><h2>Create user</h2><EditForm Model="createInput" OnValidSubmit="CreateAsync" FormName="create-user" class="row g-3"><DataAnnotationsValidator /><ValidationSummary class="text-danger" />
  <div class="col-md-5"><label class="form-label">Email</label><InputText class="form-control" @bind-Value="createInput.Email" /></div>
  <div class="col-md-3"><label class="form-label">Temporary password</label><div class="input-group"><InputText type="@(showCreatePassword ? "text" : "password")" class="form-control" autocomplete="new-password" @bind-Value="createInput.TemporaryPassword" /><button type="button" class="btn btn-outline-secondary" @onclick="() => showCreatePassword = !showCreatePassword">@(showCreatePassword ? "Hide" : "Show")</button><button type="button" class="btn btn-outline-secondary" @onclick="GenerateCreatePassword">Generate</button></div><div class="form-text">At least 12 characters with uppercase, lowercase, a number, and a symbol.</div></div>
  <div class="col-md-2"><label class="form-label">Role</label><InputSelect class="form-select" @bind-Value="createInput.Role">@foreach (var role in ApplicationRoles.All) { <option value="@role">@role</option> }</InputSelect></div>
@@ -48,7 +50,10 @@
  </section>
 }
 
+</fieldset>
+
 @code {
+ private bool isSaving;
  private List<ApplicationUser> users = []; private List<LocalOperation> operations = []; private Dictionary<string, List<string>> assignments = []; private Dictionary<string, List<string>> roles = []; private readonly HashSet<int> selectedOperationIds = []; private ApplicationUser? selectedUser; private string selectedRole = ApplicationRoles.LocalOperator; private bool selectedAdminAuditEmail; private bool showCreatePassword; private bool showAssignedPassword; private string? assignedTemporaryPassword; private string? assignedTemporaryPasswordEmail; private CreateInput createInput = new(); private TemporaryPasswordInput temporaryPasswordInput = new(); private string? message; private string messageClass = "alert-info";
  protected override Task OnInitializedAsync() => ReloadAsync();
  private async Task ReloadAsync() { await using var db = await DbContextFactory.CreateDbContextAsync(); users = await db.Users.AsNoTracking().OrderBy(x => x.Email).ToListAsync(); operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); var memberships = await db.UserLocalOperations.AsNoTracking().Include(x => x.LocalOperation).ToListAsync(); assignments = memberships.GroupBy(x => x.UserId).ToDictionary(g => g.Key, g => g.Select(x => x.LocalOperation.Name).OrderBy(x => x).ToList()); var roleRows = await (from userRole in db.UserRoles join role in db.Roles on userRole.RoleId equals role.Id select new { userRole.UserId, role.Name }).ToListAsync(); roles = roleRows.GroupBy(x => x.UserId).ToDictionary(g => g.Key, g => g.Select(x => x.Name ?? "").Where(x => x.Length > 0).OrderBy(x => x).ToList()); }
@@ -56,8 +61,77 @@
  private string RoleNames(string id) => roles.TryGetValue(id, out var names) ? string.Join(", ", names) : "None";
  private static bool IsDisabled(ApplicationUser user) => user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow;
  private async Task CreateAsync() { var email = createInput.Email.Trim(); var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true, MustChangePassword = true, AdminAuditEmail = false }; var result = await UserManager.CreateAsync(user, createInput.TemporaryPassword); if (result.Succeeded) result = await UserManager.AddToRoleAsync(user, createInput.Role); if (!result.Succeeded) { ShowErrors(result); return; } createInput = new(); message = "User created. Give the temporary password to the user securely; it must be changed at first login."; messageClass = "alert-success"; await ReloadAsync(); }
- private async Task SelectUserAsync(ApplicationUser user) { ClearAssignedPassword(); selectedUser = user; selectedAdminAuditEmail = user.AdminAuditEmail; selectedOperationIds.Clear(); await using var db = await DbContextFactory.CreateDbContextAsync(); selectedRole = await (from userRole in db.UserRoles join role in db.Roles on userRole.RoleId equals role.Id where userRole.UserId == user.Id select role.Name).FirstOrDefaultAsync() ?? ApplicationRoles.LocalOperator; selectedOperationIds.UnionWith(await db.UserLocalOperations.Where(x => x.UserId == user.Id).Select(x => x.LocalOperationId).ToListAsync()); }
- private async Task SaveAsync() { if (selectedUser is null) return; var currentRoles = await UserManager.GetRolesAsync(selectedUser); var remove = await UserManager.RemoveFromRolesAsync(selectedUser, currentRoles); if (!remove.Succeeded) { ShowErrors(remove); return; } var add = await UserManager.AddToRoleAsync(selectedUser, selectedRole); if (!add.Succeeded) { ShowErrors(add); return; } await using (var db = await DbContextFactory.CreateDbContextAsync()) { var databaseUser = await db.Users.SingleAsync(x => x.Id == selectedUser.Id); databaseUser.AdminAuditEmail = selectedRole == ApplicationRoles.Administrator && selectedAdminAuditEmail; var existing = await db.UserLocalOperations.Where(x => x.UserId == selectedUser.Id).ToListAsync(); db.UserLocalOperations.RemoveRange(existing); if (selectedRole == ApplicationRoles.LocalOperator) db.UserLocalOperations.AddRange(selectedOperationIds.Select(id => new UserLocalOperation { UserId = selectedUser.Id, LocalOperationId = id })); await db.SaveChangesAsync(); } message = "User updated."; messageClass = "alert-success"; selectedUser = null; await ReloadAsync(); }
+ private async Task SelectUserAsync(ApplicationUser user) { if (isSaving) return; ClearAssignedPassword(); selectedUser = user; selectedAdminAuditEmail = user.AdminAuditEmail; selectedOperationIds.Clear(); await using var db = await DbContextFactory.CreateDbContextAsync(); selectedRole = await (from userRole in db.UserRoles join role in db.Roles on userRole.RoleId equals role.Id where userRole.UserId == user.Id select role.Name).FirstOrDefaultAsync() ?? ApplicationRoles.LocalOperator; selectedOperationIds.UnionWith(await db.UserLocalOperations.Where(x => x.UserId == user.Id).Select(x => x.LocalOperationId).ToListAsync()); }
+ private async Task SaveAsync()
+ {
+     if (selectedUser is null || isSaving) return;
+     var userId = selectedUser.Id;
+     var role = selectedRole;
+     var auditEmail = selectedAdminAuditEmail;
+     var operationIds = selectedOperationIds.ToHashSet();
+     if (!ApplicationRoles.All.Contains(role))
+     {
+         message = "Select a valid role.";
+         messageClass = "alert-danger";
+         return;
+     }
+     isSaving = true;
+     var saved = false;
+     try
+     {
+         // Identity and assignments share a fresh context and transaction for this save.
+         await using var scope = ScopeFactory.CreateAsyncScope();
+         var manager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+         await using var transaction = await db.Database.BeginTransactionAsync();
+         var user = await manager.FindByIdAsync(userId);
+         if (user is null)
+         {
+             message = "The selected user no longer exists. Reload the page to refresh the user list.";
+             messageClass = "alert-warning";
+             return;
+         }
+         var currentRoles = await manager.GetRolesAsync(user);
+         var removedRoles = currentRoles.Where(value => value != role).ToArray();
+         if (removedRoles.Length > 0)
+         {
+             var remove = await manager.RemoveFromRolesAsync(user, removedRoles);
+             if (!remove.Succeeded) { ShowErrors(remove); return; }
+         }
+         if (!currentRoles.Contains(role))
+         {
+             var add = await manager.AddToRoleAsync(user, role);
+             if (!add.Succeeded) { ShowErrors(add); return; }
+         }
+         user.AdminAuditEmail = role == ApplicationRoles.Administrator && auditEmail;
+         var update = await manager.UpdateAsync(user);
+         if (!update.Succeeded) { ShowErrors(update); return; }
+         if (role != ApplicationRoles.LocalOperator) operationIds.Clear();
+         var existing = await db.UserLocalOperations.Where(x => x.UserId == userId).ToListAsync();
+         db.UserLocalOperations.RemoveRange(existing.Where(x => !operationIds.Contains(x.LocalOperationId)));
+         var existingIds = existing.Select(x => x.LocalOperationId).ToHashSet();
+         db.UserLocalOperations.AddRange(operationIds.Where(id => !existingIds.Contains(id))
+             .Select(id => new UserLocalOperation { UserId = userId, LocalOperationId = id }));
+         await db.SaveChangesAsync();
+         await transaction.CommitAsync();
+         saved = true;
+         selectedUser = null;
+         ClearAssignedPassword();
+         message = "User updated.";
+         messageClass = "alert-success";
+         await ReloadAsync();
+     }
+     catch (Exception exception)
+     {
+         Logger.LogError("User administration save failed. Saved: {Saved}; error type: {ErrorType}",
+             saved, exception.GetType().Name);
+         message = saved
+             ? "The user was saved, but the list could not be refreshed. Reload the page to see the changes."
+             : "The user could not be saved. No changes from this save were applied. Please try again.";
+         messageClass = "alert-danger";
+     }
+     finally { isSaving = false; }
+ }
  private Task SendPasswordLinkAsync() => selectedUser is null ? Task.CompletedTask : SendPasswordLinkAsync(selectedUser, "Password reset email sent.");
  private async Task AssignTemporaryPasswordAsync()
  {

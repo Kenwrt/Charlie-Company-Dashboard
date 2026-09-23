@@ -133,6 +133,7 @@ try
     builder.Services.AddHttpClient<CentComChatClient>();
     builder.Services.AddScoped<CentComTaskAnalysisService>();
     builder.Services.AddScoped<EstimateMaterialEmailService>();
+    builder.Services.AddScoped<EstimateOptionsService>();
     builder.Services.AddScoped<EstimateAdminAuditEmailService>();
     builder.Services.AddHostedService<CentComTaskAnalysisWorker>();
     builder.Services.AddScoped<IDashboardDataSource>(services => services.GetRequiredService<HousecallProDashboardDataSource>());

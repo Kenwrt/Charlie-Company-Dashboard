@@ -1,0 +1,307 @@
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject EstimateOptionsService OptionsService
+
+<section class="activity-panel">
+    <h2>Task options</h2>
+    <p>Measurements and scope belong to the task. Each option has its own work type, crew, completion days, materials, baseline costs, market value, and customer price. Save options before requesting their CentCom analysis.</p>
+    @if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+    @if (loaded is not null && options is not null)
+    {
+        <fieldset disabled="@(busy || loaded.Status != "Draft")">
+            <button type="button" class="btn btn-outline-primary mb-3" @onclick="() => QueueAsync(null)">Save and calculate all options with CentCom</button>
+            @foreach (var task in options.Tasks.OrderBy(task => task.SortOrder))
+            {
+                <section class="border rounded p-3 my-3" @key="task.TaskId">
+                    <h3>Task @task.SortOrder: @task.TaskType</h3>
+                    <p class="text-break">@task.ScopeOfWork</p>
+                    <p><strong>Shared measurements:</strong> @(string.IsNullOrWhiteSpace(task.Measurements) ? "Enter measurements in the task above." : task.Measurements)</p>
+                    <label class="form-check mb-3"><InputCheckbox class="form-check-input" @bind-Value="task.IsRequired" /> Required task</label>
+                    <div class="row g-2 align-items-end mb-3">
+                        <label class="col-md-8">Copy from an existing option
+                            <select class="form-select" value="@CopySourceId(task)" @onchange="args => ChooseCopySource(task.TaskId, args.Value?.ToString())">
+                                @foreach (var source in task.Options)
+                                {
+                                    <option value="@source.Id" disabled="@(!CanCopy(source))">Option @(task.Options.IndexOf(source) + 1): @source.Name @(!CanCopy(source) ? "(complete estimation first)" : "")</option>
+                                }
+                            </select>
+                        </label>
+                        <div class="col-md-4"><button type="button" class="btn btn-outline-primary" disabled="@(CopySourceId(task) is null)"
+                            @onclick="() => CopyFromAsync(task, CopySourceId(task))">Copy into option @(task.Options.Count + 1)</button></div>
+                    </div>
+                    @foreach (var option in task.Options)
+                    {
+                        <details class="border rounded p-3 mb-3" open @key="option.Id">
+                            <summary><strong>@option.Name</strong> · @option.CustomerPrice.ToString("C2") · @(option.IsReady ? "Ready for homeowner" : "Pricing in progress")</summary>
+                            @if (option.CopySource is not null)
+                            {
+                                <div class="border rounded p-3 my-3">
+                                    <p><strong>Copied from @option.CopySource.Name</strong>. Materials, crew, duration, costs, and prices start from that option's saved estimate. The source is unchanged.</p>
+                                    <p>Select replacements for this new option:</p>
+                                    @foreach (var substitution in EstimateOptionSubstitutions.All)
+                                    {
+                                        var available = EstimateOptionSubstitutions.CanApply(option.CopySource, substitution.Key);
+                                        <label class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" checked="@option.Substitutions.Contains(substitution.Key)"
+                                                   disabled="@(!available)" @onchange="args => ToggleSubstitution(option, substitution.Key, args.Value is true)" />
+                                            @substitution.Label
+                                            @if (!available) { <small class="text-muted"> (source list does not identify this wood material)</small> }
+                                        </label>
+                                    }
+                                    <small class="text-muted">Select one decking replacement at most. Vinyl railing can be combined with either decking choice. CentCom reviews the full copied list, retains unaffected items, and removes replaced materials before adding compatible replacements.</small>
+                                    @if (option.SourceAnalysisId is null)
+                                    {
+                                        <p class="text-warning mt-2 mb-0">The displayed materials and prices are copied starting values. Run and review this option's CentCom analysis before presenting it.</p>
+                                    }
+                                </div>
+                            }
+                            <p class="mt-2">CentCom: <strong>@AnalysisStatus(task.TaskId, option.Id)</strong></p>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm"
+                                        disabled="@(AnalysisStatus(task.TaskId, option.Id) is QuoteTaskAnalysisStatuses.Queued or QuoteTaskAnalysisStatuses.Processing)"
+                                        @onclick="() => QueueAsync(option.Id)">Save and calculate this option with CentCom</button>
+                                <a href="@($"#task-{task.TaskId}")" @onclick="() => ReviewRequested.InvokeAsync((task.TaskId, option.Id))">Review this option's CentCom material list</a>
+                            </div>
+                            <div class="row g-3 mt-1">
+                                <label class="col-md-4">Option name<InputText class="form-control" maxlength="160" @bind-Value="option.Name" /></label>
+                                <label class="col-md-8">Materials and work included<InputTextArea class="form-control" maxlength="4000" @bind-Value="option.Description" /></label>
+                            </div>
+                            <div class="row g-3 mt-1">
+                                <label class="col-md-4">Option work type
+                                    <InputSelect class="form-select" @bind-Value="option.WorkType" @bind-Value:after="() => PlanningChanged(option)">
+                                        <option value="">General policy</option>
+                                        @foreach (var workType in ProjectWorkTypes.All) { <option value="@workType">@workType</option> }
+                                    </InputSelect>
+                                </label>
+                                <label class="col-md-4">Days to completion (workdays)<InputNumber class="form-control" min="0" step="0.5" @bind-Value="option.EstimatedDays" @bind-Value:after="() => PlanningChanged(option)" /></label>
+                                <label class="col-md-4">Crew size<InputNumber class="form-control" min="0.01" step="0.5" @bind-Value="option.CrewSize" @bind-Value:after="() => PlanningChanged(option)" /></label>
+                                <label class="col-md-4">Labor cost per crew member per day<InputNumber class="form-control" min="0" step="0.01" @bind-Value="option.DailyCostPerCrewMember" @bind-Value:after="() => PlanningChanged(option)" /></label>
+                                <label class="col-md-4">Additional baseline costs<InputNumber class="form-control" min="0" step="0.01" @bind-Value="option.AdditionalBaselineCost" @bind-Value:after="() => PlanningChanged(option)" /></label>
+                                <label class="col-md-4">Target gross margin %<InputNumber class="form-control" min="0" max="99.99" step="0.1" @bind-Value="option.TargetMarginPercent" @bind-Value:after="() => PlanningChanged(option)" /></label>
+                            </div>
+                            <p class="text-muted mt-2">Leave crew, labor rate, or margin blank to use the costing policy when calculating. Labor is crew size x workdays x cost per person per day. Additional baseline costs cover fees, delivery, equipment, and other direct costs.</p>
+                            <div class="table-responsive mt-3">
+                                <table class="table table-sm">
+                                    <thead><tr><th>Material</th><th>Vendor</th><th>Quantity</th><th>Unit</th><th>Unit cost</th><th>Waste %</th><th>Cost</th><th></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var material in option.Materials)
+                                        {
+                                            <tr @key="material">
+                                                <td><InputText aria-label="Material description" class="form-control" @bind-Value="material.Description" /></td>
+                                                <td><InputText aria-label="Vendor" class="form-control" @bind-Value="material.VendorName" /></td>
+                                                <td><InputNumber aria-label="Quantity" class="form-control" min="0.0001" step="0.01" @bind-Value="material.Quantity" /></td>
+                                                <td><InputText aria-label="Unit" class="form-control" @bind-Value="material.Unit" /></td>
+                                                <td><InputNumber aria-label="Unit cost" class="form-control" min="0" step="0.01" @bind-Value="material.UnitCost" /></td>
+                                                <td><InputNumber aria-label="Waste percent" class="form-control" min="0" max="100" step="0.1" @bind-Value="material.WastePercent" /></td>
+                                                <td>@material.ExtendedCost.ToString("C2")</td>
+                                                <td><button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => option.Materials.Remove(material)">Remove</button></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => option.Materials.Add(new EstimateOptionMaterial())">Add material</button>
+                            <div class="row g-3 mt-1">
+                                <div class="col-md-3">Calculated labor cost<strong class="d-block">@option.LaborCost.ToString("C2")</strong></div>
+                                <div class="col-md-3">Other internal costs<strong class="d-block">@option.OtherInternalCost.ToString("C2")</strong><small>Additional baseline costs, overhead, and contingency</small></div>
+                                <label class="col-md-3">Market value<InputNumber class="form-control" min="0" step="0.01" @bind-Value="option.MarketValue" /></label>
+                                <label class="col-md-3">Customer price<InputNumber class="form-control" min="0" step="0.01" @bind-Value="option.CustomerPrice" /></label>
+                            </div>
+                            <p class="mt-3">Baseline cost (materials, labor, and direct costs): <strong>@option.BaselineCost.ToString("C2")</strong></p>
+                            <p>Internal cost: <strong>@option.InternalCost.ToString("C2")</strong>. Gross profit before job discount: @((option.CustomerPrice - option.InternalCost).ToString("C2")).</p>
+                            <p><strong>Option customer total including tax: @option.PriceIncludingTax(taxRate).ToString("C2")</strong></p>
+                            <small class="text-muted">Includes @taxRate.ToString("N2")% tax. The whole-estimate discount is applied once after the homeowner selections, with tax recalculated on the discounted subtotal.</small>
+                            @if (option.HasPlanningInputs && !option.IsCalculationCurrent)
+                            {
+                                <p class="text-warning">Calculate this option after changing its planning or baseline costs. Displayed prices retain the previous calculation until then.</p>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(option.CostBasis)) { <small class="d-block text-muted">@option.CostBasis</small> }
+                            <label class="form-check my-3"><InputCheckbox class="form-check-input" @bind-Value="option.IsReady" /> Materials and pricing reviewed; ready to present</label>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button type="button" class="btn btn-primary btn-sm" @onclick="() => CalculateAsync(task, option)">Calculate option price</button>
+                                <button type="button" class="btn btn-outline-primary btn-sm" disabled="@(AnalysisStatus(task.TaskId, option.Id) != QuoteTaskAnalysisStatuses.Accepted)" @onclick="() => ImportAnalysisAsync(task, option)">Use this option’s accepted CentCom materials and costs</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" disabled="@(!CanCopy(option))" @onclick="() => CopyFromAsync(task, option.Id)">Copy as new option</button>
+                                <button type="button" class="btn btn-outline-danger btn-sm" disabled="@(task.Options.Count == 1)" @onclick="() => task.Options.Remove(option)">Remove option</button>
+                            </div>
+                        </details>
+                    }
+                    <button type="button" class="btn btn-outline-primary" @onclick="() => AddOption(task)">Add option</button>
+                </section>
+            }
+            @if (options.Tasks.Count == 0) { <p>Add a project task above to begin.</p> }
+            <div class="row g-3">
+                <label class="col-md-4">Tax rate %<InputNumber class="form-control" min="0" max="100" step="0.01" @bind-Value="taxRate" /></label>
+                <label class="col-md-4">Whole-estimate discount<InputNumber class="form-control" min="0" step="0.01" @bind-Value="discount" /></label>
+            </div>
+            <p class="text-muted mt-3">Changing a chosen option, task measurements, tax, or discount requires the homeowner choices to be reviewed again.</p>
+            <button type="button" class="btn btn-primary" @onclick="SaveAsync">Save task options and prices</button>
+        </fieldset>
+        <p class="mt-3"><button type="button" class="btn btn-outline-secondary me-2" disabled="@busy" @onclick="LoadAsync">Reload saved options</button><a class="btn btn-outline-primary" href="@($"/estimates/{loaded.QuoteCaseId}/versions/{loaded.Id}/options")">Present saved options to homeowner</a></p>
+        <SelectedOptionMaterials Version="loaded" />
+        <p>Selected internal cost: @options.InternalCost.ToString("C2") · Selected market value: @options.MarketValue.ToString("C2") · Selected customer price before discount and tax: @options.CustomerPrice.ToString("C2")</p>
+    }
+</section>
+
+@code {
+    [Parameter] public int VersionId { get; set; }
+    [Parameter] public DateTimeOffset RefreshStamp { get; set; }
+    [Parameter] public string? ProjectOverview { get; set; }
+    [Parameter] public EventCallback Saved { get; set; }
+    [Parameter] public EventCallback<(int TaskId, Guid OptionId)> ReviewRequested { get; set; }
+    private QuoteVersion? loaded;
+    private EstimateOptions? options;
+    private string? expectedJson;
+    private decimal taxRate;
+    private decimal discount;
+    private bool busy;
+    private string? message;
+    private DateTimeOffset lastStamp;
+    private int lastVersionId;
+    private string? baseline;
+    private readonly Dictionary<int, Guid> copySources = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loaded is not null && lastVersionId == VersionId && lastStamp == RefreshStamp) return;
+        if (lastVersionId == VersionId && options is not null && loaded is not null
+            && (System.Text.Json.JsonSerializer.Serialize(options) != baseline || taxRate != loaded.TaxRate || discount != loaded.DiscountAmount))
+        {
+            message = "Task details or saved options changed while you were editing. Your unsaved changes remain here; reload saved options before continuing.";
+            return;
+        }
+        lastVersionId = VersionId;
+        lastStamp = RefreshStamp;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loaded = await OptionsService.LoadAsync(VersionId);
+        expectedJson = loaded.OptionsJson;
+        options = EstimateOptionsService.ForEditing(loaded);
+        taxRate = loaded.TaxRate;
+        discount = loaded.DiscountAmount;
+        baseline = System.Text.Json.JsonSerializer.Serialize(options);
+        lastVersionId = VersionId;
+        lastStamp = RefreshStamp;
+    }
+
+    public async Task SaveAsync()
+    {
+        if (busy || options is null || expectedJson is null || loaded?.Status != "Draft") return;
+        busy = true;
+        try
+        {
+            await OptionsService.SaveAsync(VersionId, expectedJson, options, taxRate, discount, ProjectOverview);
+            message = "Options and prices saved.";
+            await LoadAsync();
+            await Saved.InvokeAsync();
+        }
+        catch (DbUpdateConcurrencyException) { message = "The estimate changed in another session. Reload before saving again."; }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        finally { busy = false; }
+    }
+
+    private static void AddOption(EstimateTaskOptions task) => task.Options.Add(new EstimateOption { RequiresCentComAnalysis = true, Name = $"Option {task.Options.Count + 1}", EstimatedDays = 1 });
+    private static bool CanCopy(EstimateOption option) => option.Materials.Count > 0
+        && (option.IsReady || option.SourceAnalysisId is not null && option.IsCalculationCurrent);
+
+    private Guid? CopySourceId(EstimateTaskOptions task) =>
+        copySources.TryGetValue(task.TaskId, out var id) && task.Options.Any(option => option.Id == id && CanCopy(option))
+            ? id : task.Options.FirstOrDefault(CanCopy)?.Id;
+
+    private void ChooseCopySource(int taskId, string? value)
+    {
+        if (Guid.TryParse(value, out var id)) copySources[taskId] = id;
+    }
+
+    private static void ToggleSubstitution(EstimateOption option, string key, bool enabled)
+    {
+        option.Substitutions.Remove(key);
+        if (enabled && EstimateOptionSubstitutions.CanApply(option.CopySource, key))
+        {
+            if (key is EstimateOptionSubstitutions.Trex or EstimateOptionSubstitutions.Deckorators)
+                option.Substitutions.RemoveAll(item => item is EstimateOptionSubstitutions.Trex or EstimateOptionSubstitutions.Deckorators);
+            option.Substitutions.Add(key);
+        }
+        option.IsReady = false;
+        option.RequiresCentComAnalysis = true;
+        option.SourceAnalysisId = null;
+        option.PricingInputsSignature = null;
+    }
+
+    private async Task CopyFromAsync(EstimateTaskOptions task, Guid? sourceId)
+    {
+        if (busy || expectedJson is null || options is null || sourceId is null || loaded?.Status != "Draft") return;
+        busy = true;
+        try
+        {
+            await OptionsService.SaveAsync(VersionId, expectedJson, options, taxRate, discount, ProjectOverview);
+            await LoadAsync();
+            await OptionsService.CopyOptionAsync(VersionId, expectedJson!, task.TaskId, sourceId.Value);
+            await LoadAsync();
+            message = "A new option was copied with its own materials, planning, and prices. Select substitutions, then calculate this option with CentCom.";
+            await Saved.InvokeAsync();
+        }
+        catch (DbUpdateConcurrencyException) { message = "The estimate changed. Reload before copying an option."; }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        finally { busy = false; }
+    }
+
+    private string AnalysisStatus(int taskId, Guid optionId) =>
+        loaded?.QuoteCase.ProjectTasks.SingleOrDefault(task => task.Id == taskId)?.Analyses
+            .Where(analysis => analysis.EstimateOptionId == optionId).OrderByDescending(analysis => analysis.RevisionNumber)
+            .FirstOrDefault()?.Status ?? QuoteTaskAnalysisStatuses.NotSubmitted;
+
+    private async Task QueueAsync(Guid? optionId)
+    {
+        if (busy || expectedJson is null || options is null || loaded?.Status != "Draft") return;
+        busy = true;
+        try
+        {
+            foreach (var option in options.Tasks.SelectMany(task => task.Options).Where(item => optionId is null || item.Id == optionId))
+                option.IsReady = false;
+            await OptionsService.SaveAsync(VersionId, expectedJson, options, taxRate, discount, ProjectOverview);
+            await LoadAsync();
+            var count = await OptionsService.QueueAnalysesAsync(VersionId, expectedJson!, optionId);
+            await LoadAsync();
+            message = count == 0 ? "These options already have CentCom calculations queued or processing."
+                : $"{count} option calculation(s) queued. Review and accept each option's material analysis, then use its accepted materials and costs.";
+            await Saved.InvokeAsync();
+        }
+        catch (DbUpdateConcurrencyException) { message = "The estimate changed. Reload before requesting CentCom calculations."; }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        finally { busy = false; }
+    }
+
+    private static void PlanningChanged(EstimateOption option) => option.IsReady = false;
+
+    private async Task CalculateAsync(EstimateTaskOptions task, EstimateOption option)
+    {
+        if (busy || expectedJson is null || options is null) return;
+        busy = true;
+        try
+        {
+            var priced = await OptionsService.CalculateOptionPriceAsync(VersionId, expectedJson, options, task.TaskId, option.Id);
+            task.Options[task.Options.IndexOf(option)] = priced;
+            message = "Option baseline, internal cost, and customer price calculated. Review the price and mark this option ready before saving.";
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task ImportAnalysisAsync(EstimateTaskOptions task, EstimateOption option)
+    {
+        if (busy || expectedJson is null) return;
+        busy = true;
+        try
+        {
+            var priced = await OptionsService.PriceAcceptedAnalysisAsync(VersionId, expectedJson, task.TaskId, option.Id, option);
+            task.Options[task.Options.IndexOf(option)] = priced;
+            message = "Analysis and policy costs loaded for this option. Review the market value and customer price, then save.";
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        finally { busy = false; }
+    }
+}

@@ -164,7 +164,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(quote => quote.LocalOperation).WithMany().HasForeignKey(quote => quote.LocalOperationId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(quote => quote.AssignedUser).WithMany().HasForeignKey(quote => quote.AssignedUserId).OnDelete(DeleteBehavior.SetNull);
         });
-        builder.Entity<QuoteVersion>(entity => entity.HasIndex(version => new { version.QuoteCaseId, version.VersionNumber }).IsUnique());
+        builder.Entity<QuoteVersion>(entity =>
+        {
+            entity.HasIndex(version => new { version.QuoteCaseId, version.VersionNumber }).IsUnique();
+            entity.Property(version => version.Status).IsConcurrencyToken();
+        });
         builder.Entity<QuoteLine>(entity => entity.HasOne(line => line.QuoteVersion).WithMany(version => version.Lines).HasForeignKey(line => line.QuoteVersionId).OnDelete(DeleteBehavior.Cascade));
         builder.Entity<QuoteProjectTask>(entity =>
         {

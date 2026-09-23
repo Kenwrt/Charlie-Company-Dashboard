@@ -14,6 +14,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject OperationalEventPublisher OperationalEvents
 @inject CentComTaskAnalysisService CentComTaskAnalysis
+@inject EstimateOptionsService OptionsService
 @inject EstimateMaterialEmailService EstimateMaterialEmails
 @inject EstimateAdminAuditEmailService EstimateAdminAuditEmails
 @inject IWebHostEnvironment Environment
@@ -76,6 +77,7 @@ else
             </div>
         </section>
 
+        <fieldset disabled="@(version?.Status != "Draft")">
         <section class="activity-panel">
             <h2>Project Overview Notes</h2>
             <p class="dashboard-subtitle">
@@ -150,7 +152,7 @@ else
         {
             var task = orderedTasks[taskIndex];
             var taskNumber = taskIndex + 1;
-            <section class="activity-panel project-task-panel" @key="task.Id">
+            <section id="@($"task-{task.Id}")" class="activity-panel project-task-panel" @key="task.Id">
                 <button type="button"
                         class="project-task-toggle"
                         aria-expanded="@expandedTaskIds.Contains(task.Id)"
@@ -169,7 +171,20 @@ else
                 {
                     var analysis = LatestAnalysis(task);
                     <div class="project-task-body">
+                        @if (version?.OptionsJson is not null)
+                        {
+                            <label class="form-label">Option to analyze and review</label>
+                            <select class="form-select mb-3" value="@ActiveOptionId(task)" @onchange="args => SetActiveOption(task.Id, args.Value?.ToString())">
+                                @foreach (var option in TaskOptions(task.Id))
+                                {
+                                    <option value="@option.Id">@option.Name</option>
+                                }
+                            </select>
+                            <p class="text-muted">Create and save alternatives in Task options below. Each option has its own analysis and material review.</p>
+                        }
                         <div class="row g-4">
+                            @if (version?.OptionsJson is null)
+                            {
                             <div class="col-md-4">
                                 <label class="form-label">Work type</label>
                                 <InputSelect class="form-select" @bind-Value="task.WorkType" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)">
@@ -178,7 +193,12 @@ else
                                 </InputSelect>
                                 <small class="text-muted">Controls the applicable supply kit, crew rate, and target margin.</small>
                             </div>
+                            }
                             <div class="col-12">
+                                <label class="form-label">Shared task measurements</label>
+                                <InputTextArea class="form-control mb-3" maxlength="4000" rows="3"
+                                               @bind-Value="task.Measurements" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)"
+                                               placeholder="Length, width, height, units, and measured quantities shared by every option." />
                                 <label class="form-label">Scope of Work</label>
                                 @{
                                     var taskScopeElementId = $"task-scope-{task.Id}";
@@ -206,6 +226,8 @@ else
                                 }
                                 <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
                             </div>
+                            @if (version?.OptionsJson is null)
+                            {
                             <div class="col-md-4">
                                 <label class="form-label">Estimated job days</label>
                                 <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.EstimatedDays" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
@@ -220,6 +242,7 @@ else
                                 <InputNumber class="form-control" min="0" step="1" @bind-Value="task.DailyCrewCostOverride" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
                                 <small class="text-muted">Leave blank for policy default.</small>
                             </div>
+                            }
                         </div>
 
                 <div class="picture-capture-panel mt-4">
@@ -277,12 +300,12 @@ else
                                    multiple />
                     </div>
                 </div>
-                        <details class="centcom-analysis-disclosure border rounded mt-4">
+                        <details class="centcom-analysis-disclosure border rounded mt-4" open="@(version?.OptionsJson is not null)">
                             <summary class="centcom-analysis-summary">
                                 <div>
                                     <h3 class="mb-1">CentCom Analysis</h3>
                                     <p class="text-muted mb-0">
-                                        Revisioned material quantities and provisional costs for this project task.
+                                        Revisioned material quantities and provisional costs for the selected task option.
                                     </p>
                                 </div>
                                 <div class="d-flex align-items-center gap-2">
@@ -297,7 +320,7 @@ else
                             @if (analysis is null)
                             {
                                 <div class="alert alert-light border mt-3 mb-0">
-                                    This task has not been submitted to CentCom.
+                                    This task option has not been submitted to CentCom.
                                 </div>
                             }
                             else
@@ -686,6 +709,35 @@ else
             }
         </section>
 
+        </fieldset>
+        @if (version is not null)
+        {
+            @if (version.OptionsJson is not null)
+            {
+                <EstimateOptionsEditor @ref="optionsEditor" VersionId="version.Id" RefreshStamp="quote.UpdatedAt" ProjectOverview="quote.WorkDescription" Saved="ReloadAsync" ReviewRequested="ShowOptionReview" />
+            }
+            else if (version.Status == "Draft")
+            {
+                <section class="activity-panel">
+                    <p>This estimate retains its original pricing. Enable task options to offer alternatives using its saved costs and prices.</p>
+                    <button class="btn btn-outline-primary" @onclick="EnableOptionsAsync">Enable task options</button>
+                </section>
+            }
+            @if (version.Status == "Approved")
+            {
+                <section class="activity-panel">
+                    <p>Accepted pricing is locked.</p>
+                    <button class="btn btn-outline-primary" @onclick="CreateRevisionAsync">Create revision</button>
+                </section>
+            }
+            @foreach (var previous in quote.Versions.Where(item => item.OptionsJson != null && item.Status == "Approved"))
+            {
+                <p><a href="@($"/estimates/{quote.Id}/versions/{previous.Id}/options")">View accepted options and prices for version @previous.VersionNumber</a></p>
+            }
+        }
+        @if (version?.OptionsJson is null)
+        {
+        <fieldset disabled="@(version?.Status != "Draft")">
         @{
             var pricingAnalyses = PricingAnalyses().ToList();
             var hasPreliminaryPricing = pricingAnalyses.Any(x => x.Status != QuoteTaskAnalysisStatuses.Accepted);
@@ -917,6 +969,8 @@ else
             </section>
         }
 
+        </fieldset>
+        }
         <details class="activity-panel">
             <summary><strong>Audit history</strong></summary>
             <div class="activity-list mt-3">
@@ -936,7 +990,7 @@ else
         <section class="estimate-save-bar">
             <button type="button"
                     class="btn btn-primary btn-lg"
-                    disabled="@savingEstimate"
+                    disabled="@(savingEstimate || version?.Status != "Draft")"
                     @onclick="SaveEstimateAsync">
                 @(savingEstimate ? "Saving Estimate…" : "Save Estimate")
             </button>
@@ -947,6 +1001,8 @@ else
 @code {
     [Parameter] public int QuoteId { get; set; }
 
+    private EstimateOptionsEditor? optionsEditor;
+    private readonly Dictionary<int, Guid> activeOptionIds = [];
     private QuoteCase? quote;
     private QuoteVersion? version;
     private QuoteCostSnapshot? currentCostSnapshot;
@@ -1032,6 +1088,7 @@ else
         var legacyAnalyses = await db.QuoteTaskAnalyses
             .Include(x => x.ReviewItems)
             .Where(x => x.QuoteProjectTask.QuoteCaseId == QuoteId && allowed.Contains(x.QuoteProjectTask.QuoteCase.LocalOperationId)
+                && x.QuoteProjectTask.QuoteCase.Versions.OrderByDescending(v => v.VersionNumber).First().Status == "Draft"
                 && (((x.Assumptions != null && x.Assumptions != "") && !x.ReviewItems.Any(item => item.ReviewKind == AnalysisReviewKinds.Assumption))
                     || ((x.QuestionsAndWarnings != null && x.QuestionsAndWarnings != "") && !x.ReviewItems.Any(item => item.ReviewKind == AnalysisReviewKinds.Warning))))
             .ToListAsync();
@@ -1119,12 +1176,13 @@ else
         {
             pricingTargetMargin = 40;
         }
-        pricingTaxRate = decimal.Round(version?.TaxRate > 0 ? version.TaxRate : defaultTaxRate, 2);
+        pricingTaxRate = version?.Status == "Approved" ? version.TaxRate : decimal.Round(version?.TaxRate > 0 ? version.TaxRate : defaultTaxRate, 2);
 
-        if (PricingAnalyses().Any() && PricingSnapshotNeedsRefresh())
+        if (version?.Status == "Draft" && version.OptionsJson is null && PricingAnalyses().Any() && PricingSnapshotNeedsRefresh())
         {
             await CreateCostSnapshotAsync();
         }
+        StartAnalysisMonitoringIfNeeded();
     }
 
     private decimal PricingTargetMargin => Math.Clamp(pricingTargetMargin, 1, 99);
@@ -1152,10 +1210,10 @@ else
         StateHasChanged();
     }
 
-    private decimal PricingBasePrice => currentCostSnapshot is null
+    private decimal PricingBasePrice => version?.Status == "Approved" ? currentCostSnapshot?.SuggestedCustomerPrice ?? version.Subtotal : currentCostSnapshot is null
         ? 0
         : decimal.Round(currentCostSnapshot.TotalCost / (1 - PricingTargetMargin / 100m), 2);
-    private decimal PricingDiscountAmount => decimal.Round(PricingBasePrice * Math.Clamp(discountValue, 0, 100) / 100m, 2);
+    private decimal PricingDiscountAmount => version?.Status == "Approved" ? version.DiscountAmount : decimal.Round(PricingBasePrice * Math.Clamp(discountValue, 0, 100) / 100m, 2);
     private decimal PricingPriceAfterDiscount => Math.Max(0, PricingBasePrice - PricingDiscountAmount);
     private decimal PricingTaxAmount => decimal.Round(PricingPriceAfterDiscount * Math.Clamp(pricingTaxRate, 0, 100) / 100m, 2);
     private decimal PricingFinalPrice => PricingPriceAfterDiscount + PricingTaxAmount;
@@ -1308,8 +1366,58 @@ else
         return false;
     }
 
-    private static QuoteTaskAnalysis? LatestAnalysis(QuoteProjectTask task) =>
-        task.Analyses.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
+    private IEnumerable<EstimateOption> TaskOptions(int taskId) =>
+        version?.OptionsJson is null ? [] : EstimateOptions.Read(version.OptionsJson).Tasks.SingleOrDefault(task => task.TaskId == taskId)?.Options ?? [];
+
+    private Guid? ActiveOptionId(QuoteProjectTask task)
+    {
+        var options = TaskOptions(task.Id).ToList();
+        return activeOptionIds.TryGetValue(task.Id, out var id) && options.Any(option => option.Id == id)
+            ? id : options.FirstOrDefault()?.Id;
+    }
+
+    private void ShowOptionReview((int TaskId, Guid OptionId) selection)
+    {
+        projectTasksExpanded = true;
+        expandedTaskIds.Add(selection.TaskId);
+        activeOptionIds[selection.TaskId] = selection.OptionId;
+    }
+
+    private void SetActiveOption(int taskId, string? value)
+    {
+        if (Guid.TryParse(value, out var id) && TaskOptions(taskId).Any(option => option.Id == id))
+            activeOptionIds[taskId] = id;
+    }
+
+    private QuoteTaskAnalysis? LatestAnalysis(QuoteProjectTask task) =>
+        task.Analyses.Where(analysis => analysis.EstimateOptionId == ActiveOptionId(task))
+            .OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
+
+    private async Task EnableOptionsAsync()
+    {
+        if (version is null) return;
+        try { await OptionsService.EnableAsync(version.Id); await ReloadAsync(); }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateConcurrencyException) { message = "The estimate changed. Reload before enabling options."; }
+    }
+
+    private async Task<bool> RequireEditableVersionAsync(ApplicationDbContext db)
+    {
+        if (quote is null || version is null) return false;
+        var current = await db.QuoteVersions.Include(item => item.Lines).Include(item => item.QuoteCase)
+            .Where(item => item.QuoteCaseId == quote.Id)
+            .OrderByDescending(item => item.VersionNumber).FirstOrDefaultAsync();
+        if (current is null || current.Id != version.Id || current.Status != "Draft" || current.ApprovedAt != null
+            || current.OptionsJson != version.OptionsJson)
+        {
+            message = "This estimate changed or is locked. Reload or create a revision before editing.";
+            return false;
+        }
+        db.Entry(current).Property(item => item.Status).IsModified = true;
+        current.QuoteCase.UpdatedAt = DateTimeOffset.UtcNow;
+        if (current.OptionsJson is not null) current.OptionsJson = EstimateOptions.Read(current.OptionsJson).Write();
+        return true;
+    }
 
     private IEnumerable<QuoteTaskAnalysis> AcceptedAnalyses() =>
         quote?.ProjectTasks
@@ -1518,6 +1626,7 @@ else
             return;
         }
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalysisReviewItems
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
             .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
@@ -1552,6 +1661,7 @@ else
         }
 
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalysisReviewItems
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
             .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
@@ -1600,6 +1710,7 @@ else
             return;
         }
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         await using var transaction = await db.Database.BeginTransactionAsync();
         var trackedReview = await db.QuoteTaskAnalysisReviewItems
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.Materials)
@@ -1663,6 +1774,7 @@ else
             return;
         }
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalysisReviewItems
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
             .SingleOrDefaultAsync(x => x.Id == item.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
@@ -1701,6 +1813,7 @@ else
     {
         if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview || material.Id == 0) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalysisMaterials
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
             .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
@@ -1732,6 +1845,7 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
             var tracked = await db.QuoteTaskAnalysisMaterials
                 .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
                 .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id && x.QuoteTaskAnalysis.QuoteProjectTask.QuoteCaseId == quote.Id);
@@ -1804,6 +1918,7 @@ else
     {
         if (quote is null || material.Id == 0 || material.UnitCost <= 0) { message = "Enter a positive unit cost before using a one-off item."; return; }
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalysisMaterials
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
             .SingleOrDefaultAsync(x => x.Id == material.Id && x.QuoteTaskAnalysisId == analysis.Id);
@@ -1833,6 +1948,7 @@ else
     {
         if (quote is null || material.Id == 0 || material.UnitCost <= 0) { message = "Enter a positive price before adding the item to the catalog."; return; }
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         await using var transaction = await db.Database.BeginTransactionAsync();
         var tracked = await db.QuoteTaskAnalysisMaterials
             .Include(x => x.QuoteTaskAnalysis).ThenInclude(x => x.QuoteProjectTask)
@@ -1896,7 +2012,22 @@ else
             return;
         }
 
+        if (version?.OptionsJson is not null)
+        {
+            var requestedOptionId = ActiveOptionId(task);
+            if (requestedOptionId is null) { message = "Save this task's options before requesting CentCom."; return; }
+            try
+            {
+                var count = await OptionsService.QueueAnalysesAsync(version.Id, version.OptionsJson, requestedOptionId);
+                message = count == 0 ? "This option already has a calculation queued or processing." : "This option is queued for CentCom.";
+                await ReloadAsync();
+            }
+            catch (InvalidOperationException exception) { message = exception.Message; }
+            catch (DbUpdateConcurrencyException) { message = "The estimate changed. Reload before submitting again."; }
+            return;
+        }
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var trackedTask = await db.QuoteProjectTasks
             .SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (trackedTask is null)
@@ -1904,7 +2035,12 @@ else
             message = "The project task could not be found. Reload the estimate and try again.";
             return;
         }
-        ApplyProjectTaskEdits(trackedTask, task);
+        var optionId = ActiveOptionId(task);
+        if (version?.OptionsJson is not null && optionId is null)
+        {
+            message = "Save at least one option for this task before requesting analysis.";
+            return;
+        }
         var revision = (await db.QuoteTaskAnalyses
             .Where(x => x.QuoteProjectTaskId == task.Id)
             .Select(x => (int?)x.RevisionNumber)
@@ -1913,6 +2049,7 @@ else
         var analysis = new QuoteTaskAnalysis
         {
             QuoteProjectTaskId = task.Id,
+            EstimateOptionId = optionId,
             RevisionNumber = revision,
             Status = QuoteTaskAnalysisStatuses.Processing,
             SubmittedByUserId = user.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -1922,6 +2059,7 @@ else
         {
             QuoteCaseId = quote.Id,
             QuoteProjectTaskId = task.Id,
+            EstimateOptionId = optionId,
             JobType = "CentCom Task Analysis",
             // Reserve this job before saving so another application instance that shares
             // the database cannot claim it with an older material-matching implementation.
@@ -1937,11 +2075,16 @@ else
         await ReloadAsync();
     }
 
+    private bool HasPendingOptionAnalyses() => quote?.ProjectTasks.Any(task =>
+        task.Analyses.Where(analysis => version?.OptionsJson is null
+                ? analysis.EstimateOptionId is null : TaskOptions(task.Id).Any(option => option.Id == analysis.EstimateOptionId))
+            .GroupBy(analysis => analysis.EstimateOptionId)
+            .Any(group => group.OrderByDescending(analysis => analysis.RevisionNumber).First().Status
+                is QuoteTaskAnalysisStatuses.Queued or QuoteTaskAnalysisStatuses.Processing)) == true;
+
     private void StartAnalysisMonitoringIfNeeded()
     {
-        var hasPendingAnalysis = quote?.ProjectTasks.Any(task =>
-            LatestAnalysis(task)?.Status is QuoteTaskAnalysisStatuses.Queued or
-                QuoteTaskAnalysisStatuses.Processing) == true;
+        var hasPendingAnalysis = HasPendingOptionAnalyses();
         if (!hasPendingAnalysis || analysisMonitorTask is { IsCompleted: false }) return;
 
         analysisMonitorCancellation?.Dispose();
@@ -1962,9 +2105,7 @@ else
                     StateHasChanged();
                 });
 
-                var stillPending = quote?.ProjectTasks.Any(task =>
-                    LatestAnalysis(task)?.Status is QuoteTaskAnalysisStatuses.Queued or
-                        QuoteTaskAnalysisStatuses.Processing) == true;
+                var stillPending = HasPendingOptionAnalyses();
                 if (!stillPending) break;
             }
         }
@@ -1978,6 +2119,7 @@ else
     {
         if (quote is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalyses
             .Include(x => x.QuoteProjectTask)
             .Include(x => x.Materials)
@@ -2007,6 +2149,7 @@ else
     {
         if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteTaskAnalyses
             .Include(x => x.QuoteProjectTask)
             .Include(x => x.Materials)
@@ -2062,6 +2205,7 @@ else
     {
         if (quote is null || !ProjectTaskTypes.All.Contains(newTaskType)) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var nextSortOrder = await db.QuoteProjectTasks
             .Where(x => x.QuoteCaseId == quote.Id)
             .Select(x => (int?)x.SortOrder)
@@ -2084,12 +2228,18 @@ else
 
     private async Task SaveEstimateAsync()
     {
-        if (quote is null || savingEstimate) return;
+        if (quote is null || savingEstimate || version?.Status != "Draft") return;
+        if (version.OptionsJson is not null)
+        {
+            if (optionsEditor is not null) await optionsEditor.SaveAsync();
+            return;
+        }
         if (currentCostSnapshot is not null && !ValidatePricingInputs()) return;
         savingEstimate = true;
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
             var tracked = await db.QuoteCases
                 .Include(x => x.ProjectTasks)
                 .Include(x => x.Versions).ThenInclude(x => x.CostSnapshots).ThenInclude(x => x.Tasks)
@@ -2102,6 +2252,7 @@ else
             {
                 var trackedTask = tracked.ProjectTasks.SingleOrDefault(x => x.Id == editedTask.Id);
                 if (trackedTask is null) continue;
+                trackedTask.Measurements = editedTask.Measurements?.Trim() ?? string.Empty;
                 trackedTask.ScopeOfWork = editedTask.ScopeOfWork?.Trim() ?? string.Empty;
                 trackedTask.WorkType = string.IsNullOrWhiteSpace(editedTask.WorkType) ? null : editedTask.WorkType;
                 trackedTask.EstimatedDays = Math.Max(0, editedTask.EstimatedDays);
@@ -2237,11 +2388,13 @@ else
         if (!confirmed) return;
 
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         await using var transaction = await db.Database.BeginTransactionAsync();
         var tracked = await db.QuoteProjectTasks
             .SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (tracked is null) return;
 
+        InvalidateTaskOptions(db, tracked, removed: true);
         var deletedTaskNumber = tracked.SortOrder;
         var deletedTaskType = tracked.TaskType;
         tracked.IsDeleted = true;
@@ -2278,15 +2431,49 @@ else
     {
         if (quote is null || !ProjectTaskTypes.All.Contains(task.TaskType)) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteProjectTasks.SingleOrDefaultAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (tracked is null) return;
         ApplyProjectTaskEdits(tracked, task);
+        InvalidateTaskOptions(db, tracked);
         await db.SaveChangesAsync();
         message = $"Project Task {tracked.SortOrder} saved automatically.";
+        await ReloadAsync();
+    }
+
+    private void InvalidateTaskOptions(ApplicationDbContext db, QuoteProjectTask task, bool removed = false)
+    {
+        var current = db.QuoteVersions.Local.SingleOrDefault(item => item.Id == version?.Id);
+        if (current?.OptionsJson is null) return;
+        var options = EstimateOptions.Read(current.OptionsJson);
+        var entry = options.Tasks.SingleOrDefault(item => item.TaskId == task.Id);
+        if (entry is not null)
+        {
+            if (removed) options.Tasks.Remove(entry);
+            else
+            {
+                entry.ScopeOfWork = task.ScopeOfWork;
+                entry.Measurements = task.Measurements;
+                entry.SelectedOptionId = null;
+                foreach (var option in entry.Options) option.IsReady = false;
+            }
+        }
+        // A changed task also affects its share of project overhead.
+        if (removed)
+            foreach (var item in options.Tasks)
+            {
+                item.SelectedOptionId = null;
+                foreach (var option in item.Options) option.IsReady = false;
+            }
+        current.OptionsJson = options.Write();
+        EstimateOptionsService.WriteSelectedLines(current, options);
+        var trackedQuote = db.QuoteCases.Local.SingleOrDefault(item => item.Id == task.QuoteCaseId);
+        if (trackedQuote is not null) trackedQuote.UpdatedAt = DateTimeOffset.UtcNow;
     }
 
     private static void ApplyProjectTaskEdits(QuoteProjectTask tracked, QuoteProjectTask edited)
     {
+        tracked.Measurements = edited.Measurements?.Trim() ?? string.Empty;
         tracked.ScopeOfWork = edited.ScopeOfWork?.Trim() ?? string.Empty;
         tracked.WorkType = string.IsNullOrWhiteSpace(edited.WorkType) ? null : edited.WorkType;
         tracked.EstimatedDays = Math.Max(0, edited.EstimatedDays);
@@ -2299,8 +2486,9 @@ else
 
     private async Task CreateCostSnapshotAsync()
     {
-        if (quote is null || version is null) return;
+        if (quote is null || version is null || version.Status != "Draft" || version.OptionsJson is not null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var today = DateOnly.FromDateTime(DateTime.Today);
         var policy = await db.CostingPolicyVersions.AsNoTracking()
             .Include(x => x.Rules)
@@ -2467,6 +2655,7 @@ else
         Directory.CreateDirectory(taskDirectory);
 
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var validTask = await db.QuoteProjectTasks.AnyAsync(x => x.Id == task.Id && x.QuoteCaseId == quote.Id);
         if (!validTask) return;
 
@@ -2544,6 +2733,12 @@ else
     private async Task SubmitForReviewAsync()
     {
         if (quote is null) return;
+        if (version?.OptionsJson is not null)
+        {
+            await OptionsService.QueueAnalysesAsync(version.Id, version.OptionsJson);
+            await ReloadAsync();
+            return;
+        }
         var incomplete = quote.ProjectTasks
             .Where(task => string.IsNullOrWhiteSpace(task.ScopeOfWork))
             .ToList();
@@ -2559,6 +2754,7 @@ else
         }
 
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var existingQueuedTaskIds = await db.QuoteProcessingJobs
             .Where(x =>
                 x.QuoteCaseId == quote.Id &&
@@ -2598,8 +2794,9 @@ else
 
     private async Task ApproveAsync()
     {
-        if (quote is null || version is null || version.Lines.Count == 0) return;
+        if (quote is null || version is null || version.Lines.Count == 0 || version.OptionsJson is not null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
+        if (!await RequireEditableVersionAsync(db)) return;
         var tracked = await db.QuoteVersions.FindAsync(version.Id);
         if (tracked is null || tracked.Status != "Draft") return;
         var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
@@ -2619,9 +2816,20 @@ else
             VersionNumber = version.VersionNumber + 1,
             TaxRate = version.TaxRate,
             DiscountAmount = version.DiscountAmount,
-            CustomerNotes = version.CustomerNotes
+            CustomerNotes = version.CustomerNotes,
+            OptionsJson = version.OptionsJson
         };
-        foreach (var line in version.Lines)
+        if (next.OptionsJson is not null)
+        {
+            var revised = EstimateOptions.Read(next.OptionsJson);
+            foreach (var task in revised.Tasks)
+            {
+                task.SelectedOptionId = null;
+                foreach (var option in task.Options) option.Id = Guid.NewGuid();
+            }
+            next.OptionsJson = revised.Write();
+        }
+        foreach (var line in version.OptionsJson is null ? version.Lines : Enumerable.Empty<QuoteLine>())
         {
             next.Lines.Add(new QuoteLine
             {

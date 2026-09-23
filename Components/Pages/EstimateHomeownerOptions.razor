@@ -1,0 +1,153 @@
+@page "/estimates/{QuoteId:int}/versions/{VersionId:int}/options"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrator,LocalOperator")]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject EstimateOptionsService OptionsService
+
+<PageTitle>Your project options</PageTitle>
+@if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+@if (version is not null && options is not null)
+{
+    <section class="dashboard-shell">
+        <header class="activity-panel">
+            <h1>Your project options</h1>
+            <p>Prepared for @version.QuoteCase.CustomerName · @version.QuoteCase.CustomerAddress</p>
+            <p>Estimate version @version.VersionNumber · @version.Status</p>
+            <p>Choose one option for each required task. Every option uses the measurements shown with that task.</p>
+            @if (!choicesCurrent) { <p class="alert alert-warning">Task details changed. Return to the workspace and save updated options before making or accepting selections.</p> }
+        </header>
+        @foreach (var task in options.Tasks.OrderBy(task => task.SortOrder))
+        {
+            <fieldset class="activity-panel" disabled="@(busy || version.Status != "Draft" || !choicesCurrent)">
+                <legend>Task @task.SortOrder: @task.TaskType (@(task.IsRequired ? "Required" : "Optional"))</legend>
+                <p>@task.ScopeOfWork</p>
+                <p><strong>Measurements:</strong> @(string.IsNullOrWhiteSpace(task.Measurements) ? "See the task scope." : task.Measurements)</p>
+                @foreach (var option in task.Options)
+                {
+                    <article class="border rounded p-3 mb-3" @key="option.Id">
+                        <label class="d-flex gap-2 align-items-start">
+                            <input type="radio" name="@($"task-{task.TaskId}")" checked="@(task.SelectedOptionId == option.Id)" disabled="@(!option.IsReady)" @onchange="() => SelectAsync(task.TaskId, option.Id)" />
+                            <span><strong>@option.Name</strong> · @option.CustomerPrice.ToString("C2")</span>
+                        </label>
+                        <p class="mt-2">@option.Description</p>
+                        @if (option.Substitutions.Count > 0)
+                        {
+                            <ul>@foreach (var key in option.Substitutions) { <li>@EstimateOptionSubstitutions.Label(key)</li> }</ul>
+                        }
+                        @if (option.EstimatedDays is not null)
+                        {
+                            <p>Estimated completion: @option.EstimatedDays.Value.ToString("N2") workdays</p>
+                        }
+                        @if (option.CrewSize is not null)
+                        {
+                            <p>Planned crew: @option.CrewSize.Value.ToString("N2") people</p>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(option.WorkType)) { <p>Work type: @option.WorkType</p> }
+                        <p><strong>Option total including @version.TaxRate.ToString("N2")% tax: @option.PriceIncludingTax(version.TaxRate).ToString("C2")</strong></p>
+                        <small>The estimate-wide discount is applied once to the selected options below; final tax is calculated after that discount.</small>
+                        <p>Estimated market value: @option.MarketValue.ToString("C2")</p>
+                        @if (!option.IsReady) { <p>Pricing in progress. This option is not available for selection yet.</p> }
+                        @if (option.Materials.Count > 0)
+                        {
+                            <details>
+                                <summary>Included materials</summary>
+                                <ul>@foreach (var material in option.Materials) { <li>@material.Description: @material.Quantity.ToString("N2") @material.Unit</li> }</ul>
+                            </details>
+                        }
+                    </article>
+                }
+                @if (!task.IsRequired)
+                {
+                    <label><input type="radio" name="@($"task-{task.TaskId}")" checked="@(task.SelectedOptionId is null)" @onchange="() => SelectAsync(task.TaskId, null)" /> Do not include this task</label>
+                }
+                @if (task.IsRequired && task.SelectedOptionId is null) { <p class="text-danger">Choose an option for this required task.</p> }
+            </fieldset>
+        }
+        <section class="activity-panel">
+            <h2>Materials for your chosen options</h2>
+            @foreach (var task in options.Tasks.OrderBy(item => item.SortOrder))
+            {
+                var chosen = task.Options.SingleOrDefault(item => item.Id == task.SelectedOptionId);
+                if (chosen is null) { continue; }
+                <h3>@task.TaskType: @chosen.Name</h3>
+                <ul>
+                    @foreach (var material in chosen.Materials)
+                    {
+                        <li>@material.Description: @material.Quantity.ToString("N2") @material.Unit</li>
+                    }
+                </ul>
+            }
+            @if (!options.IsComplete) { <p>This list will update as you choose the remaining required options.</p> }
+        </section>
+        <section class="activity-panel">
+            <h2>@(version.Status == "Approved" ? "Accepted estimate" : options.IsComplete && choicesCurrent ? "Your selected estimate" : "Selections so far")</h2>
+            <p>Selected options: @version.Subtotal.ToString("C2")</p>
+            <p>Discount: @version.DiscountAmount.ToString("C2")</p>
+            <p>Tax (@version.TaxRate.ToString("N2")%): @version.TaxAmount.ToString("C2")</p>
+            <p class="fs-3"><strong>Total: @version.Total.ToString("C2")</strong></p>
+            @if (version.Status == "Draft")
+            {
+                <p>The estimator records these choices with the homeowner. Acceptance locks this version and its prices.</p>
+                <button class="btn btn-success" disabled="@(busy || !choicesCurrent || !options.IsComplete || !options.Selected.Any())" @onclick="ApproveAsync">Record homeowner acceptance</button>
+            }
+            else
+            {
+                <p>These selections and prices are locked. Further changes require a new estimate revision.</p>
+            }
+        </section>
+        <p><a href="@($"/estimates/{QuoteId}")">Return to estimate workspace</a></p>
+    </section>
+}
+
+@code {
+    [Parameter] public int QuoteId { get; set; }
+    [Parameter] public int VersionId { get; set; }
+    private QuoteVersion? version;
+    private EstimateOptions? options;
+    private string? message;
+    private bool busy;
+    private bool choicesCurrent;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try { await LoadAsync(); }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+    }
+
+    private async Task LoadAsync()
+    {
+        version = null;
+        options = null;
+        var loaded = await OptionsService.LoadAsync(VersionId);
+        if (loaded.QuoteCaseId != QuoteId || loaded.OptionsJson is null)
+            throw new InvalidOperationException("No task options are available for this estimate version.");
+        version = loaded;
+        options = EstimateOptions.Read(loaded.OptionsJson);
+        choicesCurrent = loaded.Status != "Draft" ||
+            loaded.QuoteCase.ProjectTasks.Count == options.Tasks.Count && options.Tasks.All(item =>
+                loaded.QuoteCase.ProjectTasks.Any(task => task.Id == item.TaskId
+                    && task.ScopeOfWork == item.ScopeOfWork && task.Measurements == item.Measurements && task.TaskType == item.TaskType));
+    }
+
+    private Task SelectAsync(int taskId, Guid? optionId) => RunAsync(
+        () => OptionsService.SelectAsync(VersionId, version!.OptionsJson!, taskId, optionId));
+    private Task ApproveAsync() => RunAsync(
+        () => OptionsService.ApproveAsync(VersionId, version!.OptionsJson!));
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (busy || version?.Status != "Draft") return;
+        busy = true;
+        try
+        {
+            await action();
+            message = null;
+            await LoadAsync();
+        }
+        catch (DbUpdateConcurrencyException) { message = "The estimate changed. Reload to review the latest options and prices."; }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        finally { busy = false; }
+    }
+}
