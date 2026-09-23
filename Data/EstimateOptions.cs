@@ -24,6 +24,9 @@ public sealed class EstimateOptions
         // Keep signatures of older, non-copied options unchanged.
         if (option.CopySource is not null || option.Substitutions.Count > 0)
             input = JsonSerializer.Serialize(new { Input = input, option.CopySource, Substitutions = option.Substitutions.OrderBy(key => key).ToArray() });
+        if (option.AutomaticMaterial is not null)
+            input = JsonSerializer.Serialize(new { Input = input, option.AutomaticMaterial, option.IncludeRailing,
+                Photos = task.Photos.OrderBy(photo => photo.Id).Select(photo => photo.Id).ToArray() });
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input)));
     }
     [JsonIgnore] public IEnumerable<EstimateOption> Selected => Tasks
@@ -54,6 +57,8 @@ public sealed class EstimateOption
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "Standard";
     public string Description { get; set; } = "";
+    public string? AutomaticMaterial { get; set; }
+    public bool IncludeRailing { get; set; }
     public List<EstimateOptionMaterial> Materials { get; set; } = [];
     public EstimateOptionCopySource? CopySource { get; set; }
     public List<string> Substitutions { get; set; } = [];

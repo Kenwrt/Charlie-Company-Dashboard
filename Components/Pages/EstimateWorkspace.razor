@@ -168,137 +168,40 @@ else
 
                 @if (expandedTaskIds.Contains(task.Id))
                 {
-                    var analysis = LatestAnalysis(task);
                     <div class="project-task-body">
-                        @if (version?.OptionsJson is not null)
-                        {
-                            <label class="form-label">Option to analyze and review</label>
-                            <select class="form-select mb-3" value="@ActiveOptionId(task)" @onchange="args => SetActiveOption(task.Id, args.Value?.ToString())">
-                                @foreach (var option in TaskOptions(task.Id))
-                                {
-                                    <option value="@option.Id">@option.Name</option>
-                                }
-                            </select>
-                            <p class="text-muted">Create and save alternatives in this task’s options. Each option has its own analysis and material review.</p>
-                        }
-                        <div class="row g-4">
-                            @if (version?.OptionsJson is null)
+                        <label class="form-label" for="@($"task-scope-{task.Id}")">Scope of Work</label>
+                        <InputTextArea id="@($"task-scope-{task.Id}")" class="form-control" rows="7" maxlength="4000"
+                            @bind-Value="task.ScopeOfWork" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)"
+                            placeholder="Describe the work, dimensions, and any special requirements." />
+                        <div class="my-3">
+                            <label class="form-label">Attach pictures (optional)</label>
+                            <InputFile class="form-control" OnChange="args => CapturePicturesAsync(task, AdditionalPhotoRequirement, args)"
+                                accept="image/*" multiple />
+                            @foreach (var photo in task.Photos)
                             {
-                            <div class="col-md-4">
-                                <label class="form-label">Work type</label>
-                                <InputSelect class="form-select" @bind-Value="task.WorkType" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)">
-                                    <option value="">Select work type…</option>
-                                    @foreach (var workType in ProjectWorkTypes.All) { <option value="@workType">@workType</option> }
-                                </InputSelect>
-                                <small class="text-muted">Controls the applicable supply kit, crew rate, and target margin.</small>
-                            </div>
-                            }
-                            <div class="col-12">
-                                <label class="form-label">Shared task measurements</label>
-                                <InputTextArea class="form-control mb-3" maxlength="4000" rows="3"
-                                               @bind-Value="task.Measurements" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)"
-                                               placeholder="Length, width, height, units, and measured quantities shared by every option." />
-                                <label class="form-label">Scope of Work</label>
-                                @{
-                                    var taskScopeElementId = $"task-scope-{task.Id}";
-                                }
-                                <div class="dictation-input-wrapper">
-                                    <InputTextArea id="@taskScopeElementId"
-                                                   class="form-control estimate-notes-input"
-                                                   rows="7"
-                                                   maxlength="4000"
-                                                   @bind-Value="task.ScopeOfWork"
-                                                   @bind-Value:after="() => AutoSaveProjectTaskAsync(task)"
-                                                   placeholder="Dictate or enter what needs to be done for this project task, including dimensions, existing conditions, selections, exclusions, and special instructions…" />
-                                    <button type="button"
-                                            class="dictation-toggle @(IsDictating(taskScopeElementId) ? "active" : null)"
-                                            aria-label="@(IsDictating(taskScopeElementId) ? $"Stop {task.TaskType} scope dictation" : $"Start {task.TaskType} scope dictation")"
-                                            aria-pressed="@IsDictating(taskScopeElementId)"
-                                            title="@(IsDictating(taskScopeElementId) ? "Stop dictation" : "Start dictation")"
-                                            @onclick="() => ToggleDictationAsync(taskScopeElementId)">
-                                        <span aria-hidden="true">🎙</span>
-                                    </button>
-                                </div>
-                                @if (!string.IsNullOrWhiteSpace(GetDictationMessage(taskScopeElementId)))
-                                {
-                                    <small class="@(IsDictating(taskScopeElementId) ? "text-danger" : "text-muted") d-block mt-2">@GetDictationMessage(taskScopeElementId)</small>
-                                }
-                                <small class="text-muted">Voice dictation can use the device’s built-in microphone or keyboard dictation.</small>
-                            </div>
-                            @if (version?.OptionsJson is null)
-                            {
-                            <div class="col-md-4">
-                                <label class="form-label">Estimated job days</label>
-                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.EstimatedDays" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Crew size override</label>
-                                <InputNumber class="form-control" min="0" step="0.5" @bind-Value="task.CrewSizeOverride" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
-                                <small class="text-muted">Leave blank for policy default.</small>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Daily crew cost override</label>
-                                <InputNumber class="form-control" min="0" step="1" @bind-Value="task.DailyCrewCostOverride" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)" />
-                                <small class="text-muted">Leave blank for policy default.</small>
-                            </div>
+                                <small class="d-block">@photo.OriginalFileName</small>
                             }
                         </div>
-
-                <div class="picture-capture-panel mt-4">
-                    <h3>@task.TaskType Picture Guide</h3>
-                    <p class="text-muted">Photographs are optional supporting documentation. CentCom will use the saved task scope and dimensions when photos are not supplied.</p>
-                    <div class="photo-requirement-grid">
-                        @foreach (var requirement in ProjectPhotoGuidance.For(task.TaskType))
+                        @foreach (var taskOption in TaskOptions(task.Id).Cast<EstimateOption?>().DefaultIfEmpty())
                         {
-                            var captured = task.Photos.Where(x => x.RequirementKey == requirement.Key).OrderByDescending(x => x.CapturedAt).ToList();
-                            <article class="photo-requirement-card">
-                                <div class="photo-guide-preview @PhotoGuidePanelClass(requirement.Key)">
-                                    <div class="photo-guide-overlay">
-                                        <div class="d-flex justify-content-between align-items-start gap-2">
-                                            <strong>@requirement.Label</strong>
-                                            <span class="badge @(captured.Count > 0 ? "text-bg-success" : "text-bg-secondary")">
-                                                @(captured.Count > 0 ? "Added" : "Optional")
-                                            </span>
-                                        </div>
-                                        <p>@requirement.Instructions</p>
-                                    </div>
-                                </div>
-                                <InputFile class="form-control"
-                                           OnChange="args => CapturePicturesAsync(task, requirement, args)"
-                                           accept="image/*"
-                                           capture="environment" />
-                                @foreach (var photo in captured)
-                                {
-                                    <small class="d-block mt-2">📷 @photo.OriginalFileName · @FormatFileSize(photo.FileSize)</small>
-                                }
-                            </article>
-                        }
-                    </div>
-                    @if (task.Photos.Any(x => x.RequirementKey == "additional"))
-                    {
-                        <h4 class="mt-4">Additional Photographs</h4>
-                        <div class="project-photo-list mt-3">
-                            @foreach (var photo in task.Photos.Where(x => x.RequirementKey == "additional").OrderBy(x => x.CapturedAt))
+                            var analysis = task.Analyses.Where(item => item.EstimateOptionId == taskOption?.Id)
+                                .OrderByDescending(item => item.RevisionNumber).FirstOrDefault();
+                            <section class="border rounded p-3 mt-3" @key="@(taskOption?.Id)">
+                            @if (taskOption is not null)
                             {
-                                <div class="project-photo-item">
-                                    <span aria-hidden="true">📷</span>
-                                    <div>
-                                        <strong>@photo.OriginalFileName</strong>
-                                        <small>@FormatFileSize(photo.FileSize) · @photo.CapturedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</small>
-                                    </div>
-                                </div>
+                                <h3>@taskOption.Name</h3>
+                                @if (taskOption.AutomaticMaterial is not null)
+                                {
+                                    <label class="form-check">
+                                        <input type="checkbox" class="form-check-input" checked="@taskOption.IncludeRailing"
+                                            disabled="@changingRailing" @onchange="args => ChangeRailingAsync(task, taskOption, args.Value is true)" />
+                                        Add railing
+                                    </label>
+                                }
+                                <p class="mb-0">@(taskOption.IsReady ? taskOption.PriceIncludingTax(version!.TaxRate).ToString("C2") : "Price being prepared")</p>
                             }
-                        </div>
-                    }
-                    <div class="mt-3">
-                        <label class="form-label">Optional additional photographs</label>
-                        <InputFile class="form-control"
-                                   OnChange="args => CapturePicturesAsync(task, AdditionalPhotoRequirement, args)"
-                                   accept="image/*"
-                                   capture="environment"
-                                   multiple />
-                    </div>
-                </div>
+                            @if (isAdministrator)
+                            {
                         <details class="centcom-analysis-disclosure border rounded mt-4" open="@(version?.OptionsJson is not null)">
                             <summary class="centcom-analysis-summary">
                                 <div>
@@ -675,7 +578,7 @@ else
                                 <button type="button"
                                         class="btn btn-outline-primary"
                                         disabled="@(!CanSubmitAnalysis(analysis))"
-                                        @onclick="() => SubmitOrReanalyzeAsync(task, analysis)">
+                                        @onclick="() => RetryOptionAsync(task, taskOption, analysis)">
                                     @(analysis is null ? "Analyze" : analysis.ReviewItems.Count > 0 ? "Reanalyze with resolutions" : "Reanalyze")
                                 </button>
                                 @if (analysis?.Status == QuoteTaskAnalysisStatuses.NeedsReview)
@@ -691,11 +594,14 @@ else
                                     }
                                 }
                             </div>
+                            @if (taskOption is not null && analysis?.Status == QuoteTaskAnalysisStatuses.Accepted)
+                            {
+                                <button type="button" class="btn btn-primary mt-3" @onclick="() => PriceReviewedOptionAsync(task.Id, taskOption.Id)">Save reviewed option price</button>
+                            }
                             </div>
                         </details>
-                        @if (version?.OptionsJson is not null)
-                        {
-                            <EstimateOptionsEditor TaskId="task.Id" VersionId="version.Id" RefreshStamp="quote.UpdatedAt" Saved="ReloadAsync" ReviewRequested="ShowOptionReview" />
+                            }
+                            </section>
                         }
                         <div class="project-task-actions">
                             <button type="button"
@@ -877,6 +783,7 @@ else
                                         </table>
                                     </div>
                                 }
+
                             </div>
                         </details>
                     </section>
@@ -1018,6 +925,65 @@ else
     private string? message;
     private string newTaskType = ProjectTaskTypes.All[0];
     private bool addingProjectTask;
+    private bool changingRailing;
+
+    private async Task QueueAutomaticOptionsAsync(int taskId, Guid? changedOptionId = null)
+    {
+        if (version?.OptionsJson is null || version.Status != "Draft") return;
+        var task = quote?.ProjectTasks.SingleOrDefault(item => item.Id == taskId);
+        if (task is null || string.IsNullOrWhiteSpace(task.ScopeOfWork)) return;
+        try
+        {
+            foreach (var option in TaskOptions(taskId).Where(item => item.AutomaticMaterial is not null && (changedOptionId is null || item.Id == changedOptionId)).ToList())
+            {
+                var current = await OptionsService.LoadAsync(version.Id);
+                await OptionsService.QueueAnalysesAsync(current.Id, current.OptionsJson!, option.Id);
+            }
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The task was saved. Automatic analysis could not be queued; save the scope again to retry."; }
+    }
+
+    private async Task ChangeRailingAsync(QuoteProjectTask task, EstimateOption option, bool include)
+    {
+        if (changingRailing || version?.OptionsJson is null) return;
+        changingRailing = true;
+        try
+        {
+            await OptionsService.SetRailingAsync(version.Id, version.OptionsJson, task.Id, option.Id, include);
+            await ReloadAsync();
+            await QueueAutomaticOptionsAsync(task.Id, option.Id);
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The estimate changed. Reload and select railing again."; }
+        finally { changingRailing = false; }
+    }
+
+    private async Task RetryOptionAsync(QuoteProjectTask task, EstimateOption? option, QuoteTaskAnalysis? analysis)
+    {
+        if (!isAdministrator) return;
+        if (option is not null) activeOptionIds[task.Id] = option.Id;
+        await SubmitOrReanalyzeAsync(task, analysis);
+    }
+
+    private async Task PriceReviewedOptionAsync(int taskId, Guid optionId)
+    {
+        if (!isAdministrator || version?.OptionsJson is null) return;
+        try
+        {
+            var current = await OptionsService.LoadAsync(version.Id);
+            var priced = await OptionsService.PriceAcceptedAnalysisAsync(current.Id, current.OptionsJson!, taskId, optionId);
+            priced.IsReady = true;
+            var document = EstimateOptionsService.ForEditing(current);
+            var task = document.Tasks.Single(item => item.TaskId == taskId);
+            task.Options[task.Options.FindIndex(item => item.Id == optionId)] = priced;
+            await OptionsService.SaveAsync(current.Id, current.OptionsJson!, document, current.TaxRate, current.DiscountAmount);
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The estimate changed. Reload before saving the reviewed price."; }
+    }
     private bool projectTasksExpanded = true;
     private readonly HashSet<int> expandedTaskIds = [];
     private readonly HashSet<int> editingAnalysisIds = [];
@@ -1148,6 +1114,13 @@ else
             .OrderBy(x => x.Product.Name).ThenBy(x => x.SupplyVendor.Name)
             .ToListAsync();
         version = quote?.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+        if (version?.OptionsJson is not null && version.Status == "Draft" && await OptionsService.EnsureSimpleOptionsAsync(version.Id))
+        {
+            await ReloadAsync();
+            foreach (var task in quote!.ProjectTasks.Where(item => !string.IsNullOrWhiteSpace(item.ScopeOfWork)).ToList())
+                await QueueAutomaticOptionsAsync(task.Id);
+            return;
+        }
         currentCostSnapshot = version?.CostSnapshots.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
         auditCostSnapshot = null;
         if (isAdministrator && currentCostSnapshot is not null)
@@ -1651,6 +1624,7 @@ else
 
     private async Task ResolveAssumptionAsync(QuoteTaskAnalysisReviewItem item)
     {
+        if (!isAdministrator) return;
         if (quote is null || item.ReviewKind != AnalysisReviewKinds.Assumption
             || !AssumptionResolutionActions.All.Contains(item.ResolutionAction ?? string.Empty)) return;
         if (string.IsNullOrWhiteSpace(item.EstimatorResponse))
@@ -2121,6 +2095,7 @@ else
 
     private async Task ReviewAnalysisAsync(QuoteTaskAnalysis analysis, bool accept)
     {
+        if (!isAdministrator) return;
         if (quote is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         if (!await RequireEditableVersionAsync(db)) return;
@@ -2151,6 +2126,7 @@ else
 
     private async Task SaveAnalysisEditsAsync(QuoteTaskAnalysis analysis)
     {
+        if (!isAdministrator) return;
         if (quote is null || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         if (!await RequireEditableVersionAsync(db)) return;
@@ -2236,7 +2212,7 @@ else
             {
                 TaskId = task.Id, SortOrder = task.SortOrder, TaskType = task.TaskType,
                 ScopeOfWork = task.ScopeOfWork, Measurements = task.Measurements,
-                Options = [new EstimateOption { Name = "Option 1", RequiresCentComAnalysis = true, EstimatedDays = task.EstimatedDays }]
+                Options = EstimateOptionsService.SimpleOptions()
             });
             foreach (var entry in options.Tasks)
             {
@@ -2472,6 +2448,7 @@ else
         await db.SaveChangesAsync();
         message = $"Project Task {tracked.SortOrder} saved automatically.";
         await ReloadAsync();
+        await QueueAutomaticOptionsAsync(task.Id);
     }
 
     private void InvalidateTaskOptions(ApplicationDbContext db, QuoteProjectTask task, bool removed = false)
@@ -2723,6 +2700,7 @@ else
         }
         message = saved == 0 ? "No supported image files were selected." : $"{saved} photograph(s) added to Project Task {task.SortOrder}.";
         await ReloadAsync();
+        if (saved > 0) await QueueAutomaticOptionsAsync(task.Id);
     }
 
     private async Task AddAuditEventAsync(ApplicationDbContext db, QuoteCase currentQuote, string explanation)

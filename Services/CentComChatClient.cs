@@ -12,7 +12,7 @@ public sealed class CentComChatClient(
     IOptions<CentComOptions> options,
     ILogger<CentComChatClient> logger)
 {
-    public sealed record RequestMessage(string Role, string Content);
+    public sealed record RequestMessage(string Role, string Content, IReadOnlyList<string>? Images = null);
 
     private readonly CentComOptions settings = options.Value;
 
@@ -54,11 +54,17 @@ public sealed class CentComChatClient(
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
         }
 
-        var messages = conversation
-            .Select(x => new { role = x.Role, content = x.Content })
-            .ToArray();
         var isNativeOllamaEndpoint = settings.ChatEndpoint.TrimStart('/')
             .Equals("api/chat", StringComparison.OrdinalIgnoreCase);
+        var messages = conversation.Select(x =>
+        {
+            if (x.Images is not { Count: > 0 }) return (object)new { role = x.Role, content = x.Content };
+            if (isNativeOllamaEndpoint)
+                return new { role = x.Role, content = x.Content, images = x.Images.Select(image => image[(image.IndexOf(',') + 1)..]).ToArray() };
+            var content = new List<object> { new { type = "text", text = x.Content } };
+            content.AddRange(x.Images.Select(image => (object)new { type = "image_url", image_url = new { url = image } }));
+            return new { role = x.Role, content };
+        }).ToArray();
         request.Content = isNativeOllamaEndpoint
             ? requireJson
                 ? JsonContent.Create(new

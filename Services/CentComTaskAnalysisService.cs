@@ -27,6 +27,7 @@ public sealed partial class CentComTaskAnalysisService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var job = await db.QuoteProcessingJobs
+            .Include(item => item.QuoteProjectTask!).ThenInclude(task => task.Photos)
             .Include(item => item.QuoteProjectTask!)
                 .ThenInclude(task => task.QuoteCase)
             .SingleOrDefaultAsync(item => item.Id == jobId, cancellationToken);
@@ -112,7 +113,8 @@ public sealed partial class CentComTaskAnalysisService(
                 Id = job.QuoteProjectTask.Id, TaskType = job.QuoteProjectTask.TaskType,
                 WorkType = job.QuoteProjectTask.WorkType, QuoteCase = job.QuoteProjectTask.QuoteCase,
                 ScopeOfWork = job.QuoteProjectTask.ScopeOfWork,
-                Measurements = job.QuoteProjectTask.Measurements
+                Measurements = job.QuoteProjectTask.Measurements,
+                Photos = job.QuoteProjectTask.Photos
             };
             if (job.EstimateOptionId is not null)
             {
@@ -137,6 +139,14 @@ public sealed partial class CentComTaskAnalysisService(
                 taskContext.ScopeOfWork += $"\nOPTION: {offered.Name}\n{offered.Description}\nAnalyze only this option; do not combine alternative materials.";
                 taskContext.ScopeOfWork += $"\nOPTION PLAN: {offered.EstimatedDays?.ToString(CultureInfo.InvariantCulture) ?? "Unspecified"} workdays; crew {offered.CrewSize?.ToString(CultureInfo.InvariantCulture) ?? "Policy default"}. Labor is priced separately using this option's crew and duration.";
             }
+            if (offeredOption?.AutomaticMaterial is not null)
+            {
+                taskContext.ScopeOfWork += $"\nInclude all installation supplies and consumables for this option; no separate standard supply kit will be added.\nMANDATORY OPTION SPECIFICATION: Surface decking must use {offeredOption.AutomaticMaterial}. "
+                    + (offeredOption.IncludeRailing
+                        ? "Include a complete compatible railing assembly, with posts, panels or rails, balusters, brackets, caps and hardware."
+                        : "Do not include any railing, balusters, railing posts, caps or railing hardware. Retain structural deck support posts.")
+                    + " These option settings override any conflicting material or railing request in the shared scope. Do not mix the two alternative decking systems.";
+            }
             taskContext.ScopeOfWork += $"\nSHARED TASK MEASUREMENTS: {taskContext.Measurements}";
             var catalog = await LoadCatalogAsync(db, cancellationToken);
             var exclusionRules = await db.MaterialExclusionRules.AsNoTracking()
@@ -147,15 +157,30 @@ public sealed partial class CentComTaskAnalysisService(
                 .Where(rule => rule.IsActive && rule.TaskType == job.QuoteProjectTask.TaskType)
                 .OrderByDescending(rule => rule.CreatedAt)
                 .ToListAsync(cancellationToken);
-            if (offeredOption?.CopySource is not null)
+            if (offeredOption?.CopySource is not null || offeredOption?.AutomaticMaterial is not null)
             {
                 reusableRules.Clear();
                 resolvedReviewHistory.Clear();
             }
+            var photoImages = new List<string>();
+            long photoBytes = 0;
+            if (offeredOption?.AutomaticMaterial is not null)
+            {
+                foreach (var photo in taskContext.Photos.OrderBy(item => item.Id))
+                {
+                    if (photoImages.Count >= 6 || photo.ContentType is not ("image/jpeg" or "image/png" or "image/webp")
+                        || !File.Exists(photo.StoragePath)) continue;
+                    var size = new FileInfo(photo.StoragePath).Length;
+                    if (size > 8 * 1024 * 1024 || photoBytes + size > 20 * 1024 * 1024) continue;
+                    var bytes = await File.ReadAllBytesAsync(photo.StoragePath, cancellationToken);
+                    photoImages.Add($"data:{photo.ContentType};base64,{Convert.ToBase64String(bytes)}");
+                    photoBytes += bytes.Length;
+                }
+            }
             var requestMessages = new CentComChatClient.RequestMessage[]
             {
                 new("system", BuildSystemPrompt() + (offeredOption?.CopySource is null ? "" : "\n" + CopiedOptionResponseInstructions)),
-                new("user", BuildTaskPrompt(taskContext, resolvedReviewHistory, reusableRules) + BuildCopiedOptionPrompt(offeredOption))
+                new("user", BuildTaskPrompt(taskContext, resolvedReviewHistory, reusableRules) + BuildCopiedOptionPrompt(offeredOption), photoImages)
             };
             var response = await centCom.CompleteJsonAsync(requestMessages, cancellationToken);
             AnalysisResponse result;
@@ -182,7 +207,7 @@ public sealed partial class CentComTaskAnalysisService(
                 }
                 catch (JsonException repairException)
                 {
-                    if (offeredOption?.CopySource is not null)
+                    if (offeredOption?.CopySource is not null || offeredOption?.AutomaticMaterial is not null)
                         throw new InvalidOperationException("CentCom could not return a complete copied-option material plan. Retry the option analysis.", repairException);
                     logger.LogWarning(
                         repairException,
@@ -215,14 +240,31 @@ public sealed partial class CentComTaskAnalysisService(
                 logger.LogWarning(
                     "CentCom repair still returned no materials for job {JobId}; deriving safe search intents from the saved task scope.",
                     jobId);
+                if (offeredOption?.AutomaticMaterial is not null)
+                    throw new InvalidOperationException("CentCom returned no materials for this option. An administrator can retry its analysis.");
                 result = BuildScopeFallback(taskContext);
             }
 
+            if (offeredOption?.AutomaticMaterial is not null && photoImages.Count < taskContext.Photos.Count)
+                result.Warnings.Add("[PHOTOS] Some attachments were not analyzed because of format, size, count, or availability. Review all project photos before accepting.");
             IReadOnlyList<EstimateOptionMaterial> retainedMaterials = [];
             if (offeredOption?.CopySource is not null)
                 retainedMaterials = ReconcileCopiedMaterials(offeredOption, result);
-            else
+            else if (offeredOption?.AutomaticMaterial is null)
                 NormalizeDeckMaterialPlan(taskContext, result);
+            if (offeredOption?.AutomaticMaterial is not null)
+            {
+                if (!offeredOption.IncludeRailing)
+                    result.Materials.RemoveAll(item => MaterialCategory(item.Description) == "Railing"
+                        || ContainsAny(item.Description, "rail post", "rail bracket", "rail kit", "rail panel", "baluster"));
+                var decking = result.Materials.Where(item => MaterialCategory(item.Description) == "Decking").ToList();
+                if (decking.Count == 0 || decking.Any(item => offeredOption.AutomaticMaterial == "Trex Enhance"
+                    ? !item.Description.Contains("Trex Enhance", StringComparison.OrdinalIgnoreCase)
+                    : ContainsAny(item.Description, "trex", "composite", "pvc", "deckorator")))
+                    throw new InvalidOperationException("CentCom did not return the selected decking material. Retry this option's analysis.");
+                if (offeredOption.IncludeRailing && !result.Materials.Any(item => MaterialCategory(item.Description) == "Railing"))
+                    throw new InvalidOperationException("CentCom omitted the requested railing. Retry this option's analysis.");
+            }
 
             db.QuoteTaskAnalysisMaterials.RemoveRange(analysis.Materials);
             db.QuoteTaskAnalysisExclusions.RemoveRange(analysis.Exclusions);
@@ -256,7 +298,7 @@ public sealed partial class CentComTaskAnalysisService(
                 {
                     continue;
                 }
-                var exclusion = offeredOption?.CopySource is not null ? null : exclusionRules.FirstOrDefault(rule =>
+                var exclusion = offeredOption?.CopySource is not null || offeredOption?.AutomaticMaterial is not null ? null : exclusionRules.FirstOrDefault(rule =>
                     proposed.Description.Contains(rule.MatchPhrase, StringComparison.OrdinalIgnoreCase));
                 if (exclusion is not null)
                 {
@@ -286,7 +328,7 @@ public sealed partial class CentComTaskAnalysisService(
                             Trim(proposed.Description, 160),
                             jobId);
                     }
-                    if (offeredOption?.CopySource is not null && remoteMatch is not null
+                    if ((offeredOption?.CopySource is not null || offeredOption?.AutomaticMaterial is not null) && remoteMatch is not null
                         && !BrandCompatible(proposed.Description, remoteMatch.Title ?? "", null))
                         remoteMatch = null;
                     if (remoteMatch?.MatchKind == HomeDepotMatchKinds.Exact)
@@ -330,7 +372,7 @@ public sealed partial class CentComTaskAnalysisService(
                 });
             }
 
-            if (priorAnalysis is not null && offeredOption?.CopySource is null)
+            if (priorAnalysis is not null && offeredOption?.CopySource is null && offeredOption?.AutomaticMaterial is null)
             {
                 foreach (var locked in priorAnalysis.Materials.Where(item => item.IsEstimatorLocked && !item.IsRemoved && item.VendorProductId is not null))
                 {
@@ -1063,6 +1105,10 @@ public sealed partial class CentComTaskAnalysisService(
             return ContainsAny(candidateSystem, "deckorator", "decorator");
         if (ContainsAny(requested, "vinyl", "pvc"))
             return ContainsAny(candidateSystem, "vinyl", "pvc");
+        if (requested.Contains("trex enhance", StringComparison.OrdinalIgnoreCase))
+            return candidateSystem.Contains("trex enhance", StringComparison.OrdinalIgnoreCase);
+        if (ContainsAny(requested, "pressure-treated", "pressure treated", "wood decking"))
+            return !ContainsAny(candidateSystem, "trex", "composite", "pvc", "deckorator");
         if (!requested.Contains("trex", StringComparison.OrdinalIgnoreCase)) return true;
         return candidate.Contains("trex", StringComparison.OrdinalIgnoreCase) ||
             (productSystem?.Contains("trex", StringComparison.OrdinalIgnoreCase) ?? false);

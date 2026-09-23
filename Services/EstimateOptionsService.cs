@@ -24,6 +24,7 @@ public sealed class EstimateOptionsService(
             throw new InvalidOperationException("Sign in as an authorized estimator to open this estimate.");
         var allowed = (await access.GetAccessibleOperationsAsync()).Select(operation => operation.Id).ToList();
         return await db.QuoteVersions.AsSplitQuery()
+            .Include(version => version.QuoteCase).ThenInclude(quote => quote.ProjectTasks).ThenInclude(task => task.Photos)
             .Include(version => version.Lines)
             .Include(version => version.CostSnapshots).ThenInclude(snapshot => snapshot.Tasks).ThenInclude(task => task.RequiredSupplies)
             .Include(version => version.QuoteCase).ThenInclude(quote => quote.ProjectTasks)
@@ -121,6 +122,51 @@ public sealed class EstimateOptionsService(
         WriteSelectedLines(version, options);
         await AuditAsync(db, version, "Task options enabled from saved pricing. Prior versions and snapshots retained.");
         await db.SaveChangesAsync();
+    }
+
+    public static List<EstimateOption> SimpleOptions() =>
+    [
+        new() { Name = "Option 1: Trex Enhance", AutomaticMaterial = "Trex Enhance", RequiresCentComAnalysis = true, EstimatedDays = 1 },
+        new() { Name = "Option 2: Wood", AutomaticMaterial = "Pressure-treated wood", RequiresCentComAnalysis = true, EstimatedDays = 1 }
+    ];
+
+    public async Task<bool> EnsureSimpleOptionsAsync(int versionId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var version = await LoadAsync(db, versionId);
+        if (version.Status != "Draft" || version.ApprovedAt is not null || version.OptionsJson is null) return false;
+        var document = ForEditing(version);
+        var changed = false;
+        foreach (var task in document.Tasks)
+        {
+            if (task.Options.Count <= 1 && task.Options.All(option => option.AutomaticMaterial is null
+                && !option.IsReady && option.SourceAnalysisId is null && option.Materials.Count == 0 && option.CustomerPrice == 0)
+                && !version.QuoteCase.ProjectTasks.Single(item => item.Id == task.TaskId).Analyses.Any())
+            {
+                task.Options = SimpleOptions();
+                changed = true;
+            }
+        }
+        if (!changed) return false;
+        await RequireDraftAsync(db, version, version.OptionsJson);
+        version.OptionsJson = document.Write();
+        await AuditAsync(db, version, "Default Trex Enhance and wood options created for unestimated tasks.");
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task SetRailingAsync(int versionId, string expectedJson, int taskId, Guid optionId, bool include)
+    {
+        var version = await LoadAsync(versionId);
+        if (version.OptionsJson != expectedJson) throw new InvalidOperationException("The task changed. Reload before changing railing.");
+        var document = ForEditing(version);
+        var option = document.Tasks.Single(task => task.TaskId == taskId).Options.Single(item => item.Id == optionId);
+        if (option.AutomaticMaterial is null) throw new InvalidOperationException("This saved option retains its existing material specification.");
+        option.IncludeRailing = include;
+        option.IsReady = false;
+        option.SourceAnalysisId = null;
+        option.PricingInputsSignature = null;
+        await SaveAsync(versionId, expectedJson, document, version.TaxRate, version.DiscountAmount);
     }
 
     public async Task SaveScopeAsync(int versionId, string expectedJson, EstimateOptions edited,
@@ -319,9 +365,16 @@ public sealed class EstimateOptionsService(
         var targets = document.Tasks.SelectMany(task => task.Options.Select(option => (Task: task, Option: option)))
             .Where(item => optionId is null || item.Option.Id == optionId).ToList();
         if (targets.Count == 0) throw new InvalidOperationException("Save the task options before requesting CentCom calculations.");
-        var pendingIds = await db.QuoteProcessingJobs.Where(job => job.QuoteCaseId == version.QuoteCaseId
+        var pendingJobs = await db.QuoteProcessingJobs.Where(job => job.QuoteCaseId == version.QuoteCaseId
                 && job.EstimateOptionId != null && (job.Status == "Queued" || job.Status == "Processing"))
-            .Select(job => job.EstimateOptionId!.Value).ToListAsync();
+            .Select(job => new { OptionId = job.EstimateOptionId!.Value, job.QuoteTaskAnalysisId }).ToListAsync();
+        var pendingAnalysisIds = pendingJobs.Select(job => job.QuoteTaskAnalysisId).ToList();
+        var pendingAnalyses = await db.QuoteTaskAnalyses.Where(item => pendingAnalysisIds.Contains(item.Id)).ToListAsync();
+        var pendingIds = targets.Where(item => pendingJobs.Any(job => job.OptionId == item.Option.Id
+            && pendingAnalyses.Any(analysis => analysis.Id == job.QuoteTaskAnalysisId
+                && analysis.InputSignature == EstimateOptions.AnalysisSignature(
+                    version.QuoteCase.ProjectTasks.Single(task => task.Id == item.Task.TaskId), item.Option))))
+            .Select(item => item.Option.Id).ToList();
         var userId = (await authentication.GetAuthenticationStateAsync()).User.FindFirstValue(ClaimTypes.NameIdentifier);
         var reserved = new List<(QuoteProjectTask Task, EstimateOption Option, QuoteTaskAnalysis Analysis)>();
         foreach (var group in targets.Where(item => !pendingIds.Contains(item.Option.Id)).GroupBy(item => item.Task.TaskId))
@@ -473,8 +526,8 @@ public sealed class EstimateOptionsService(
             .ThenByDescending(item => item.EffectiveDate).ThenByDescending(item => item.RevisionNumber).FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("Configure an active costing policy before pricing an analysis.");
         if (!option.HasPlanningInputs) option.WorkType ??= task.WorkType;
-        if (option.CopySource is null) option.Materials.RemoveAll(material => material.IsPolicySupply);
-        foreach (var kit in policy.SupplyKits.Where(kit => option.CopySource is null && kit.IsActive && (kit.TaskType == null || kit.TaskType == task.TaskType)
+        if (option.CopySource is null && option.AutomaticMaterial is null) option.Materials.RemoveAll(material => material.IsPolicySupply);
+        foreach (var kit in policy.SupplyKits.Where(kit => option.CopySource is null && option.AutomaticMaterial is null && kit.IsActive && (kit.TaskType == null || kit.TaskType == task.TaskType)
             && (kit.WorkType == null || kit.WorkType == option.WorkType)))
         {
             foreach (var item in kit.Items)
