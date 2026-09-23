@@ -672,6 +672,7 @@ else
                         <div class="project-task-actions">
                             <button type="button"
                                     class="btn btn-outline-danger"
+                                    disabled="@deletingProjectTask"
                                     @onclick="() => DeleteProjectTaskAsync(task)">
                                 Delete Task
                             </button>
@@ -966,7 +967,7 @@ else
         <section class="estimate-save-bar">
             <button type="button"
                     class="btn btn-primary btn-lg"
-                    disabled="@(savingEstimate || version?.Status != "Draft")"
+                    disabled="@(savingEstimate || !CanSaveEstimate)"
                     @onclick="SaveEstimateAsync">
                 @(savingEstimate ? "Saving Estimate…" : "Save Estimate")
             </button>
@@ -992,6 +993,10 @@ else
     private string newTaskType = ProjectTaskTypes.All[0];
     private bool addingProjectTask;
     private bool changingRailing;
+    private bool deletingProjectTask;
+    private bool CanSaveEstimate => version?.Status == "Draft" && quote?.ProjectTasks.Count > 0
+        && (version.OptionsJson is not null ? EstimateOptionsService.ForEditing(version).HasCalculatedCosts
+            : currentCostSnapshot is not null);
     private static readonly (string Label, string Value)[] OptionMaterials =
         [("Trex Enhance", "Trex Enhance"), ("Wood", "Pressure-treated wood"), ("Deckorators", "Deckorators")];
 
@@ -2363,7 +2368,7 @@ else
 
     private async Task SaveEstimateAsync()
     {
-        if (quote is null || savingEstimate || version?.Status != "Draft") return;
+        if (quote is null || savingEstimate || !CanSaveEstimate) return;
         if (version.OptionsJson is not null)
         {
             if (optionsEditor is not null) await optionsEditor.SaveAsync();
@@ -2518,10 +2523,10 @@ else
 
     private async Task DeleteProjectTaskAsync(QuoteProjectTask task)
     {
-        if (quote is null) return;
-        var confirmed = await JS.InvokeAsync<bool>("confirm", "Do you really want to delete this task?");
-        if (!confirmed) return;
-
+        if (quote is null || deletingProjectTask) return;
+        deletingProjectTask = true;
+        try
+        {
         await using var db = await DbFactory.CreateDbContextAsync();
         if (!await RequireEditableVersionAsync(db)) return;
         await using var transaction = await db.Database.BeginTransactionAsync();
@@ -2560,6 +2565,9 @@ else
         message = $"Project Task {deletedTaskNumber} deleted.";
         expandedTaskIds.Remove(task.Id);
         await ReloadAsync();
+        }
+        catch (DbUpdateException) { message = "The task could not be deleted because the estimate changed. Reload and try again."; }
+        finally { deletingProjectTask = false; }
     }
 
     private async Task AutoSaveProjectTaskAsync(QuoteProjectTask task)

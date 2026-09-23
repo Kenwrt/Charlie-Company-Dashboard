@@ -192,6 +192,8 @@ public sealed class EstimateOptionsService(
         }
         else
         {
+            if (!merged.HasCalculatedCosts)
+                throw new InvalidOperationException("Add tasks and calculate their option costs before saving the estimate.");
             // Shared totals never submit another task editor's stale option snapshot.
             if (current.OptionsJson != expectedJson)
                 throw new InvalidOperationException("The estimate changed. Reload saved totals before saving.");

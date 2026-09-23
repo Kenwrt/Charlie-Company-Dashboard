@@ -34,6 +34,9 @@ public sealed class EstimateOptions
     [JsonIgnore] public IEnumerable<EstimateOption> Selected => Tasks
         .Select(task => task.Options.SingleOrDefault(option => option.Id == task.SelectedOptionId))
         .OfType<EstimateOption>();
+    [JsonIgnore] public bool HasCalculatedCosts => Tasks.Count > 0 && Tasks.All(task =>
+        task.Options.Count > 0 && task.Options.All(option => option.IsReady
+            && (!option.HasPlanningInputs || option.IsCalculationCurrent)));
     [JsonIgnore] public bool IsComplete => Tasks.Count > 0 && Tasks.All(task =>
         (!task.IsRequired && task.SelectedOptionId is null)
         || task.Options.Any(option => option.Id == task.SelectedOptionId && option.IsReady));

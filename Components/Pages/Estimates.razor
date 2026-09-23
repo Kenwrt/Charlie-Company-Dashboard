@@ -252,6 +252,7 @@
         var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         var quote = new QuoteCase
         {
+            ProjectTasks = [],
             LocalOperationId = operation.Id,
             HousecallProQuoteId = lookup.ExternalId,
             HousecallProEstimateNumber = lookup.EstimateNumber,

@@ -144,7 +144,7 @@
             </div>
             <p class="text-muted mt-3">Changing a chosen option, task measurements, tax, or discount requires the homeowner choices to be reviewed again.</p>
             }
-            <button type="button" class="btn btn-primary" @onclick="SaveAsync">@(SummaryOnly ? "Save estimate totals" : "Save this task’s options and prices")</button>
+            <button type="button" class="btn btn-primary" disabled="@(SummaryOnly && !options.HasCalculatedCosts)" @onclick="SaveAsync">@(SummaryOnly ? "Save estimate totals" : "Save this task’s options and prices")</button>
         </fieldset>
         <p class="mt-3"><button type="button" class="btn btn-outline-secondary me-2" disabled="@busy" @onclick="LoadAsync">Reload saved options</button><a class="btn btn-outline-primary" href="@($"/estimates/{loaded.QuoteCaseId}/versions/{loaded.Id}/options")">Present saved options to homeowner</a></p>
         @if (SummaryOnly)
@@ -204,6 +204,7 @@
     public async Task SaveAsync()
     {
         if (busy || options is null || expectedJson is null || loaded?.Status != "Draft") return;
+        if (SummaryOnly && !options.HasCalculatedCosts) return;
         busy = true;
         try
         {
@@ -248,6 +249,7 @@
     private async Task CopyFromAsync(EstimateTaskOptions task, Guid? sourceId)
     {
         if (busy || expectedJson is null || options is null || sourceId is null || loaded?.Status != "Draft") return;
+        if (SummaryOnly && !options.HasCalculatedCosts) return;
         busy = true;
         try
         {
