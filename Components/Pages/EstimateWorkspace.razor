@@ -173,15 +173,49 @@ else
                         <InputTextArea id="@($"task-scope-{task.Id}")" class="form-control" rows="7" maxlength="4000"
                             @bind-Value="task.ScopeOfWork" @bind-Value:after="() => AutoSaveProjectTaskAsync(task)"
                             placeholder="Describe the work, dimensions, and any special requirements." />
-                        <div class="my-3">
-                            <label class="form-label">Attach pictures (optional)</label>
-                            <InputFile class="form-control" OnChange="args => CapturePicturesAsync(task, AdditionalPhotoRequirement, args)"
-                                accept="image/*" multiple />
-                            @foreach (var photo in task.Photos)
-                            {
-                                <small class="d-block">@photo.OriginalFileName</small>
-                            }
-                        </div>
+                        <details class="picture-capture-panel border rounded p-3 my-3">
+                            <summary class="fw-semibold">Suggested pictures (optional) · @task.Photos.Count attached</summary>
+                            <p class="text-muted mt-3">Use these examples to document the project. On a phone, take a picture or choose one from your photo library. On a desktop, upload pictures from your local drive.</p>
+                            <div class="photo-requirement-grid">
+                                @foreach (var requirement in ProjectPhotoGuidance.For(task.TaskType))
+                                {
+                                    var captured = task.Photos.Where(photo => photo.RequirementKey == requirement.Key).OrderBy(photo => photo.CapturedAt).ToList();
+                                    var cameraId = $"photo-camera-{task.Id}-{requirement.Key}";
+                                    var uploadId = $"photo-upload-{task.Id}-{requirement.Key}";
+                                    <article class="photo-requirement-card" @key="requirement.Key">
+                                        <div class="photo-guide-preview @PhotoGuidePanelClass(requirement.Key)" role="img" aria-label="@($"Example: {requirement.Label}")">
+                                            <div class="photo-guide-overlay">
+                                                <div class="d-flex justify-content-between align-items-start gap-2">
+                                                    <strong>@requirement.Label</strong>
+                                                    <span class="badge @(captured.Count > 0 ? "text-bg-success" : "text-bg-secondary")">@(captured.Count > 0 ? $"{captured.Count} added" : "Optional")</span>
+                                                </div>
+                                                <p>@requirement.Instructions</p>
+                                            </div>
+                                        </div>
+                                        <label class="form-label mt-3" for="@cameraId">Take a picture (phone camera)</label>
+                                        <InputFile id="@cameraId" class="form-control"
+                                            OnChange="args => CapturePicturesAsync(task, requirement, args)" accept="image/*" capture="environment" />
+                                        <label class="form-label mt-3" for="@uploadId">Upload from photo library or local drive</label>
+                                        <InputFile id="@uploadId" class="form-control"
+                                            OnChange="args => CapturePicturesAsync(task, requirement, args)" accept="image/*" multiple />
+                                        @foreach (var photo in captured)
+                                        {
+                                            <small class="d-block mt-2">@photo.OriginalFileName · @FormatFileSize(photo.FileSize)</small>
+                                        }
+                                    </article>
+                                }
+                            </div>
+                            <div class="mt-3">
+                                <label class="form-label" for="@($"additional-photos-{task.Id}")">Other pictures (optional)</label>
+                                <InputFile id="@($"additional-photos-{task.Id}")" class="form-control"
+                                    OnChange="args => CapturePicturesAsync(task, AdditionalPhotoRequirement, args)" accept="image/*" multiple />
+                                @foreach (var photo in task.Photos.Where(photo => photo.RequirementKey == "additional"))
+                                {
+                                    <small class="d-block mt-2">@photo.OriginalFileName · @FormatFileSize(photo.FileSize)</small>
+                                }
+                            </div>
+                        </details>
+
                         @foreach (var taskOption in TaskOptions(task.Id).Cast<EstimateOption?>().DefaultIfEmpty())
                         {
                             var analysis = task.Analyses.Where(item => item.EstimateOptionId == taskOption?.Id)
