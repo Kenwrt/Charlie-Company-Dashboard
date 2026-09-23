@@ -35,7 +35,7 @@ public sealed class EstimateOptions
         .Select(task => task.Options.SingleOrDefault(option => option.Id == task.SelectedOptionId))
         .OfType<EstimateOption>();
     [JsonIgnore] public bool HasCalculatedCosts => Tasks.Count > 0 && Selected.Any() && Tasks.All(task =>
-        (!task.IsRequired && task.SelectedOptionId is null) || task.Options.Any(option => option.Id == task.SelectedOptionId
+        task.Options.Any(option => option.Id == task.SelectedOptionId
             && option.IsReady && (!option.HasPlanningInputs || option.IsCalculationCurrent)));
     [JsonIgnore] public bool IsComplete => Tasks.Count > 0 && Tasks.All(task =>
         (!task.IsRequired && task.SelectedOptionId is null)
@@ -82,6 +82,7 @@ public sealed class EstimateOption
     public decimal MarketValue { get; set; }
     public decimal CustomerPrice { get; set; }
     public bool IsReady { get; set; }
+    public bool IsProvisionalPrice { get; set; }
     public bool RequiresCentComAnalysis { get; set; }
     public int? SourceAnalysisId { get; set; }
     public string? CostBasis { get; set; }

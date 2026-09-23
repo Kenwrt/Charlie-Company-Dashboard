@@ -309,6 +309,83 @@ public sealed class EstimateOptionsService(
         await db.SaveChangesAsync();
     }
 
+    public async Task<(bool Changed, string? Message)> CalculatePricePlansAsync(int versionId, string expectedJson)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var version = await LoadAsync(db, versionId);
+        await RequireDraftAsync(db, version, expectedJson);
+        var document = EstimateOptions.Read(expectedJson);
+        RequireCurrentTasks(version, document);
+        var queue = new List<Guid>();
+        var notices = new List<string>();
+        var changed = false;
+        foreach (var entry in document.Tasks)
+        {
+            var option = entry.Options.SingleOrDefault(item => item.Id == entry.PriceOptionId);
+            if (option is null) continue;
+            if (option.IsReady && !option.RequiresCentComAnalysis && (!option.HasPlanningInputs || option.IsCalculationCurrent)) continue;
+            var task = version.QuoteCase.ProjectTasks.Single(item => item.Id == entry.TaskId);
+            var analysis = await db.QuoteTaskAnalyses
+                .Include(item => item.Materials).ThenInclude(item => item.VendorProduct).ThenInclude(item => item!.SupplyVendor)
+                .Include(item => item.ReviewItems)
+                .Where(item => item.QuoteProjectTaskId == task.Id && item.EstimateOptionId == option.Id)
+                .OrderByDescending(item => item.RevisionNumber).FirstOrDefaultAsync();
+            var current = analysis?.InputSignature == EstimateOptions.AnalysisSignature(task, option);
+            if (option.IsReady && option.IsCalculationCurrent && current && option.SourceAnalysisId == analysis!.Id
+                && (analysis.Status == QuoteTaskAnalysisStatuses.Accepted && !option.IsProvisionalPrice
+                    || analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview && option.IsProvisionalPrice)) continue;
+            if (option.IsReady || entry.SelectedOptionId is not null)
+            {
+                option.IsReady = false;
+                entry.SelectedOptionId = null;
+                changed = true;
+            }
+            if (analysis is null || !current)
+            {
+                if (!string.IsNullOrWhiteSpace(task.ScopeOfWork)) queue.Add(option.Id);
+                else notices.Add($"Enter a scope of work for task {entry.SortOrder} to calculate its price.");
+                continue;
+            }
+            if (analysis.Status is QuoteTaskAnalysisStatuses.Queued or QuoteTaskAnalysisStatuses.Processing)
+            {
+                notices.Add($"CentCom is calculating task {entry.SortOrder}. Prices will update automatically.");
+                continue;
+            }
+            if (analysis.Status is not QuoteTaskAnalysisStatuses.Accepted and not QuoteTaskAnalysisStatuses.NeedsReview)
+            {
+                notices.Add($"Retry the analysis for task {entry.SortOrder} before its price can be calculated.");
+                continue;
+            }
+            var materials = analysis.Materials.Where(item => !item.IsRemoved).ToList();
+            if (materials.Count == 0 || materials.Any(item => item.UnitCost <= 0 || item.Quantity <= 0))
+            {
+                notices.Add($"Task {entry.SortOrder} needs material prices in its CentCom analysis before the estimate can be calculated.");
+                continue;
+            }
+            CopyMaterials(option, analysis);
+            option.AdditionalBaselineCost = analysis.DeliveryAllowance + analysis.TaxAllowance + analysis.OtherAllowance
+                + analysis.ReviewItems.Sum(item => item.AdditionalFeeAmount);
+            await PriceOptionAsync(db, version, document, entry, option, task);
+            option.IsReady = true;
+            option.IsProvisionalPrice = analysis.Status != QuoteTaskAnalysisStatuses.Accepted;
+            changed = true;
+        }
+        if (changed)
+        {
+            SynchronizePricePlans(document);
+            version.OptionsJson = document.Write();
+            WriteSelectedLines(version, document);
+            await AuditAsync(db, version, "Selected option plans calculated using CentCom materials and the costing policy.");
+            await db.SaveChangesAsync();
+        }
+        foreach (var optionId in queue)
+        {
+            var latest = await LoadAsync(versionId);
+            if (await QueueAnalysesAsync(versionId, latest.OptionsJson!, optionId) > 0) changed = true;
+        }
+        return (changed, notices.Count > 0 ? string.Join(" ", notices) : null);
+    }
+
     private static void SynchronizePricePlans(EstimateOptions document)
     {
         foreach (var task in document.Tasks)
@@ -359,7 +436,7 @@ public sealed class EstimateOptionsService(
             throw new InvalidOperationException("Choose one priced option for every required task before accepting the estimate.");
         if (version.DiscountAmount > options.CustomerPrice)
             throw new InvalidOperationException("The discount exceeds the selected price. Update the discount before acceptance.");
-        await RequireAcceptedAnalysesAsync(db, version, options);
+        await RequireAcceptedAnalysesAsync(db, version, options, requireApproval: true);
         WriteSelectedLines(version, options);
         version.Status = "Approved";
         version.ApprovedAt = DateTimeOffset.UtcNow;
@@ -481,7 +558,7 @@ public sealed class EstimateOptionsService(
         return reserved.Count;
     }
 
-    private static async Task RequireAcceptedAnalysesAsync(ApplicationDbContext db, QuoteVersion version, EstimateOptions document)
+    private static async Task RequireAcceptedAnalysesAsync(ApplicationDbContext db, QuoteVersion version, EstimateOptions document, bool requireApproval = false)
     {
         foreach (var entry in document.Tasks)
         {
@@ -491,7 +568,8 @@ public sealed class EstimateOptionsService(
                 var analysis = await db.QuoteTaskAnalyses.AsNoTracking()
                     .Where(item => item.QuoteProjectTaskId == task.Id && item.EstimateOptionId == option.Id)
                     .OrderByDescending(item => item.RevisionNumber).FirstOrDefaultAsync();
-                if (analysis is null || analysis.Id != option.SourceAnalysisId || analysis.Status != QuoteTaskAnalysisStatuses.Accepted
+                if (analysis is null || analysis.Id != option.SourceAnalysisId || (analysis.Status != QuoteTaskAnalysisStatuses.Accepted
+                        && (requireApproval || !option.IsProvisionalPrice || analysis.Status != QuoteTaskAnalysisStatuses.NeedsReview))
                     || analysis.InputSignature != EstimateOptions.AnalysisSignature(task, option))
                     throw new InvalidOperationException($"Calculate and review '{option.Name}' with CentCom, then load its accepted materials and costs before marking it ready.");
             }
@@ -691,6 +769,7 @@ public sealed class EstimateOptionsService(
     internal static void WriteSelectedLines(QuoteVersion version, EstimateOptions options)
     {
         version.Lines.Clear();
+        if (!options.HasCalculatedCosts) return;
         foreach (var task in options.Tasks.OrderBy(task => task.SortOrder))
         {
             var option = task.Options.SingleOrDefault(option => option.Id == task.SelectedOptionId);

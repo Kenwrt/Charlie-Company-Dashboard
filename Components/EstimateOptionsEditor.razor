@@ -150,7 +150,18 @@
         @if (SummaryOnly)
         {
         <SelectedOptionMaterials Version="loaded" />
+        @if (options.HasCalculatedCosts)
+        {
         <p>Selected internal cost: @options.InternalCost.ToString("C2") · Selected market value: @options.MarketValue.ToString("C2") · Selected customer price before discount and tax: @options.CustomerPrice.ToString("C2")</p>
+            @if (options.Selected.Any(option => option.IsProvisionalPrice))
+            {
+                <p class="text-warning">Calculated estimate. CentCom material review is still required before homeowner acceptance.</p>
+            }
+        }
+        else
+        {
+            <p role="status">Estimate total pending: choose a priced option plan for every task.</p>
+        }
         }
     }
 </section>

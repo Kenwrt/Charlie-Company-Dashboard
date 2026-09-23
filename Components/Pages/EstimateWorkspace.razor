@@ -705,6 +705,10 @@ else
         {
             @if (version.OptionsJson is not null)
             {
+                @if (pricingPlanMessage is not null)
+                {
+                    <div class="alert alert-info" role="status">@pricingPlanMessage</div>
+                }
                 <EstimateOptionsEditor @ref="optionsEditor" SummaryOnly="true" VersionId="version.Id" RefreshStamp="quote.UpdatedAt" ProjectOverview="quote.WorkDescription" Saved="ReloadAsync" ReviewRequested="ShowOptionReview" />
             }
             else if (version.Status == "Draft")
@@ -1008,6 +1012,7 @@ else
     private string newTaskType = ProjectTaskTypes.All[0];
     private bool addingProjectTask;
     private bool changingRailing;
+    private string? pricingPlanMessage;
     private Guid? PricePlanOptionId(int taskId)
     {
         if (version?.OptionsJson is null) return null;
@@ -1301,6 +1306,21 @@ else
             }
             catch (InvalidOperationException exception) { message = exception.Message; }
             catch (DbUpdateException) { message = "The estimate changed. Reload to update its pricing plan."; }
+        }
+        if (version?.Status == "Draft" && version.OptionsJson is not null)
+        {
+            try
+            {
+                var result = await OptionsService.CalculatePricePlansAsync(version.Id, version.OptionsJson);
+                pricingPlanMessage = result.Message;
+                if (result.Changed)
+                {
+                    await ReloadAsync();
+                    return;
+                }
+            }
+            catch (InvalidOperationException exception) { pricingPlanMessage = exception.Message; }
+            catch (DbUpdateException) { pricingPlanMessage = "The estimate changed. Reload to calculate its pricing plans."; }
         }
         currentCostSnapshot = version?.CostSnapshots.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
         auditCostSnapshot = null;
