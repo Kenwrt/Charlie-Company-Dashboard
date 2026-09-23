@@ -438,7 +438,7 @@ else
                                                     </article>
                                                 }
                                             </div>
-                                            <button type="button" class="btn btn-primary mt-3" disabled="@(!CanSubmitAnalysis(analysis))" @onclick="() => ReanalyzeWithResolutionsAsync(task, analysis)">Reanalyze with resolutions</button>
+                                            <button type="button" class="btn btn-primary mt-3" disabled="@(!CanSubmitAnalysis(analysis))" @onclick="() => RetryOptionAsync(task, taskOption, analysis)">Reanalyze with resolutions</button>
                                         </div>
                                     </details>
                                 }
@@ -631,7 +631,7 @@ else
                                 }
                             }
 
-                            @if (analysis is not null && analysis.ReviewItems.Any(IsReviewItemOutstanding))
+                            @if (analysis is not null && analysis.Status != QuoteTaskAnalysisStatuses.Failed && analysis.ReviewItems.Any(IsReviewItemOutstanding))
                             {
                                 <div class="alert alert-warning mt-3" role="status">
                                     Reanalysis requires decisions on @analysis.ReviewItems.Count(IsReviewItemOutstanding) outstanding review item(s).
@@ -644,7 +644,7 @@ else
                                         class="btn btn-outline-primary"
                                         disabled="@(!CanSubmitAnalysis(analysis))"
                                         @onclick="() => RetryOptionAsync(task, taskOption, analysis)">
-                                    @(analysis is null ? "Analyze" : analysis.ReviewItems.Count > 0 ? "Reanalyze with resolutions" : "Reanalyze")
+                                    @(analysis is null ? "Analyze" : analysis.Status == QuoteTaskAnalysisStatuses.Failed ? "Retry analysis" : analysis.ReviewItems.Count > 0 ? "Reanalyze with resolutions" : "Reanalyze")
                                 </button>
                                 @if (analysis?.Status == QuoteTaskAnalysisStatuses.NeedsReview)
                                 {
@@ -1600,7 +1600,7 @@ else
 
     private static bool CanSubmitOrReanalyze(QuoteTaskAnalysis? analysis) =>
         CanSubmitAnalysis(analysis)
-        && (analysis is null || analysis.ReviewItems.Count == 0 || AllReviewItemsResolved(analysis));
+        && (analysis is null || analysis.Status == QuoteTaskAnalysisStatuses.Failed || analysis.ReviewItems.Count == 0 || AllReviewItemsResolved(analysis));
 
     private static string AnalysisStatusClass(string? status) => status switch
     {
@@ -1964,7 +1964,7 @@ else
     }
 
     private Task SubmitOrReanalyzeAsync(QuoteProjectTask task, QuoteTaskAnalysis? analysis) =>
-        analysis is not null && analysis.ReviewItems.Count > 0
+        analysis is not null && analysis.Status != QuoteTaskAnalysisStatuses.Failed && analysis.ReviewItems.Count > 0
             ? ReanalyzeWithResolutionsAsync(task, analysis)
             : SubmitTaskAnalysisAsync(task);
 

@@ -74,7 +74,7 @@ public sealed class CentComChatClient(
                     stream = false,
                     keep_alive = settings.KeepAlive,
                     format = "json",
-                    options = new { temperature = 0, num_predict = 8192 }
+                    options = new { temperature = 0, num_predict = 16384 }
                 })
                 : JsonContent.Create(new
                 {
@@ -90,7 +90,7 @@ public sealed class CentComChatClient(
                     messages,
                     response_format = new { type = "json_object" },
                     temperature = 0,
-                    max_tokens = 8192
+                    max_tokens = 16384
                 })
                 : JsonContent.Create(new { model = settings.Model, messages });
 
@@ -103,6 +103,14 @@ public sealed class CentComChatClient(
         }
 
         using var document = JsonDocument.Parse(json);
+        if (requireJson && document.RootElement.TryGetProperty("done_reason", out var doneReason)
+            && doneReason.GetString() == "length")
+            throw new JsonException("CentCom reached its output limit before completing the JSON response.");
+        if (requireJson && document.RootElement.TryGetProperty("choices", out var responseChoices)
+            && responseChoices.ValueKind == JsonValueKind.Array && responseChoices.GetArrayLength() > 0
+            && responseChoices[0].TryGetProperty("finish_reason", out var finishReason)
+            && finishReason.GetString() == "length")
+            throw new JsonException("CentCom reached its output limit before completing the JSON response.");
         if (document.RootElement.TryGetProperty("message", out var nativeMessage) &&
             nativeMessage.TryGetProperty("content", out var nativeContent))
         {

@@ -179,69 +179,41 @@ public sealed partial class CentComTaskAnalysisService(
             }
             var requestMessages = new CentComChatClient.RequestMessage[]
             {
-                new("system", BuildSystemPrompt() + (offeredOption?.CopySource is null ? "" : "\n" + CopiedOptionResponseInstructions)),
+                new("system", BuildSystemPrompt() + BuildOptionSpecification(offeredOption) + (offeredOption?.CopySource is null ? "" : "\n" + CopiedOptionResponseInstructions)),
                 new("user", BuildTaskPrompt(taskContext, resolvedReviewHistory, reusableRules) + BuildCopiedOptionPrompt(offeredOption), photoImages)
             };
-            var response = await centCom.CompleteJsonAsync(requestMessages, cancellationToken);
-            AnalysisResponse result;
-            try
+            AnalysisResponse? result = null;
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                result = ParseResponse(response);
-            }
-            catch (JsonException)
-            {
-                logger.LogWarning(
-                    "CentCom returned malformed JSON for job {JobId}; requesting one repair.",
-                    jobId);
-                response = await centCom.CompleteJsonAsync(
-                [
-                    .. requestMessages,
-                    new("user",
-                        "The previous response was invalid or truncated. Regenerate the FULL answer as valid JSON " +
-                        "matching the required schema. Keep assumptions, warnings, and material notes concise. " +
-                        "Include every required material category. Return JSON only.")
-                ], cancellationToken);
+                CentComChatClient.RequestMessage[] messages = attempt == 0 ? requestMessages :
+                    [
+                        .. requestMessages,
+                        new("user", "Regenerate the FULL answer as complete, compact JSON matching the schema. " +
+                            "The previous answer was empty, incomplete, or invalid. Include a practical material list " +
+                            "using the saved dimensions and mandatory option specification. Include compatible supplies. " +
+                            "Use short descriptions and calculation notes, consolidate identical items, and do not repeat " +
+                            "the scope. Do not substitute another decking product. Return JSON only.")
+                    ];
                 try
                 {
-                    result = ParseResponse(response);
+                    var response = await centCom.CompleteJsonAsync(messages, cancellationToken);
+                    var candidate = ParseResponse(response);
+                    if (candidate.Materials.Count > 0 || offeredOption?.CopySource is not null)
+                    {
+                        result = candidate;
+                        break;
+                    }
+                    logger.LogWarning("CentCom returned no materials for job {JobId}, attempt {Attempt}.", jobId, attempt + 1);
                 }
-                catch (JsonException repairException)
+                catch (JsonException)
                 {
-                    if (offeredOption?.CopySource is not null || offeredOption?.AutomaticMaterial is not null)
-                        throw new InvalidOperationException("CentCom could not return a complete copied-option material plan. Retry the option analysis.", repairException);
-                    logger.LogWarning(
-                        repairException,
-                        "CentCom JSON repair was still malformed for job {JobId}; deriving a safe material plan from the saved task scope.",
-                        jobId);
-                    result = BuildScopeFallback(taskContext);
+                    logger.LogWarning("CentCom returned incomplete or invalid JSON for job {JobId}, attempt {Attempt}.", jobId, attempt + 1);
                 }
             }
-
-            if (offeredOption?.CopySource is null && result.Materials.Count == 0)
+            if (result is null)
             {
-                logger.LogWarning(
-                    "CentCom returned no materials for job {JobId}; requesting one complete material-plan repair.",
-                    jobId);
-                response = await centCom.CompleteJsonAsync(
-                [
-                    .. requestMessages,
-                    new("user",
-                        "The previous answer contained no material line items. Regenerate the FULL JSON answer with a practical " +
-                        "material plan derived from the task scope. Treat brand names and general product descriptions as search " +
-                        "intents; do not require an exact catalog description. Include requested decking and railing products when " +
-                        "they appear in the scope, use the supplied dimensions for planning quantities, and identify assumptions. " +
-                        "Return JSON only.")
-                ], cancellationToken);
-                result = ParseResponse(response);
-            }
-
-            if (offeredOption?.CopySource is null && result.Materials.Count == 0)
-            {
-                logger.LogWarning(
-                    "CentCom repair still returned no materials for job {JobId}; deriving safe search intents from the saved task scope.",
-                    jobId);
-                if (offeredOption?.AutomaticMaterial is not null)
-                    throw new InvalidOperationException("CentCom returned no materials for this option. An administrator can retry its analysis.");
+                if (offeredOption?.CopySource is not null || offeredOption?.AutomaticMaterial is not null)
+                    throw new InvalidOperationException("CentCom could not return a complete material plan after three attempts. Retry this option's analysis; no price was calculated.");
                 result = BuildScopeFallback(taskContext);
             }
 
@@ -257,7 +229,8 @@ public sealed partial class CentComTaskAnalysisService(
                 if (!offeredOption.IncludeRailing)
                     result.Materials.RemoveAll(item => MaterialCategory(item.Description) == "Railing"
                         || ContainsAny(item.Description, "rail post", "rail bracket", "rail kit", "rail panel", "baluster"));
-                var decking = result.Materials.Where(item => MaterialCategory(item.Description) == "Decking").ToList();
+                var decking = result.Materials.Where(item => MaterialCategory(item.Description) == "Decking"
+                    && !ContainsAny(item.Description, "fastener", "screw", "clip", "plug", "tape", "flashing")).ToList();
                 if (decking.Count == 0 || decking.Any(item => offeredOption.AutomaticMaterial switch
                     {
                         "Trex" => !item.Description.Contains("trex", StringComparison.OrdinalIgnoreCase),
@@ -596,6 +569,18 @@ public sealed partial class CentComTaskAnalysisService(
             .ToList();
     }
 
+    private static string BuildOptionSpecification(EstimateOption? option)
+    {
+        if (option?.AutomaticMaterial is null) return "";
+        return $"\nMANDATORY OPTION SPECIFICATION: Surface deck boards must be {option.AutomaticMaterial}. " +
+            "This selection overrides conflicting shared-scope materials. Name the selected product in each deck-board line. " +
+            "Trex Enhance is one composite decking product family, not two choices. Framing may use appropriate treated lumber; " +
+            "fasteners and accessories must be compatible but need not carry the decking product name. " +
+            (option.IncludeRailing ? "Include a complete compatible railing system. " :
+                "Exclude all railing components, retaining structural support posts. ") +
+            $"Use {option.CrewCount ?? 1} crew(s) and {option.EstimatedDays ?? 1} workday(s) for this option's plan.";
+    }
+
     private static string BuildSystemPrompt() => """
         You are CentCom, a construction estimating assistant. Return JSON only, without markdown.
         Create a COMPLETE but consolidated proposed supply list for the described project.
@@ -643,7 +628,8 @@ public sealed partial class CentComTaskAnalysisService(
             }
           ]
         }
-        Keep all descriptive strings concise so the complete JSON response fits within the model output limit.
+        Keep descriptions under 140 characters and notes under 180 characters. Do not repeat the scope.
+        Keep assumptions and warnings concise and return compact JSON so every material fits in the response.
         """;
 
     private static string BuildTaskPrompt(
