@@ -137,7 +137,7 @@ public sealed partial class CentComTaskAnalysisService(
                 taskContext.CrewSizeOverride = offered.CrewSize;
                 taskContext.DailyCrewCostOverride = offered.DailyCrewCost;
                 taskContext.ScopeOfWork += $"\nOPTION: {offered.Name}\n{offered.Description}\nAnalyze only this option; do not combine alternative materials.";
-                taskContext.ScopeOfWork += $"\nOPTION PLAN: {offered.EstimatedDays?.ToString(CultureInfo.InvariantCulture) ?? "Unspecified"} workdays; crew {offered.CrewSize?.ToString(CultureInfo.InvariantCulture) ?? "Policy default"}. Labor is priced separately using this option's crew and duration.";
+                taskContext.ScopeOfWork += $"\nOPTION PLAN: {offered.EstimatedDays?.ToString(CultureInfo.InvariantCulture) ?? "Unspecified"} workdays; crew {offered.CrewSize?.ToString(CultureInfo.InvariantCulture) ?? "Policy default"}. Labor is priced separately using this option's crew and duration. Number of crews: {offered.CrewCount ?? 1}.";
             }
             if (offeredOption?.AutomaticMaterial is not null)
             {
@@ -258,9 +258,13 @@ public sealed partial class CentComTaskAnalysisService(
                     result.Materials.RemoveAll(item => MaterialCategory(item.Description) == "Railing"
                         || ContainsAny(item.Description, "rail post", "rail bracket", "rail kit", "rail panel", "baluster"));
                 var decking = result.Materials.Where(item => MaterialCategory(item.Description) == "Decking").ToList();
-                if (decking.Count == 0 || decking.Any(item => offeredOption.AutomaticMaterial == "Trex Enhance"
-                    ? !item.Description.Contains("Trex Enhance", StringComparison.OrdinalIgnoreCase)
-                    : ContainsAny(item.Description, "trex", "composite", "pvc", "deckorator")))
+                if (decking.Count == 0 || decking.Any(item => offeredOption.AutomaticMaterial switch
+                    {
+                        "Trex" => !item.Description.Contains("trex", StringComparison.OrdinalIgnoreCase),
+                        "Trex Enhance" => !item.Description.Contains("trex enhance", StringComparison.OrdinalIgnoreCase),
+                        "Deckorators" => !item.Description.Contains("deckorator", StringComparison.OrdinalIgnoreCase),
+                        _ => ContainsAny(item.Description, "trex", "composite", "pvc", "deckorator")
+                    }))
                     throw new InvalidOperationException("CentCom did not return the selected decking material. Retry this option's analysis.");
                 if (offeredOption.IncludeRailing && !result.Materials.Any(item => MaterialCategory(item.Description) == "Railing"))
                     throw new InvalidOperationException("CentCom omitted the requested railing. Retry this option's analysis.");

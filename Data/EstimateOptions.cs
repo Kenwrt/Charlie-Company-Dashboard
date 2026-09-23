@@ -24,6 +24,8 @@ public sealed class EstimateOptions
         // Keep signatures of older, non-copied options unchanged.
         if (option.CopySource is not null || option.Substitutions.Count > 0)
             input = JsonSerializer.Serialize(new { Input = input, option.CopySource, Substitutions = option.Substitutions.OrderBy(key => key).ToArray() });
+        if (option.CrewCount is not null)
+            input = JsonSerializer.Serialize(new { Input = input, option.CrewCount, option.EstimatedDays });
         if (option.AutomaticMaterial is not null)
             input = JsonSerializer.Serialize(new { Input = input, option.AutomaticMaterial, option.IncludeRailing,
                 Photos = task.Photos.OrderBy(photo => photo.Id).Select(photo => photo.Id).ToArray() });
@@ -66,6 +68,7 @@ public sealed class EstimateOption
     public string? WorkType { get; set; }
     public decimal? EstimatedDays { get; set; }
     public decimal? CrewSize { get; set; }
+    public int? CrewCount { get; set; }
     public decimal? DailyCostPerCrewMember { get; set; }
     public decimal? TargetMarginPercent { get; set; }
     public decimal AdditionalBaselineCost { get; set; }
@@ -92,6 +95,7 @@ public sealed class EstimateOption
             WorkType, EstimatedDays, CrewSize, DailyCostPerCrewMember, TargetMarginPercent,
             AdditionalBaselineCost, Materials, LaborCost, OtherInternalCost
         });
+        if (CrewCount is not null) input = JsonSerializer.Serialize(new { Input = input, CrewCount });
         if (CopySource is not null || Substitutions.Count > 0)
             input = JsonSerializer.Serialize(new { Input = input, CopySource, Substitutions = Substitutions.OrderBy(key => key).ToArray() });
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input)));

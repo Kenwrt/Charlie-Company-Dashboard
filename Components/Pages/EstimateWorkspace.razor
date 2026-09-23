@@ -216,7 +216,14 @@ else
                             </div>
                         </details>
 
-                        @foreach (var taskOption in TaskOptions(task.Id).Cast<EstimateOption?>().DefaultIfEmpty())
+                        <details class="border rounded p-3 my-3">
+                        <summary class="fw-semibold">Task options · @TaskOptions(task.Id).Count() option(s)</summary>
+                        @if (version?.OptionsJson is not null)
+                        {
+                            <button type="button" class="btn btn-primary mt-3" disabled="@changingRailing" @onclick="() => AddTaskOptionAsync(task)">Add option</button>
+                            @if (!TaskOptions(task.Id).Any()) { <p class="text-muted mt-3">Add an option, then choose its material, crew count, and days to completion.</p> }
+                        }
+                        @foreach (var taskOption in (version?.OptionsJson is null ? new EstimateOption?[] { null } : TaskOptions(task.Id).Cast<EstimateOption?>()))
                         {
                             var analysis = task.Analyses.Where(item => item.EstimateOptionId == taskOption?.Id)
                                 .OrderByDescending(item => item.RevisionNumber).FirstOrDefault();
@@ -224,6 +231,27 @@ else
                             @if (taskOption is not null)
                             {
                                 <h3>@taskOption.Name</h3>
+                                <div class="my-3">
+                                    <strong class="d-block mb-2">Material (choose one)</strong>
+                                    @foreach (var material in OptionMaterials)
+                                    {
+                                        <label class="form-check form-check-inline">
+                                            <input type="checkbox" class="form-check-input" checked="@(taskOption.AutomaticMaterial == material.Value)"
+                                                disabled="@changingRailing" @onchange="args => UpdateTaskOptionAsync(task, taskOption, args.Value is true ? material.Value : null)" />
+                                            @material.Label
+                                        </label>
+                                    }
+                                </div>
+                                <div class="row g-3 my-2">
+                                    <label class="col-md-6">Number of crews
+                                        <InputNumber class="form-control" min="1" step="1" @bind-Value="taskOption.CrewCount"
+                                            @bind-Value:after="() => UpdateTaskOptionAsync(task, taskOption, taskOption.AutomaticMaterial)" />
+                                    </label>
+                                    <label class="col-md-6">Days to completion
+                                        <InputNumber class="form-control" min="0.5" step="0.5" @bind-Value="taskOption.EstimatedDays"
+                                            @bind-Value:after="() => UpdateTaskOptionAsync(task, taskOption, taskOption.AutomaticMaterial)" />
+                                    </label>
+                                </div>
                                 @if (taskOption.AutomaticMaterial is not null)
                                 {
                                     <label class="form-check">
@@ -637,6 +665,7 @@ else
                             }
                             </section>
                         }
+                        </details>
                         <div class="project-task-actions">
                             <button type="button"
                                     class="btn btn-outline-danger"
@@ -960,6 +989,58 @@ else
     private string newTaskType = ProjectTaskTypes.All[0];
     private bool addingProjectTask;
     private bool changingRailing;
+    private static readonly (string Label, string Value)[] OptionMaterials =
+        [("Trex", "Trex"), ("Enhance", "Trex Enhance"), ("Wood", "Pressure-treated wood"), ("Deckorators", "Deckorators")];
+
+    private async Task AddTaskOptionAsync(QuoteProjectTask task)
+    {
+        if (changingRailing || version?.OptionsJson is null) return;
+        changingRailing = true;
+        try
+        {
+            var current = await OptionsService.LoadAsync(version.Id);
+            if (current.OptionsJson != version.OptionsJson) throw new InvalidOperationException("The estimate changed. Reload before adding an option.");
+            var document = EstimateOptionsService.ForEditing(current);
+            var entry = document.Tasks.Single(item => item.TaskId == task.Id);
+            entry.Options.Add(new EstimateOption { Name = $"Option {entry.Options.Count + 1}", CrewCount = 1, EstimatedDays = 1, RequiresCentComAnalysis = true });
+            await OptionsService.SaveAsync(current.Id, current.OptionsJson!, document, current.TaxRate, current.DiscountAmount);
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The estimate changed. Reload before adding an option."; }
+        finally { changingRailing = false; }
+    }
+
+    private async Task UpdateTaskOptionAsync(QuoteProjectTask task, EstimateOption edited, string? material)
+    {
+        if (changingRailing || version?.OptionsJson is null) return;
+        changingRailing = true;
+        try
+        {
+            if (material is not null && !OptionMaterials.Any(item => item.Value == material))
+                throw new InvalidOperationException("Choose one of the listed materials.");
+            if (edited.CrewCount is <= 0 or > 1000 || edited.EstimatedDays is null or <= 0 or > 100000)
+                throw new InvalidOperationException("Enter a positive number of crews and days to completion.");
+            var current = await OptionsService.LoadAsync(version.Id);
+            if (current.OptionsJson != version.OptionsJson) throw new InvalidOperationException("The estimate changed. Reload before changing this option.");
+            var document = EstimateOptionsService.ForEditing(current);
+            var option = document.Tasks.Single(item => item.TaskId == task.Id).Options.Single(item => item.Id == edited.Id);
+            option.AutomaticMaterial = material;
+            option.CrewCount = edited.CrewCount ?? 1;
+            option.EstimatedDays = edited.EstimatedDays;
+            option.IsReady = false;
+            option.SourceAnalysisId = null;
+            option.PricingInputsSignature = null;
+            await OptionsService.SaveAsync(current.Id, current.OptionsJson!, document, current.TaxRate, current.DiscountAmount);
+            await ReloadAsync();
+            if (material is not null) await QueueAutomaticOptionsAsync(task.Id, option.Id);
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The estimate changed. Reload before editing this option."; }
+        finally { changingRailing = false; }
+    }
+
+
 
     private async Task QueueAutomaticOptionsAsync(int taskId, Guid? changedOptionId = null)
     {
@@ -1148,13 +1229,6 @@ else
             .OrderBy(x => x.Product.Name).ThenBy(x => x.SupplyVendor.Name)
             .ToListAsync();
         version = quote?.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
-        if (version?.OptionsJson is not null && version.Status == "Draft" && await OptionsService.EnsureSimpleOptionsAsync(version.Id))
-        {
-            await ReloadAsync();
-            foreach (var task in quote!.ProjectTasks.Where(item => !string.IsNullOrWhiteSpace(item.ScopeOfWork)).ToList())
-                await QueueAutomaticOptionsAsync(task.Id);
-            return;
-        }
         currentCostSnapshot = version?.CostSnapshots.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
         auditCostSnapshot = null;
         if (isAdministrator && currentCostSnapshot is not null)
@@ -2246,7 +2320,7 @@ else
             {
                 TaskId = task.Id, SortOrder = task.SortOrder, TaskType = task.TaskType,
                 ScopeOfWork = task.ScopeOfWork, Measurements = task.Measurements,
-                Options = EstimateOptionsService.SimpleOptions()
+                Options = []
             });
             foreach (var entry in options.Tasks)
             {

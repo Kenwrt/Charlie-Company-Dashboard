@@ -55,7 +55,7 @@ public sealed class EstimateOptionsService(
             var entry = options.Tasks.SingleOrDefault(item => item.TaskId == task.Id);
             if (entry is null)
             {
-                entry = new EstimateTaskOptions { TaskId = task.Id, Options = [new EstimateOption { RequiresCentComAnalysis = true, WorkType = task.WorkType, EstimatedDays = task.EstimatedDays, CrewSize = task.CrewSizeOverride }] };
+                entry = new EstimateTaskOptions { TaskId = task.Id };
                 options.Tasks.Add(entry);
             }
             if (entry.Measurements != task.Measurements || entry.ScopeOfWork != task.ScopeOfWork)
@@ -86,6 +86,7 @@ public sealed class EstimateOptionsService(
             throw new InvalidOperationException("Keep legacy pricing until every task has a cost snapshot.");
         foreach (var task in options.Tasks)
         {
+            if (task.Options.Count == 0) task.Options.Add(new EstimateOption { Name = "Original scope" });
             var option = task.Options.Single();
             var cost = snapshot?.Tasks.SingleOrDefault(item => item.QuoteProjectTaskId == task.TaskId);
             if (cost is not null)
@@ -122,37 +123,6 @@ public sealed class EstimateOptionsService(
         WriteSelectedLines(version, options);
         await AuditAsync(db, version, "Task options enabled from saved pricing. Prior versions and snapshots retained.");
         await db.SaveChangesAsync();
-    }
-
-    public static List<EstimateOption> SimpleOptions() =>
-    [
-        new() { Name = "Option 1: Trex Enhance", AutomaticMaterial = "Trex Enhance", RequiresCentComAnalysis = true, EstimatedDays = 1 },
-        new() { Name = "Option 2: Wood", AutomaticMaterial = "Pressure-treated wood", RequiresCentComAnalysis = true, EstimatedDays = 1 }
-    ];
-
-    public async Task<bool> EnsureSimpleOptionsAsync(int versionId)
-    {
-        await using var db = await factory.CreateDbContextAsync();
-        var version = await LoadAsync(db, versionId);
-        if (version.Status != "Draft" || version.ApprovedAt is not null || version.OptionsJson is null) return false;
-        var document = ForEditing(version);
-        var changed = false;
-        foreach (var task in document.Tasks)
-        {
-            if (task.Options.Count <= 1 && task.Options.All(option => option.AutomaticMaterial is null
-                && !option.IsReady && option.SourceAnalysisId is null && option.Materials.Count == 0 && option.CustomerPrice == 0)
-                && !version.QuoteCase.ProjectTasks.Single(item => item.Id == task.TaskId).Analyses.Any())
-            {
-                task.Options = SimpleOptions();
-                changed = true;
-            }
-        }
-        if (!changed) return false;
-        await RequireDraftAsync(db, version, version.OptionsJson);
-        version.OptionsJson = document.Write();
-        await AuditAsync(db, version, "Default Trex Enhance and wood options created for unestimated tasks.");
-        await db.SaveChangesAsync();
-        return true;
     }
 
     public async Task SetRailingAsync(int versionId, string expectedJson, int taskId, Guid optionId, bool include)
@@ -386,6 +356,8 @@ public sealed class EstimateOptionsService(
                 .Select(item => (int?)item.RevisionNumber).MaxAsync() ?? 0;
             foreach (var item in group)
             {
+                if (item.Option.CrewCount is not null && item.Option.AutomaticMaterial is null)
+                    throw new InvalidOperationException($"Choose a material for '{item.Option.Name}' before analysis.");
                 var analysis = new QuoteTaskAnalysis
                 {
                     QuoteProjectTaskId = task.Id, EstimateOptionId = item.Option.Id,
@@ -550,7 +522,7 @@ public sealed class EstimateOptionsService(
         option.CrewSize ??= policyCrew;
         option.DailyCostPerCrewMember ??= decimal.Round((crew?.DailyCrewCost ?? policy.DefaultDailyCrewCost) / policyCrew, 4);
         var days = option.EstimatedDays.Value;
-        option.LaborCost = decimal.Round(days * option.CrewSize.Value * option.DailyCostPerCrewMember.Value, 2);
+        option.LaborCost = decimal.Round(days * (option.CrewCount ?? 1) * option.CrewSize.Value * option.DailyCostPerCrewMember.Value, 2);
         var direct = option.MaterialCost + option.LaborCost;
         var overhead = policy.Rules.Where(rule => rule.IsActive && rule.Scope == CostRuleScopes.Task
             && (rule.TaskType == null || rule.TaskType == task.TaskType)).Sum(rule => Calculate(rule, direct, days, 1))
@@ -562,7 +534,7 @@ public sealed class EstimateOptionsService(
         var share = requiredCount == 0 ? 1m / Math.Max(1, document.Tasks.Count)
             : offeredTask!.IsRequired ? 1m / requiredCount : 0m;
         var project = policy.GeneralOverheadFixed * share
-            + (policy.GeneralOverheadPerProjectDay + policy.CalculatedOverheadPerCrewDay) * days
+            + (policy.GeneralOverheadPerProjectDay + policy.CalculatedOverheadPerCrewDay * (option.CrewCount ?? 1)) * days
             + (direct + overhead) * policy.GeneralOverheadPercent / 100m
             + policy.Rules.Where(rule => rule.IsActive && rule.Scope == CostRuleScopes.Project
                 && (rule.TaskType == null || rule.TaskType == task.TaskType))
@@ -575,7 +547,7 @@ public sealed class EstimateOptionsService(
         option.TargetMarginPercent = margin;
         option.CustomerPrice = decimal.Round(option.InternalCost / (1 - margin / 100m), 2);
         if (option.MarketValue == 0) option.MarketValue = option.CustomerPrice;
-        option.CostBasis = $"{policy.Name} revision {policy.RevisionNumber}; {option.CrewSize:N2} crew members x {days:N2} workdays x {option.DailyCostPerCrewMember:C2} per person/day; fixed project overhead allocated across {requiredCount} required tasks. Market value starts at policy price and requires estimator review.";
+        option.CostBasis = $"{policy.Name} revision {policy.RevisionNumber}; {option.CrewCount ?? 1} crews x {option.CrewSize:N2} members per crew x {days:N2} workdays x {option.DailyCostPerCrewMember:C2} per person/day; fixed project overhead allocated across {requiredCount} required tasks. Market value starts at policy price and requires estimator review.";
         option.PricingInputsSignature = option.CalculationSignature();
         return option;
     }
@@ -595,9 +567,11 @@ public sealed class EstimateOptionsService(
             throw new InvalidOperationException("Tasks and options must have unique identifiers.");
         foreach (var task in options.Tasks)
         {
-            if (task.Options.Count == 0) throw new InvalidOperationException("Add at least one option to every task.");
+            // Draft tasks may have no options until the estimator adds one.
             foreach (var option in task.Options)
             {
+                if (option.AutomaticMaterial is not null && option.AutomaticMaterial is not ("Trex" or "Trex Enhance" or "Pressure-treated wood" or "Deckorators"))
+                    throw new InvalidOperationException("Choose Trex, Enhance, Wood, or Deckorators.");
                 if (option.Substitutions.Distinct().Count() != option.Substitutions.Count
                     || option.Substitutions.Any(key => !EstimateOptionSubstitutions.All.Any(item => item.Key == key))
                     || (option.Substitutions.Contains(EstimateOptionSubstitutions.Trex) && option.Substitutions.Contains(EstimateOptionSubstitutions.Deckorators)))
@@ -605,7 +579,7 @@ public sealed class EstimateOptionsService(
                 if (option.Substitutions.Any(key => !EstimateOptionSubstitutions.CanApply(option.CopySource, key)))
                     throw new InvalidOperationException("The copied material list must identify the wood decking or wood railing being replaced. Update and recopy the source option if necessary.");
                 option.WorkType = string.IsNullOrWhiteSpace(option.WorkType) ? null : option.WorkType.Trim();
-                if (option.EstimatedDays is < 0 or > 100000 || option.CrewSize is <= 0 or > 10000
+                if (option.CrewCount is <= 0 or > 1000 || option.EstimatedDays is < 0 or > 100000 || option.CrewSize is <= 0 or > 10000
                     || option.DailyCostPerCrewMember is < 0 or > 99999999 || option.TargetMarginPercent is < 0 or >= 100
                     || option.AdditionalBaselineCost < 0 || option.AdditionalBaselineCost > 999999999999m
                     || option.AdditionalBaselineCost != decimal.Round(option.AdditionalBaselineCost, 2)
