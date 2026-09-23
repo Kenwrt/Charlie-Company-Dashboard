@@ -271,6 +271,22 @@ public sealed class EstimateOptionsService(
         await db.SaveChangesAsync();
     }
 
+    public async Task<bool> DefaultSingleOptionPlansAsync(int versionId, string expectedJson)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var version = await LoadAsync(db, versionId);
+        await RequireDraftAsync(db, version, expectedJson);
+        var document = EstimateOptions.Read(expectedJson);
+        if (!document.Tasks.Any(task => task.IsRequired && task.Options.Count == 1 && task.PriceOptionId is null)) return false;
+        SynchronizePricePlans(document);
+        await RequireAcceptedAnalysesAsync(db, version, document);
+        version.OptionsJson = document.Write();
+        WriteSelectedLines(version, document);
+        await AuditAsync(db, version, "Single-option task pricing plans defaulted to their only option.");
+        await db.SaveChangesAsync();
+        return true;
+    }
+
     public async Task SelectPricePlanAsync(int versionId, string expectedJson, int taskId, Guid? optionId)
     {
         await using var db = await factory.CreateDbContextAsync();

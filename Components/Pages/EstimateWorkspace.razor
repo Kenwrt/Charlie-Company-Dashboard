@@ -1288,6 +1288,20 @@ else
             .OrderBy(x => x.Product.Name).ThenBy(x => x.SupplyVendor.Name)
             .ToListAsync();
         version = quote?.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+        if (version?.Status == "Draft" && version.OptionsJson is not null
+            && EstimateOptions.Read(version.OptionsJson).Tasks.Any(task => task.IsRequired && task.Options.Count == 1 && task.PriceOptionId is null))
+        {
+            try
+            {
+                if (await OptionsService.DefaultSingleOptionPlansAsync(version.Id, version.OptionsJson))
+                {
+                    await ReloadAsync();
+                    return;
+                }
+            }
+            catch (InvalidOperationException exception) { message = exception.Message; }
+            catch (DbUpdateException) { message = "The estimate changed. Reload to update its pricing plan."; }
+        }
         currentCostSnapshot = version?.CostSnapshots.OrderByDescending(x => x.RevisionNumber).FirstOrDefault();
         auditCostSnapshot = null;
         if (isAdministrator && currentCostSnapshot is not null)
