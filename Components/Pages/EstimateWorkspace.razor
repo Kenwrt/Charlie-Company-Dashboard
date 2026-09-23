@@ -230,7 +230,10 @@ else
                             <section class="border rounded p-3 mt-3" @key="@(taskOption?.Id)">
                             @if (taskOption is not null)
                             {
-                                <h3>@taskOption.Name</h3>
+                                <div class="d-flex justify-content-between align-items-center gap-2">
+                                    <h3>@taskOption.Name</h3>
+                                    <button type="button" class="btn btn-outline-danger btn-sm" disabled="@(changingRailing || version?.Status != "Draft")" @onclick="() => DeleteTaskOptionAsync(task, taskOption)">Delete option</button>
+                                </div>
                                 <div class="my-3">
                                     <strong class="d-block mb-2">Material (choose one)</strong>
                                     @foreach (var material in OptionMaterials)
@@ -990,7 +993,22 @@ else
     private bool addingProjectTask;
     private bool changingRailing;
     private static readonly (string Label, string Value)[] OptionMaterials =
-        [("Trex", "Trex"), ("Enhance", "Trex Enhance"), ("Wood", "Pressure-treated wood"), ("Deckorators", "Deckorators")];
+        [("Trex Enhance", "Trex Enhance"), ("Wood", "Pressure-treated wood"), ("Deckorators", "Deckorators")];
+
+    private async Task DeleteTaskOptionAsync(QuoteProjectTask task, EstimateOption option)
+    {
+        if (changingRailing || version?.OptionsJson is null) return;
+        changingRailing = true;
+        try
+        {
+            await OptionsService.DeleteOptionAsync(version.Id, version.OptionsJson, task.Id, option.Id);
+            message = $"Option '{option.Name}' deleted.";
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException exception) { message = exception.Message; }
+        catch (DbUpdateException) { message = "The estimate changed. Reload before deleting the option."; }
+        finally { changingRailing = false; }
+    }
 
     private async Task AddTaskOptionAsync(QuoteProjectTask task)
     {

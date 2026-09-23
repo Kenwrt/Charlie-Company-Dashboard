@@ -125,6 +125,31 @@ public sealed class EstimateOptionsService(
         await db.SaveChangesAsync();
     }
 
+    public async Task DeleteOptionAsync(int versionId, string expectedJson, int taskId, Guid optionId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var version = await LoadAsync(db, versionId);
+        await RequireDraftAsync(db, version, expectedJson);
+        var document = EstimateOptions.Read(expectedJson);
+        RequireCurrentTasks(version, document);
+        var task = document.Tasks.SingleOrDefault(item => item.TaskId == taskId)
+            ?? throw new InvalidOperationException("This task is no longer available.");
+        var option = task.Options.SingleOrDefault(item => item.Id == optionId)
+            ?? throw new InvalidOperationException("This option was already removed.");
+        task.Options.Remove(option);
+        if (task.SelectedOptionId == optionId) task.SelectedOptionId = null;
+        version.OptionsJson = document.Write();
+        WriteSelectedLines(version, document);
+        await db.QuoteProcessingJobs.Where(job => job.QuoteCaseId == version.QuoteCaseId
+                && job.EstimateOptionId == optionId && job.Status == "Queued")
+            .ExecuteUpdateAsync(setters => setters.SetProperty(job => job.Status, "Cancelled")
+                .SetProperty(job => job.Message, "Option deleted before analysis."));
+        await AuditAsync(db, version, $"Option '{option.Name}' deleted from task {task.SortOrder}.");
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+    }
+
     public async Task SetRailingAsync(int versionId, string expectedJson, int taskId, Guid optionId, bool include)
     {
         var version = await LoadAsync(versionId);
@@ -571,7 +596,7 @@ public sealed class EstimateOptionsService(
             foreach (var option in task.Options)
             {
                 if (option.AutomaticMaterial is not null && option.AutomaticMaterial is not ("Trex" or "Trex Enhance" or "Pressure-treated wood" or "Deckorators"))
-                    throw new InvalidOperationException("Choose Trex, Enhance, Wood, or Deckorators.");
+                    throw new InvalidOperationException("Choose Trex Enhance, Wood, or Deckorators.");
                 if (option.Substitutions.Distinct().Count() != option.Substitutions.Count
                     || option.Substitutions.Any(key => !EstimateOptionSubstitutions.All.Any(item => item.Key == key))
                     || (option.Substitutions.Contains(EstimateOptionSubstitutions.Trex) && option.Substitutions.Contains(EstimateOptionSubstitutions.Deckorators)))
