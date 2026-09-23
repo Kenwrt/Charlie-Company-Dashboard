@@ -2368,7 +2368,7 @@ else
 
     private async Task SaveEstimateAsync()
     {
-        if (quote is null || savingEstimate || !CanSaveEstimate) return;
+        if (quote is null || version is null || savingEstimate || !CanSaveEstimate) return;
         if (version.OptionsJson is not null)
         {
             if (optionsEditor is not null) await optionsEditor.SaveAsync();
