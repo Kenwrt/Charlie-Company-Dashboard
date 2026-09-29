@@ -1654,3 +1654,37 @@ details[open] > summary .disclosure-chevron {
 .password-visibility-toggle[aria-pressed="true"] .password-eye-hide {
     display: block;
 }
+
+/* Keep the forecast table inside the available viewport instead of widening the page. */
+.revenue-forecast-panel {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.forecast-jobs-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: scroll;
+    padding-bottom: 0.5rem;
+    scrollbar-width: auto;
+    scrollbar-color: #65758b #edf2f7;
+}
+
+.forecast-jobs-scroll::-webkit-scrollbar {
+    height: 14px;
+}
+
+.forecast-jobs-scroll::-webkit-scrollbar-track {
+    background: #edf2f7;
+}
+
+.forecast-jobs-scroll::-webkit-scrollbar-thumb {
+    background: #65758b;
+    border: 3px solid #edf2f7;
+    border-radius: 7px;
+}
+
+.forecast-jobs-scroll:focus-visible {
+    outline: 2px solid #1769aa;
+    outline-offset: 2px;
+}

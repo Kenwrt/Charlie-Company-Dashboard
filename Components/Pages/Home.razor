@@ -168,7 +168,7 @@
         }
         else
         {
-            <div class="finance-table-wrap">
+            <div class="finance-table-wrap forecast-jobs-scroll" tabindex="0" role="region" aria-label="Jobs for forecast review, scroll horizontally to see all columns">
                 <table class="finance-table">
                     <thead><tr><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("job")'>Job @ForecastSortIndicator("job")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("date")'>Job date @ForecastSortIndicator("date")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("operation")'>Location @ForecastSortIndicator("operation")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("customer")'>Customer @ForecastSortIndicator("customer")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("phase")'>Current phase @ForecastSortIndicator("phase")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("days")'>Time in phase @ForecastSortIndicator("days")</button></th><th>Next phase / expected</th><th>Next payment</th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("remaining")'>Remaining contract @ForecastSortIndicator("remaining")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortForecast("status")'>Forecast status @ForecastSortIndicator("status")</button></th><th></th></tr></thead>
                     <tbody>
