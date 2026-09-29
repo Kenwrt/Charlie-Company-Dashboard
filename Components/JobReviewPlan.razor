@@ -41,7 +41,7 @@
     <button type="button" class="btn btn-primary my-2" @onclick="SaveAsync">Save stage plan</button>
     <h4>Customer payment schedule</h4>
     <p>The design payment is included in the job price. Following the existing allocation convention, it is deducted first; the balance is split 30%, 30%, 30%, 10%. Existing schedules and recorded payments are retained.</p>
-    <label>Scheduling path<select class="form-select" @bind="withDesign" disabled="@(Job.PaymentMilestones.Count > 0)"><option value="true">With design payment ($1,500, capped at job price)</option><option value="false">Without design payment ($0)</option></select></label>
+    <label>Scheduling path<select class="form-select" value="@(withDesign ? "with-design" : "without-design")" @onchange="ChooseSchedulingPath" disabled="@(Job.PaymentMilestones.Count > 0)"><option value="with-design">With design payment ($1,500, capped at job price)</option><option value="without-design">Without design payment ($0)</option></select></label>
     <button type="button" class="btn btn-outline-primary my-2" disabled="@(Job.PaymentMilestones.Count > 0)" @onclick="ApplyAsync">Create payment schedule</button>
     <p>Scheduled: @Job.PaymentMilestones.Sum(x => x.Amount).ToString("C2") · Paid: @Job.PaymentMilestones.Where(x => x.Status == "Paid").Sum(x => x.Amount).ToString("C2") · Outstanding: @Job.PaymentMilestones.Where(x => x.Status is not ("Paid" or "Waived")).Sum(x => x.Amount).ToString("C2")</p>
     </fieldset>
@@ -62,10 +62,23 @@
     private bool busy, makeCurrent, withDesign = true;
     private string? message;
     private int expectedEventId;
+    private HousecallProJob? loadedJob;
+    private void ChooseSchedulingPath(ChangeEventArgs args)
+    {
+        if(Job.PaymentMilestones.Count > 0) return;
+        if(args.Value?.ToString() is "with-design" or "without-design")
+            withDesign = args.Value.ToString() == "with-design";
+    }
     protected override void OnParametersSet()
     {
+        // Parent renders must not discard unsaved selections or stage inputs.
+        if(ReferenceEquals(loadedJob, Job)) return;
+        if(loadedJob?.Id != Job.Id) { plan = new(); withDesign = true; }
+        loadedJob = Job;
         plans = JobReviewWorkflow.Plans(Job.ProgressEvents);
-        if(plans.ContainsKey("Schedule Job Without Design Fee")) withDesign = false;
+        var savedPath = Job.PaymentMilestones.FirstOrDefault(item => item.TriggerPhase is "Schedule Job With Design Fee" or "Schedule Job Without Design Fee")?.TriggerPhase;
+        if(savedPath is not null) withDesign = savedPath == "Schedule Job With Design Fee";
+        else if(plans.ContainsKey("Schedule Job Without Design Fee")) withDesign = false;
         else if(plans.ContainsKey("Schedule Job With Design Fee")) withDesign = true;
         Load(plan.Stage);
     }
