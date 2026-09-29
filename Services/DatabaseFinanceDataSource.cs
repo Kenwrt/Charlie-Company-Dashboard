@@ -122,7 +122,15 @@ public sealed class DatabaseFinanceDataSource(IDbContextFactory<ApplicationDbCon
             x.Status,
             x.Source)).ToList();
 
-        var forecast = BuildForecast(profile, milestones, debts);
+        // Permit costs are company outflows, never customer payment obligations.
+        var permitEvents = await db.HousecallProJobProgressEvents.AsNoTracking()
+            .Where(item => item.HousecallProJob.LocalOperationId == operation.Id && item.EventType == JobReviewWorkflow.EventType)
+            .ToListAsync(cancellationToken);
+        var permitPlans = permitEvents.GroupBy(item => item.HousecallProJobId)
+            .SelectMany(group => JobReviewWorkflow.Plans(group).Values)
+            .Where(plan => plan.Stage == "Permit Submitted to the City" && !plan.NotApplicable && !plan.CompanyCostPaid
+                && plan.CompanyPermitCost > 0 && plan.CompanyCostDue is not null).ToList();
+        var forecast = BuildForecast(profile, milestones, debts, permitPlans);
         var assumptions = new FinanceAssumptions(
             profile.ReportingPeriodStart,
             profile.ReportingPeriodEnd,
@@ -182,7 +190,7 @@ public sealed class DatabaseFinanceDataSource(IDbContextFactory<ApplicationDbCon
         return new FinanceDashboard(summary, entityData, checks, BuildAudits(profile, jobs, payableRows));
     }
 
-    private static IReadOnlyList<CashForecastWeek> BuildForecast(FinanceProfile profile, IReadOnlyList<HousecallProJobPaymentMilestone> milestones, IReadOnlyList<DebtItem> debts)
+    private static IReadOnlyList<CashForecastWeek> BuildForecast(FinanceProfile profile, IReadOnlyList<HousecallProJobPaymentMilestone> milestones, IReadOnlyList<DebtItem> debts, IReadOnlyList<JobStagePlan> permitPlans)
     {
         var result = new List<CashForecastWeek>(13);
         var beginningCash = profile.ReconciledCashBalance;
@@ -208,7 +216,7 @@ public sealed class DatabaseFinanceDataSource(IDbContextFactory<ApplicationDbCon
                 Use("Taxes"),
                 Use("Rent and utilities"),
                 Use("Fuel and vehicle"),
-                Use("Other"),
+                Use("Other") + permitPlans.Where(plan => plan.CompanyCostDue >= start && plan.CompanyCostDue <= end).Sum(plan => plan.CompanyPermitCost),
                 Use("Owner payroll"),
                 profile.MinimumOperatingReserveTarget);
             result.Add(week);

@@ -590,6 +590,7 @@
         var jobs = await db.HousecallProJobs.AsNoTracking()
             .Include(job => job.LocalOperation)
             .Include(job => job.Progress)
+            .Include(job => job.ProgressEvents)
             .Include(job => job.Blockers)
             .Include(job => job.PaymentMilestones)
             .Where(job => operationIds.Contains(job.LocalOperationId))
@@ -620,13 +621,12 @@
         foreach (var job in jobs)
         {
             var currentPhase = job.Progress?.CurrentPhase ?? "Not tracked";
-            var currentIndex = Array.IndexOf(JobProgressOptions.Phases, currentPhase);
-            var nextPhase = currentIndex >= 0 && currentIndex < JobProgressOptions.Phases.Length - 1
-                ? JobProgressOptions.Phases[currentIndex + 1]
-                : currentPhase == "Complete" ? "Complete" : "Not scheduled";
-            var nextPhaseDate = job.Progress?.ExpectedPhaseCompletionDate;
+            var nextPhase = JobReviewWorkflow.Next(job);
+            var stagePlans = JobReviewWorkflow.Plans(job.ProgressEvents);
+            var nextPhaseDate = stagePlans.TryGetValue(nextPhase, out var nextPlan)
+                ? nextPlan.Start ?? job.Progress?.ExpectedPhaseCompletionDate : job.Progress?.ExpectedPhaseCompletionDate;
             var openMilestones = job.PaymentMilestones
-                .Where(milestone => milestone.Status is not ("Paid" or "Waived"))
+                .Where(milestone => milestone.Amount > 0 && milestone.Status is not ("Paid" or "Waived"))
                 .OrderBy(milestone => milestone.ExpectedPaymentDate is null)
                 .ThenBy(milestone => milestone.ExpectedPaymentDate)
                 .ToList();

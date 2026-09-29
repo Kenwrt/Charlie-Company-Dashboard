@@ -1,0 +1,152 @@
+@using System.Security.Claims
+@using System.Text.Json
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IDbContextFactory<ApplicationDbContext> Factory
+@inject OperationAccessService Access
+@inject AuthenticationStateProvider Authentication
+
+<section class="border rounded p-3 mb-4">
+    <h3>Job review plan</h3>
+    <p>Plan dates and work for each stage. Permit costs are company expenses, separate from customer payments. Dates do not mark payments paid.</p>
+    @if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+    <fieldset disabled="@busy">
+    <label>Stage<select class="form-select" value="@plan.Stage" @onchange="ChooseStage">@foreach(var stage in JobReviewWorkflow.Stages){<option>@stage</option>}</select></label>
+    @if(JobReviewWorkflow.IsOptional(plan.Stage)) { <label class="form-check mt-2"><InputCheckbox class="form-check-input" @bind-Value="plan.NotApplicable" /> Not needed for this job</label> }
+    <div class="row g-2 mt-1">
+        <label class="col-md-4">Scheduled start<InputDate class="form-control" @bind-Value="plan.Start" /></label>
+        <label class="col-md-4">Duration (calendar days)<InputNumber class="form-control" min="1" max="3650" disabled="@(plan.Stage == "Demo")" @bind-Value="plan.DurationDays" /></label>
+        <label class="col-md-4">Completed on<InputDate class="form-control" @bind-Value="plan.Completed" /></label>
+        <label class="col-12">Preparation / work needed<InputTextArea class="form-control" maxlength="800" @bind-Value="plan.PreparationNotes" /></label>
+    </div>
+    @if(plan.Stage == "Permit Submitted to the City")
+    {
+        <div class="row g-2 mt-2">
+            <label class="col-md-4">Estimated company permit cost<InputNumber class="form-control" min="0" step="0.01" @bind-Value="plan.CompanyPermitCost" /></label>
+            <label class="col-md-4">Company cost due<InputDate class="form-control" @bind-Value="plan.CompanyCostDue" /></label>
+            <label class="col-md-4"><InputCheckbox @bind-Value="plan.CompanyCostPaid" /> Company permit cost paid</label>
+        </div>
+    }
+    @if(Job.PaymentMilestones.Any(x => x.TriggerPhase == plan.Stage) || plan.Stage == "May Extend Payment Period")
+    {
+        @if(plan.Stage == "May Extend Payment Period")
+        {
+            <label>Payment to extend<InputSelect class="form-select" @bind-Value="plan.ExtendedMilestoneId"><option value="">Choose payment</option>@foreach(var item in Job.PaymentMilestones.Where(x => x.Status is not ("Paid" or "Waived"))){<option value="@item.Id">@item.Name</option>}</InputSelect></label>
+        }
+        <label>Customer payment due date<InputDate class="form-control" @bind-Value="plan.PaymentDue" /></label>
+    }
+    <label class="form-check mt-2"><InputCheckbox class="form-check-input" @bind-Value="makeCurrent" /> Set as current job phase</label>
+    <button type="button" class="btn btn-primary my-2" @onclick="SaveAsync">Save stage plan</button>
+    <h4>Customer payment schedule</h4>
+    <p>The design payment is included in the job price. Following the existing allocation convention, it is deducted first; the balance is split 30%, 30%, 30%, 10%. Existing schedules and recorded payments are retained.</p>
+    <label>Scheduling path<select class="form-select" @bind="withDesign" disabled="@(Job.PaymentMilestones.Count > 0)"><option value="true">With design payment ($1,500, capped at job price)</option><option value="false">Without design payment ($0)</option></select></label>
+    <button type="button" class="btn btn-outline-primary my-2" disabled="@(Job.PaymentMilestones.Count > 0)" @onclick="ApplyAsync">Create payment schedule</button>
+    <p>Scheduled: @Job.PaymentMilestones.Sum(x => x.Amount).ToString("C2") Â· Paid: @Job.PaymentMilestones.Where(x => x.Status == "Paid").Sum(x => x.Amount).ToString("C2") Â· Outstanding: @Job.PaymentMilestones.Where(x => x.Status is not ("Paid" or "Waived")).Sum(x => x.Amount).ToString("C2")</p>
+    </fieldset>
+    <div class="table-responsive"><table class="table"><thead><tr><th>Stage</th><th>Start / end</th><th>Completed</th><th>Work needed</th></tr></thead><tbody>
+    @foreach(var stage in JobReviewWorkflow.Stages.Where(stage => plans.ContainsKey(stage)))
+    { var saved = plans[stage]; <tr><td>@stage @(saved.NotApplicable ? "(not needed)" : "")</td><td>@saved.Start / @saved.End</td><td>@saved.Completed</td><td>@saved.PreparationNotes
+        @if(stage == "Permit Submitted to the City") { <div>Company permit cost: @saved.CompanyPermitCost.ToString("C2") · Due: @saved.CompanyCostDue · @(saved.CompanyCostPaid ? "Paid" : "Outstanding")</div> }
+        @if(saved.PaymentDue is not null) { <div>Customer payment due: @saved.PaymentDue</div> }
+        </td></tr> }
+    </tbody></table></div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public HousecallProJob Job { get; set; } = null!;
+    [Parameter] public EventCallback Changed { get; set; }
+    private Dictionary<string, JobStagePlan> plans = [];
+    private JobStagePlan plan = new();
+    private bool busy, makeCurrent, withDesign = true;
+    private string? message;
+    private int expectedEventId;
+    protected override void OnParametersSet()
+    {
+        plans = JobReviewWorkflow.Plans(Job.ProgressEvents);
+        if(plans.ContainsKey("Schedule Job Without Design Fee")) withDesign = false;
+        else if(plans.ContainsKey("Schedule Job With Design Fee")) withDesign = true;
+        Load(plan.Stage);
+    }
+    private void ChooseStage(ChangeEventArgs args) => Load(args.Value?.ToString() ?? JobReviewWorkflow.Stages[0]);
+    private void Load(string stage)
+    {
+        plan = plans.TryGetValue(stage, out var saved) ? JsonSerializer.Deserialize<JobStagePlan>(JsonSerializer.Serialize(saved))! : new() { Stage = stage };
+        if(stage == "Demo") plan.DurationDays = 1;
+        expectedEventId = Job.ProgressEvents.Where(x => x.EventType == JobReviewWorkflow.EventType).Select(x => x.Id).DefaultIfEmpty().Max();
+        makeCurrent = false;
+    }
+    private async Task<HousecallProJob> AuthorizedJob(ApplicationDbContext db)
+    {
+        var user = (await Authentication.GetAuthenticationStateAsync()).User;
+        if(!user.IsInRole(ApplicationRoles.Administrator) && !user.IsInRole(ApplicationRoles.LocalOperator)) throw new InvalidOperationException("Job editing requires operator access.");
+        var allowed = (await Access.GetAccessibleOperationsAsync()).Select(operation => operation.Id).ToArray();
+        return await db.HousecallProJobs.Include(x => x.Progress).Include(x => x.ProgressEvents).Include(x => x.PaymentMilestones)
+            .SingleOrDefaultAsync(x => x.Id == Job.Id && allowed.Contains(x.LocalOperationId)) ?? throw new InvalidOperationException("Job access is unavailable.");
+    }
+    private async Task SaveAsync()
+    {
+        if(busy) return; busy = true;
+        try
+        {
+            if(!JobReviewWorkflow.Stages.Contains(plan.Stage) || plan.PreparationNotes?.Length > 800 || plan.DurationDays is < 1 or > 3650 || plan.CompanyPermitCost < 0 || plan.CompanyPermitCost != decimal.Round(plan.CompanyPermitCost,2)) throw new InvalidOperationException("Review stage notes, duration and permit cost.");
+            if(plan.Completed < plan.Start) throw new InvalidOperationException("Completion cannot precede the start date.");
+            if(plan.NotApplicable && (!JobReviewWorkflow.IsOptional(plan.Stage) || makeCurrent)) throw new InvalidOperationException("An omitted stage cannot be the current phase.");
+            await using var db = await Factory.CreateDbContextAsync();
+            await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            var job = await AuthorizedJob(db);
+            if(job.ProgressEvents.Where(x => x.EventType == JobReviewWorkflow.EventType).Select(x => x.Id).DefaultIfEmpty().Max() != expectedEventId) throw new InvalidOperationException("The plan changed. Reload the job before saving.");
+            var scheduledPath = job.PaymentMilestones.FirstOrDefault(x => x.TriggerPhase.StartsWith("Schedule Job "))?.TriggerPhase;
+            if(plan.Stage.StartsWith("Schedule Job ") && scheduledPath is not null && scheduledPath != plan.Stage) throw new InvalidOperationException("This job already uses the alternative scheduling/payment path.");
+            var user = (await Authentication.GetAuthenticationStateAsync()).User;
+            var identity = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            if(plan.Stage == "Demo") plan.DurationDays = 1;
+            if(plan.Stage == "May Extend Payment Period" && !plan.NotApplicable && (plan.ExtendedMilestoneId is null || plan.PaymentDue is null)) throw new InvalidOperationException("Select an outstanding payment and its revised due date.");
+            if(plan.Stage == "May Extend Payment Period" && !plan.NotApplicable
+                && !job.PaymentMilestones.Any(item => item.Id == plan.ExtendedMilestoneId && item.Status is not ("Paid" or "Waived")))
+                throw new InvalidOperationException("Choose an outstanding payment belonging to this job.");
+            var payments = job.PaymentMilestones.Where(x => plan.Stage == "May Extend Payment Period" ? x.Id == plan.ExtendedMilestoneId : x.TriggerPhase == plan.Stage).ToList();
+            if(plan.PaymentDue is not null && !plan.NotApplicable)
+                foreach(var payment in payments.Where(x => x.Status is not ("Paid" or "Waived"))) { payment.ExpectedPaymentDate = plan.PaymentDue; payment.UpdatedAt = DateTimeOffset.UtcNow; }
+            var payload = JsonSerializer.Serialize(plan);
+            if(payload.Length > 2000) throw new InvalidOperationException("Shorten the preparation notes before saving.");
+            db.HousecallProJobProgressEvents.Add(new() { HousecallProJobId=job.Id, EventType=JobReviewWorkflow.EventType, Summary=$"{plan.Stage}: dates, preparation and payment planning saved.", Details=payload, EnteredBy=identity });
+            if(makeCurrent || job.Progress?.CurrentPhase == plan.Stage)
+            {
+                job.Progress ??= new() { HousecallProJobId=job.Id };
+                if(job.Progress.CurrentPhase != plan.Stage) job.Progress.PhaseEnteredAt=DateTimeOffset.UtcNow;
+                job.Progress.CurrentPhase=plan.Stage; job.Progress.ExpectedPhaseCompletionDate=plan.End;
+                job.Progress.NextAction=plan.PreparationNotes?[..Math.Min(500,plan.PreparationNotes.Length)];
+                job.Progress.UpdatedAt=DateTimeOffset.UtcNow; job.Progress.UpdatedBy=identity;
+            }
+            await db.SaveChangesAsync(); await transaction.CommitAsync();
+            message="Stage plan saved. Outstanding payment dates feed the revenue forecast.";
+            await Changed.InvokeAsync();
+        }
+        catch(InvalidOperationException ex) { message=ex.Message; }
+        catch(DbUpdateException) { message="The job changed while saving. Reload and try again."; }
+        finally { busy=false; }
+    }
+    private async Task ApplyAsync()
+    {
+        if(busy) return; busy=true;
+        try
+        {
+            await using var db=await Factory.CreateDbContextAsync();
+            await using var transaction=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            var job=await AuthorizedJob(db);
+            if(job.PaymentMilestones.Count>0) throw new InvalidOperationException("Existing payments are preserved. Edit their dates and obligations below.");
+            var savedPlans = JobReviewWorkflow.Plans(job.ProgressEvents);
+            if(savedPlans.ContainsKey(withDesign ? "Schedule Job Without Design Fee" : "Schedule Job With Design Fee"))
+                throw new InvalidOperationException("Save the chosen scheduling path in the stage plan before applying its payment schedule.");
+            db.HousecallProJobPaymentMilestones.AddRange(JobReviewWorkflow.Payments(job,withDesign));
+            var user=(await Authentication.GetAuthenticationStateAsync()).User;
+            db.HousecallProJobProgressEvents.Add(new(){HousecallProJobId=job.Id,EventType="Payment schedule applied",Summary=$"30/30/30/10 balance schedule; design path: {withDesign}; total {job.JobPrice:C2}.",EnteredBy=user.FindFirstValue(ClaimTypes.NameIdentifier)});
+            await db.SaveChangesAsync(); await transaction.CommitAsync(); await Changed.InvokeAsync(); message="Payment schedule created. Set the milestone due dates below.";
+        }
+        catch(InvalidOperationException ex){message=ex.Message;}
+        catch(DbUpdateException){message="A schedule was changed concurrently. Reload the job.";}
+        finally{busy=false;}
+    }
+}

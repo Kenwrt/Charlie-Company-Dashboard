@@ -35,7 +35,7 @@ public sealed class HousecallProJob
 
 public static class JobProgressOptions
 {
-    public static readonly string[] Phases = ["Design", "Permitting", "HOA Approval", "Framing Complete", "Scheduled", "Day One", "Inspection", "Final Payment", "Complete"];
+    public static readonly string[] Phases = [.. JobReviewWorkflow.Stages, "Design", "Permitting", "HOA Approval", "Framing Complete", "Scheduled", "Inspection", "Final Payment"];
     public static readonly string[] BlockerTypes = ["Permit", "HOA", "Weather", "Customer", "Materials", "Inspection", "Crew Scheduling", "Other"];
     public static readonly string[] MilestoneStatuses = ["Pending", "Earned", "Invoiced", "Paid", "Waived"];
     public static (int Warning, int Critical) Threshold(string blockerType) => blockerType switch
@@ -140,7 +140,9 @@ public static class HousecallProEstimateStatuses
     public const string FollowUp = "Follow Up";
     public const string FollowUpPending = "Follow Up Pending";
     public const string FollowUpComplete = "Follow Up Complete";
-    public static readonly string[] All = [New, FollowUp, FollowUpPending, FollowUpComplete];
+    public const string CustomerEstimate = "Customer Estimate";
+    public const string DetailedCustomerEstimate = "Detailed Customer Estimate";
+    public static readonly string[] All = [New, CustomerEstimate, DetailedCustomerEstimate, FollowUp, FollowUpPending, FollowUpComplete];
 }
 
 public sealed class HousecallProEstimateCommunication
