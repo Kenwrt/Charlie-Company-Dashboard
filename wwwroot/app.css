@@ -1659,6 +1659,8 @@ details[open] > summary .disclosure-chevron {
 .revenue-forecast-panel {
     min-width: 0;
     max-width: 100%;
+    width: 100%;
+    contain: inline-size;
 }
 
 .forecast-jobs-scroll {
