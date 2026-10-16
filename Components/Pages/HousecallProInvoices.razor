@@ -1,0 +1,57 @@
+@page "/hcp/invoices"
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@implements IDisposable
+@inject OperationAccessService OperationAccess
+@inject HousecallProInvoiceLookupService InvoiceLookup
+
+<PageTitle>Housecall Pro Invoice Lookup</PageTitle>
+<section class="dashboard-shell">
+    <div class="dashboard-header"><div><p class="eyebrow">Housecall Pro</p><h1>Invoice lookup</h1><p class="dashboard-subtitle">Read selected invoices using this dashboard's existing HCP connection.</p></div></div>
+    <div class="alert alert-info">Read-only lookup. No invoices, payments, customer messages or Mercury records are created.</div>
+    <div class="row g-3 mb-3">
+        <div class="col-md-4"><label class="form-label" for="invoice-operation">Local operation</label><select id="invoice-operation" class="form-select" @bind="operationSlug" disabled="@busy"><option value="">Choose an operation</option>@foreach (var operation in operations) { <option value="@operation.Slug">@operation.EffectiveDisplayName</option> }</select></div>
+        <div class="col-md-6"><label class="form-label" for="invoice-numbers">Invoice numbers</label><input id="invoice-numbers" class="form-control" @bind="numbers" placeholder="Separate invoice numbers with commas" maxlength="810" disabled="@busy" /></div>
+        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary" @onclick="LookupAsync" disabled="@(busy || string.IsNullOrWhiteSpace(operationSlug) || string.IsNullOrWhiteSpace(numbers))">@(busy ? "Reading HCP…" : "Look up invoices")</button></div>
+    </div>
+    <p class="text-muted">Exact invoice-number match, including any suffix. Job numbers may differ from invoice numbers. Lookup can take several minutes because HCP's list API is paginated.</p>
+    @if (error is not null) { <div class="alert alert-warning" role="alert">@error</div> }
+    @if (result is not null)
+    {
+        <p>Read from HCP at @result.RetrievedAtUtc.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") · @result.PagesRead page(s) · @result.Invoices.Count match(es)</p>
+        @if (result.Missing.Count > 0) { <div class="alert alert-warning">No exact invoice match: @string.Join(", ", result.Missing)</div> }
+        <div class="table-responsive"><table class="table"><thead><tr><th>Invoice</th><th>Status</th><th>Amount (source units)</th><th>Due (source units)</th><th>Invoice date</th><th>Due date</th><th>Paid date</th><th>Items</th><th>Payments</th></tr></thead><tbody>
+        @foreach (var invoice in result.Invoices)
+        { <tr><td>@invoice.Number</td><td>@invoice.Status</td><td>@invoice.Amount.ToString("N0")</td><td>@invoice.DueAmount.ToString("N0")</td><td>@(invoice.InvoiceDate ?? "Not provided")</td><td>@(invoice.DueAt ?? "Not provided")</td><td>@(invoice.PaidAt ?? "Not provided")</td><td>@invoice.ItemCount</td><td>@invoice.PaymentCount</td></tr> }
+        </tbody></table></div>
+        <p class="text-muted">Amounts preserve the API's integer values. This diagnostic view does not infer currency conversion or accounting recognition. Results are not saved to the dashboard database.</p>
+    }
+    else if (!busy && error is null) { <div class="empty-state">Choose an operation and enter the invoice numbers to read. No request runs automatically.</div> }
+</section>
+
+@code {
+    private IReadOnlyList<LocalOperation> operations = [];
+    private string operationSlug = "";
+    private string numbers = "";
+    private bool busy;
+    private string? error;
+    private HcpInvoiceLookupResult? result;
+    private readonly CancellationTokenSource lifetime = new();
+    protected override async Task OnInitializedAsync()
+    {
+        operations = await OperationAccess.GetAccessibleOperationsAsync(lifetime.Token);
+        if (operations.Count == 1) operationSlug = operations[0].Slug;
+    }
+    private async Task LookupAsync()
+    {
+        if (busy) return;
+        busy = true; error = null; result = null;
+        try { result = await InvoiceLookup.FindAsync(operationSlug, numbers, lifetime.Token); }
+        catch (HcpInvoiceLookupException ex) { error = ex.Message; }
+        catch { error = "Lookup could not complete. No financial write was requested."; }
+        finally { busy = false; }
+    }
+    public void Dispose() { lifetime.Cancel(); lifetime.Dispose(); }
+}

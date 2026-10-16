@@ -37,6 +37,9 @@
         <AuthorizeView Roles="@ApplicationRoles.Administrator">
             <Authorized><div class="nav-item px-3"><NavLink class="nav-link" href="finance"><span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> CCV Finance</NavLink></div></Authorized>
         </AuthorizeView>
+        <AuthorizeView Roles="@ApplicationRoles.Administrator">
+            <Authorized><div class="nav-item px-3"><NavLink class="nav-link" href="hcp/invoices"><span class="bi bi-receipt" aria-hidden="true"></span> HCP Invoice Lookup</NavLink></div></Authorized>
+        </AuthorizeView>
 
         <AuthorizeView Roles="@ApplicationRoles.Administrator">
             <Authorized>
