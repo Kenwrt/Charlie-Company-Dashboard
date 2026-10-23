@@ -1,12 +1,81 @@
-prefix_rule(pattern = ["git", "push"], decision = "prompt", justification = "Pushing repository changes requires explicit user approval.")
-prefix_rule(pattern = ["git", ["reset", "clean"]], decision = "prompt", justification = "Destructive Git cleanup requires explicit user approval.")
-prefix_rule(pattern = ["dotnet", "ef", "database"], decision = "prompt", justification = "Database schema operations require explicit approval and target verification.")
-prefix_rule(pattern = ["docker", ["ps", "logs", "inspect", "version", "info"]], decision = "allow", justification = "Read-only Docker inspection is routine diagnostics.")
-prefix_rule(pattern = ["docker", ["run", "create", "start", "stop", "restart", "kill", "rm", "rmi", "exec", "build", "pull", "push", "tag", "update", "rename", "commit", "import", "load", "save", "login", "logout", "compose", "container", "image", "network", "volume", "system", "swarm", "service", "stack"]], decision = "prompt", justification = "Docker mutations can affect shared services, networks, images, and persistent data.")
-prefix_rule(pattern = ["cloudflared"], decision = "prompt", justification = "Cloudflare tunnel operations require explicit user approval.")
-prefix_rule(pattern = ["ssh"], decision = "prompt", justification = "Remote-host operations require explicit approval and target verification.")
-prefix_rule(pattern = ["scp"], decision = "prompt", justification = "Remote file transfers require explicit approval and target verification.")
-prefix_rule(pattern = ["kubectl"], decision = "prompt", justification = "Cluster operations require explicit approval and context verification.")
-prefix_rule(pattern = ["terraform"], decision = "prompt", justification = "Infrastructure changes require explicit user approval.")
-prefix_rule(pattern = ["netsh", "advfirewall"], decision = "prompt", justification = "Firewall changes require explicit user approval.")
-prefix_rule(pattern = [["Start-VM", "Stop-VM", "Restart-VM", "Remove-VM", "Checkpoint-VM", "Restore-VMSnapshot"]], decision = "prompt", justification = "Hyper-V lifecycle operations require explicit user approval.")
+# Allow command execution without an interactive policy prompt. Scope and
+# authorization remain governed by the global and project AGENTS.md files.
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "allow",
+    justification = "Routine Charlie Company Active Dashboard pushes are authorized by the global Standing Git authorization policy.",
+)
+
+prefix_rule(
+    pattern = ["git", ["reset", "clean"]],
+    decision = "allow",
+    justification = "Destructive Git cleanup must be explicitly requested; the request is sufficient authorization.",
+)
+
+prefix_rule(
+    pattern = ["dotnet", "ef", "database"],
+    decision = "allow",
+    justification = "Database schema operations must be explicitly requested; the request is sufficient authorization and target verification.",
+)
+
+prefix_rule(
+    pattern = ["dotnet", "publish"],
+    decision = "allow",
+    justification = "Publishing is a release-stage action and must be explicitly requested; the request is sufficient authorization.",
+)
+
+prefix_rule(
+    pattern = ["docker", ["ps", "logs", "inspect", "version", "info"]],
+    decision = "allow",
+    justification = "Read-only Docker inspection is routine Charlie Company Active Dashboard diagnostics.",
+)
+
+prefix_rule(
+    pattern = ["docker", ["run", "create", "start", "stop", "restart", "kill", "rm", "rmi", "exec", "build", "pull", "push", "tag", "update", "rename", "commit", "import", "load", "save", "login", "logout", "compose", "container", "image", "network", "volume", "system", "swarm", "service", "stack"]],
+    decision = "allow",
+    justification = "Docker mutations can affect shared services, networks, images, and persistent data.",
+)
+
+prefix_rule(
+    pattern = ["cloudflared"],
+    decision = "allow",
+    justification = "Cloudflare tunnel operations must be explicitly requested; the request is sufficient authorization.",
+)
+
+prefix_rule(
+    pattern = ["ssh"],
+    decision = "allow",
+    justification = "Remote-host operations must be explicitly requested; the request is sufficient authorization and target verification.",
+)
+
+prefix_rule(
+    pattern = ["scp"],
+    decision = "allow",
+    justification = "Copying release or configuration files to remote hosts must be explicitly requested; the request is sufficient authorization.",
+)
+
+prefix_rule(
+    pattern = ["kubectl"],
+    decision = "allow",
+    justification = "Cluster operations must be explicitly requested; the request is sufficient authorization and context verification.",
+)
+
+prefix_rule(
+    pattern = ["terraform"],
+    decision = "allow",
+    justification = "Infrastructure changes must be explicitly requested; the request is sufficient authorization.",
+)
+
+prefix_rule(
+    pattern = ["netsh", "advfirewall"],
+    decision = "allow",
+    justification = "Firewall changes must be explicitly requested; the request is sufficient authorization.",
+)
+
+prefix_rule(
+    pattern = [["Start-VM", "Stop-VM", "Restart-VM", "Remove-VM", "Checkpoint-VM", "Restore-VMSnapshot"]],
+    decision = "allow",
+    justification = "Hyper-V lifecycle and checkpoint operations must be explicitly requested; the request is sufficient authorization.",
+)
+
