@@ -132,7 +132,11 @@ try
     builder.Services.AddHttpClient<HousecallProDataService>();
     builder.Services.AddHttpClient<HousecallProInvoiceLookupService>()
         .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-    builder.Services.AddHttpClient<CentComChatClient>();
+    builder.Services.AddHttpClient<CentComChatClient>((services, client) =>
+    {
+        var settings = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CentComOptions>>().Value;
+        client.Timeout = TimeSpan.FromSeconds(Math.Clamp(settings.RequestTimeoutSeconds, 1, 3600));
+    });
     builder.Services.AddScoped<CentComTaskAnalysisService>();
     builder.Services.AddScoped<EstimateMaterialEmailService>();
     builder.Services.AddScoped<EstimateOptionsService>();

@@ -8,6 +8,7 @@ public sealed class CentComOptions
     public string Model { get; set; } = "";
     public string ChatEndpoint { get; set; } = "/api/chat";
     public int KeepAlive { get; set; } = -1;
+    public int RequestTimeoutSeconds { get; set; } = 900;
     public bool IsConfigured =>
         Uri.TryCreate(BaseUrl, UriKind.Absolute, out _) &&
         !string.IsNullOrWhiteSpace(Model);
