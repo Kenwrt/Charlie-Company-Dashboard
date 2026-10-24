@@ -319,11 +319,11 @@ public sealed class EstimateOptionsService(
         var queue = new List<Guid>();
         var notices = new List<string>();
         var changed = false;
-        foreach (var entry in document.Tasks)
+        foreach (var target in document.Tasks.SelectMany(entry => entry.Options.Select(option => (Entry: entry, Option: option))))
         {
+            var entry = target.Entry;
+            var option = target.Option;
             var taskNumber = document.Tasks.OrderBy(item => item.SortOrder).ToList().IndexOf(entry) + 1;
-            var option = entry.Options.SingleOrDefault(item => item.Id == entry.PriceOptionId);
-            if (option is null) continue;
             if (option.IsReady && !option.RequiresCentComAnalysis && (!option.HasPlanningInputs || option.IsCalculationCurrent)) continue;
             var task = version.QuoteCase.ProjectTasks.Single(item => item.Id == entry.TaskId);
             var analysis = await db.QuoteTaskAnalyses
@@ -344,10 +344,10 @@ public sealed class EstimateOptionsService(
                 && option.PricingSourceSignature == sourceSignature
                 && (analysis.Status == QuoteTaskAnalysisStatuses.Accepted
                     || analysis.Status == QuoteTaskAnalysisStatuses.NeedsReview && option.IsProvisionalPrice)) continue;
-            if (option.IsReady || entry.SelectedOptionId is not null)
+            if (option.IsReady || entry.SelectedOptionId == option.Id)
             {
                 option.IsReady = false;
-                entry.SelectedOptionId = null;
+                if (entry.SelectedOptionId == option.Id) entry.SelectedOptionId = null;
                 changed = true;
             }
             if (analysis is null || !current)
@@ -385,7 +385,7 @@ public sealed class EstimateOptionsService(
             SynchronizePricePlans(document);
             version.OptionsJson = document.Write();
             WriteSelectedLines(version, document);
-            await AuditAsync(db, version, "Selected option plans calculated using CentCom materials and the costing policy.");
+            await AuditAsync(db, version, "All offered options calculated using available CentCom material prices and the costing policy; unresolved review items retain provisional pricing.");
             await db.SaveChangesAsync();
         }
         foreach (var optionId in queue)

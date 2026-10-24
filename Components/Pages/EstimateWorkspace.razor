@@ -268,6 +268,14 @@ else
                                     <article class="metric-card"><span>Option cost to us</span><strong>@taskOption.InternalCost.ToString("C2")</strong><small>Materials, labor, and other internal costs</small></article>
                                     <article class="metric-card accent-revenue"><span>Option customer total</span><strong>@(taskOption.IsReady ? taskOption.CustomerPrice.ToString("C2") : "Price being prepared")</strong><small>Includes the option margin; before discount and tax</small></article>
                                 </div>
+                                @if (taskOption.IsReady && taskOption.IsProvisionalPrice)
+                                {
+                                    <p class="text-warning" role="status">Provisional option totals include currently priced materials, labor, and other internal costs with margin applied. Outstanding assumptions, questions, and warnings still require review.</p>
+                                    @if (taskOption.HasUnpricedMaterials)
+                                    {
+                                        <p class="text-warning">Some materials have no usable price or quantity and are excluded from these totals. The final cost may increase.</p>
+                                    }
+                                }
                             }
                             @if (isAdministrator)
                             {
