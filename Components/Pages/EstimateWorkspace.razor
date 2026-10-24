@@ -255,14 +255,6 @@ else
                                             @bind-Value:after="() => UpdateTaskOptionAsync(task, taskOption, taskOption.AutomaticMaterial)" />
                                     </label>
                                 </div>
-                                @if (taskOption.AutomaticMaterial is not null)
-                                {
-                                    <label class="form-check">
-                                        <input type="checkbox" class="form-check-input" checked="@taskOption.IncludeRailing"
-                                            disabled="@changingRailing" @onchange="args => ChangeRailingAsync(task, taskOption, args.Value is true)" />
-                                        Add railing
-                                    </label>
-                                }
                                 <div class="metric-grid my-3">
                                     <article class="metric-card"><span>Option material total</span><strong>@taskOption.MaterialCost.ToString("C2")</strong></article>
                                     <article class="metric-card"><span>Option cost to us</span><strong>@taskOption.InternalCost.ToString("C2")</strong><small>Materials, labor, and other internal costs</small></article>
