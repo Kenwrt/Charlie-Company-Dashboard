@@ -4,7 +4,7 @@
 @inject EstimateOptionsService OptionsService
 
 <section class="activity-panel">
-    <h2>@(SummaryOnly ? "Estimate totals" : "Options for this task")</h2>
+    <h2>@(SummaryOnly ? "Grand estimate totals" : "Options for this task")</h2>
     @if (!SummaryOnly)
     {
     <p>Measurements and scope belong to the task. Each option has its own work type, crew, completion days, materials, baseline costs, market value, and customer price. Save options before requesting their CentCom analysis.</p>
@@ -150,13 +150,44 @@
         @if (SummaryOnly)
         {
 
+        <p>Only the selected option for each task is included. Unselected alternatives are excluded. Each option's customer price includes its applied margin; margin is not charged a second time.</p>
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead><tr><th>Task</th><th>Selected option</th><th>Materials</th><th>Cost to us</th><th>Customer subtotal</th></tr></thead>
+                <tbody>
+                    @foreach (var task in options.Tasks.OrderBy(task => task.SortOrder))
+                    {
+                        var selected = task.Options.SingleOrDefault(option => option.Id == task.SelectedOptionId);
+                        <tr>
+                            <td>@task.TaskType</td>
+                            <td>@(selected?.Name ?? (task.IsRequired ? "Selection pending" : "Not included"))</td>
+                            <td>@(selected?.MaterialCost.ToString("C2") ?? "—")</td>
+                            <td>@(selected?.InternalCost.ToString("C2") ?? "—")</td>
+                            <td>@(selected?.CustomerPrice.ToString("C2") ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
         @if (options.HasCalculatedCosts)
         {
+            var subtotal = options.CustomerPrice;
+            var appliedDiscount = Math.Min(subtotal, Math.Max(0m, discount));
+            var discountedSubtotal = subtotal - appliedDiscount;
+            var tax = decimal.Round(discountedSubtotal * taxRate / 100m, 2);
+            var margin = subtotal > 0 ? (subtotal - options.InternalCost) / subtotal * 100m : 0m;
+            <div class="metric-grid mt-3">
+                <article class="metric-card"><span>Selected material total</span><strong>@options.Selected.Sum(option => option.MaterialCost).ToString("C2")</strong></article>
+                <article class="metric-card"><span>Grand project cost to us</span><strong>@options.InternalCost.ToString("C2")</strong><small>Selected materials, labor, and other internal costs</small></article>
+                <article class="metric-card"><span>Customer subtotal after margin</span><strong>@subtotal.ToString("C2")</strong><small>Combined gross margin: @margin.ToString("N2")%</small></article>
+                <article class="metric-card"><span>Estimate discount</span><strong>@appliedDiscount.ToString("C2")</strong></article>
+                <article class="metric-card"><span>Tax</span><strong>@tax.ToString("C2")</strong></article>
+                <article class="metric-card accent-revenue"><span>Grand customer total</span><strong>@((discountedSubtotal + tax).ToString("C2"))</strong><small>After margin, discount, and tax</small></article>
+            </div>
             @if (options.Selected.Any(option => option.HasUnpricedMaterials))
             {
                 <p class="text-warning" role="status">Incomplete price: some materials have no price yet and are excluded from the running total. This is not a final quote.</p>
             }
-        <p>Selected internal cost: @options.InternalCost.ToString("C2") · Selected market value: @options.MarketValue.ToString("C2") · Selected customer price before discount and tax: @options.CustomerPrice.ToString("C2")</p>
             @if (options.Selected.Any(option => option.IsProvisionalPrice))
             {
                 <p class="text-warning">Running estimate based on currently priced materials and costs. It updates as CentCom issues are resolved; review is required before homeowner acceptance.</p>
@@ -164,7 +195,7 @@
         }
         else
         {
-            <p role="status">Estimate total pending: choose a priced option plan for every task.</p>
+            <p role="status">Grand total pending: choose a priced option for every required task. Optional tasks may remain unselected.</p>
         }
         }
     }

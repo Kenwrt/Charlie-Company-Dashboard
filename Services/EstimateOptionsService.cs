@@ -404,6 +404,7 @@ public sealed class EstimateOptionsService(
                 task.PriceOptionId = null;
             if (task.PriceOptionId is null && task.IsRequired && task.Options.Count == 1)
                 task.PriceOptionId = task.Options[0].Id;
+            if (task.PriceOptionId is null) task.SelectedOptionId = null;
             if (task.PriceOptionId is not null)
             {
                 var planned = task.Options.Single(option => option.Id == task.PriceOptionId);

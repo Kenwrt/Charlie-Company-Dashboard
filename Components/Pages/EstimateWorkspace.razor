@@ -263,7 +263,11 @@ else
                                         Add railing
                                     </label>
                                 }
-                                <p class="mb-0">@(taskOption.IsReady ? taskOption.PriceIncludingTax(version!.TaxRate).ToString("C2") : "Price being prepared")</p>
+                                <div class="metric-grid my-3">
+                                    <article class="metric-card"><span>Option material total</span><strong>@taskOption.MaterialCost.ToString("C2")</strong></article>
+                                    <article class="metric-card"><span>Option cost to us</span><strong>@taskOption.InternalCost.ToString("C2")</strong><small>Materials, labor, and other internal costs</small></article>
+                                    <article class="metric-card accent-revenue"><span>Option customer total</span><strong>@(taskOption.IsReady ? taskOption.CustomerPrice.ToString("C2") : "Price being prepared")</strong><small>Includes the option margin; before discount and tax</small></article>
+                                </div>
                             }
                             @if (isAdministrator)
                             {
@@ -672,11 +676,11 @@ else
                         @if (version?.OptionsJson is not null)
                         {
                             <div class="my-3">
-                                <label class="form-label" for="@($"price-plan-{task.Id}")">Price</label>
+                                <label class="form-label" for="@($"price-plan-{task.Id}")">Customer-selected option for estimate total</label>
                                 <select id="@($"price-plan-{task.Id}")" class="form-select" aria-label="Price option plan"
                                     value="@PricePlanOptionId(task.Id)" disabled="@(changingRailing || !TaskOptions(task.Id).Any())"
                                     @onchange="args => ChangePricePlanAsync(task.Id, args.Value?.ToString())">
-                                    @if (TaskOptions(task.Id).Count() != 1) { <option value="">Plan</option> }
+                                    @if (TaskOptions(task.Id).Count() != 1 || !EstimateOptions.Read(version.OptionsJson).Tasks.Single(item => item.TaskId == task.Id).IsRequired) { <option value="">No option selected</option> }
                                     @foreach (var option in TaskOptions(task.Id))
                                     {
                                         <option value="@option.Id">@option.Name</option>
@@ -1017,7 +1021,7 @@ else
     {
         if (version?.OptionsJson is null) return null;
         var task = EstimateOptions.Read(version.OptionsJson).Tasks.SingleOrDefault(item => item.TaskId == taskId);
-        return task?.PriceOptionId ?? task?.SelectedOptionId ?? (task?.Options.Count == 1 ? task.Options[0].Id : null);
+        return task?.PriceOptionId ?? task?.SelectedOptionId ?? (task?.IsRequired == true && task.Options.Count == 1 ? task.Options[0].Id : null);
     }
 
     private async Task ChangePricePlanAsync(int taskId, string? value)
