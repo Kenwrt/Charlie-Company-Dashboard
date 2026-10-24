@@ -29,6 +29,7 @@ public sealed class EstimateOptions
         if (option.AutomaticMaterial is not null)
             input = JsonSerializer.Serialize(new { Input = input, option.AutomaticMaterial, option.IncludeRailing,
                 Photos = task.Photos.OrderBy(photo => photo.Id).Select(photo => photo.Id).ToArray() });
+        if (option.DeckPatternId is not null) input = JsonSerializer.Serialize(new { Input = input, option.DeckPatternId });
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input)));
     }
     [JsonIgnore] public IEnumerable<EstimateOption> Selected => Tasks
@@ -66,6 +67,7 @@ public sealed class EstimateOption
     public string Description { get; set; } = "";
     public string? AutomaticMaterial { get; set; }
     public bool IncludeRailing { get; set; }
+    public string? DeckPatternId { get; set; }
     public List<EstimateOptionMaterial> Materials { get; set; } = [];
     public EstimateOptionCopySource? CopySource { get; set; }
     public List<string> Substitutions { get; set; } = [];

@@ -1,0 +1,7 @@
+.deck-pattern-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.deck-pattern-card { display: flex; flex-direction: column; gap: .65rem; border: 2px solid #dce3eb; border-radius: .5rem; padding: .7rem; cursor: pointer; background: #fff; color: #172b41; }
+.deck-pattern-card.selected { border-color: #176bc0; background: #f0f7ff; }
+.deck-pattern-card:focus-within { outline: 2px solid #176bc0; outline-offset: 3px; }
+.deck-pattern-card img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: .25rem; }
+.deck-pattern-card small { color: #586777; }
+.deck-pattern-panel summary { cursor: pointer; }

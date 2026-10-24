@@ -245,6 +245,20 @@ else
                                         </label>
                                     }
                                 </div>
+                                <details class="deck-pattern-panel border rounded p-3 my-3">
+                                    <summary><strong>Deck patterns</strong> · @(DeckPatterns.All.Where(pattern => pattern.Id == taskOption.DeckPatternId).Select(pattern => pattern.Name).FirstOrDefault() ?? "Choose a pattern")</summary>
+                                    <p class="text-muted mt-2">Illustrative placeholders. AI Media Gateway previews will replace these samples. Choose one pattern for this option; quantities and cutting waste require analysis.</p>
+                                    <div class="deck-pattern-grid" role="group" aria-label="Deck pattern choices">
+                                        @foreach (var pattern in DeckPatterns.All)
+                                        {
+                                            <label class="deck-pattern-card @(taskOption.DeckPatternId == pattern.Id ? "selected" : "")">
+                                                <img src="@($"images/deck-patterns/{pattern.Id}.svg")" alt="@($"Illustrative {pattern.Name.ToLowerInvariant()} decking layout")" loading="lazy" />
+                                                <span><input type="radio" name="@($"deck-pattern-{taskOption.Id}")" value="@pattern.Id" checked="@(taskOption.DeckPatternId == pattern.Id)" disabled="@(changingRailing || version?.Status != "Draft")" @onchange="() => ChangeDeckPatternAsync(task, taskOption, pattern.Id)" /> @pattern.Name</span>
+                                                <small>Sample illustration</small>
+                                            </label>
+                                        }
+                                    </div>
+                                </details>
                                 <div class="row g-3 my-2">
                                     <label class="col-md-6">Number of crews
                                         <InputNumber class="form-control" min="1" step="1" @bind-Value="taskOption.CrewCount"
@@ -1079,6 +1093,13 @@ else
         finally { changingRailing = false; }
     }
 
+    private async Task ChangeDeckPatternAsync(QuoteProjectTask task, EstimateOption option, string patternId)
+    {
+        if (changingRailing || version?.Status != "Draft") return;
+        option.DeckPatternId = patternId;
+        await UpdateTaskOptionAsync(task, option, option.AutomaticMaterial);
+    }
+
     private async Task UpdateTaskOptionAsync(QuoteProjectTask task, EstimateOption edited, string? material)
     {
         if (changingRailing || version?.OptionsJson is null) return;
@@ -1094,6 +1115,7 @@ else
             var document = EstimateOptionsService.ForEditing(current);
             var option = document.Tasks.Single(item => item.TaskId == task.Id).Options.Single(item => item.Id == edited.Id);
             option.AutomaticMaterial = material;
+            option.DeckPatternId = edited.DeckPatternId;
             option.CrewCount = edited.CrewCount ?? 1;
             option.EstimatedDays = edited.EstimatedDays;
             option.IsReady = false;

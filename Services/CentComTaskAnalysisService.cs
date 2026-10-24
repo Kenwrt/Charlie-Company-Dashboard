@@ -573,6 +573,7 @@ public sealed partial class CentComTaskAnalysisService(
     {
         if (option?.AutomaticMaterial is null) return "";
         return $"\nMANDATORY OPTION SPECIFICATION: Surface deck boards must be {option.AutomaticMaterial}. " +
+            (option.DeckPatternId is null ? "" : $"Decking layout: {DeckPatterns.All.First(pattern => pattern.Id == option.DeckPatternId).Name}. Account for pattern-specific cuts, waste, borders, blocking, and fasteners; identify assumptions requiring review. ") +
             "This selection overrides conflicting shared-scope materials. Name the selected product in each deck-board line. " +
             "Trex Enhance is one composite decking product family, not two choices. Framing may use appropriate treated lumber; " +
             "fasteners and accessories must be compatible but need not carry the decking product name. " +

@@ -750,6 +750,8 @@ public sealed class EstimateOptionsService(
             // Draft tasks may have no options until the estimator adds one.
             foreach (var option in task.Options)
             {
+                if (option.DeckPatternId is not null && !DeckPatterns.All.Any(pattern => pattern.Id == option.DeckPatternId))
+                    throw new InvalidOperationException("Choose an available deck pattern.");
                 if (option.AutomaticMaterial is not null && option.AutomaticMaterial is not ("Trex" or "Trex Enhance" or "Pressure-treated wood" or "Deckorators"))
                     throw new InvalidOperationException("Choose Trex Enhance, Wood, or Deckorators.");
                 if (option.Substitutions.Distinct().Count() != option.Substitutions.Count
