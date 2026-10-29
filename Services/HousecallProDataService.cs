@@ -35,65 +35,99 @@ public sealed record HcpEstimateStartRecord(
     DateTimeOffset? EstimateDate);
 
 public sealed record HcpCloseRateSummary(int Estimates, int ClosedJobs, int RevenueJobs, decimal Revenue, DateTimeOffset RetrievedAt);
-public sealed record HcpCloseRateMonthlyCache(int Year, IReadOnlyList<HcpCloseRateSummary> Months);
 
 public sealed class HousecallProDataService(
     HttpClient httpClient,
     IServiceScopeFactory scopeFactory,
     IOptions<HousecallProOptions> options,
     IMemoryCache cache,
+    HousecallProCloseRateCache closeRateCache,
     ILogger<HousecallProDataService> logger)
 {
     private readonly HousecallProOptions settings = options.Value;
 
-    public Task<HcpCloseRateSummary?> GetCloseRateSummaryAsync(
+    public async Task<HcpCloseRateSummary?> GetCloseRateSummaryAsync(
         LocalOperation operation, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (settings.GetApiKey(operation.Slug) is null) return Task.FromResult<HcpCloseRateSummary?>(null);
+        if (settings.GetApiKey(operation.Slug) is null) return null;
         var zone = TimeZoneInfo.FindSystemTimeZoneById(operation.TimeZone);
         var year = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone).Year;
-        if (!cache.TryGetValue<HcpCloseRateMonthlyCache>($"hcp-close-rate-months:{operation.Slug}", out var snapshot)
-            || snapshot is null || snapshot.Year != year)
-        {
-            return Task.FromResult<HcpCloseRateSummary?>(null);
-        }
-        var months = snapshot.Months;
-        return Task.FromResult<HcpCloseRateSummary?>(new HcpCloseRateSummary(
-            months.Sum(month => month.Estimates), months.Sum(month => month.ClosedJobs),
-            months.Sum(month => month.RevenueJobs), months.Sum(month => month.Revenue),
-            months.Min(month => month.RetrievedAt)));
+        var snapshot = await closeRateCache.ReadAsync(operation.Slug, cancellationToken);
+        if (snapshot is null) return null;
+        bool InYear(HcpCloseRateEntry item) => item.CreatedAt is { } date && date <= snapshot.UpdatedThrough &&
+            TimeZoneInfo.ConvertTime(date, zone).Year == year;
+        var jobs = snapshot.Jobs.Values.Where(InYear).ToList();
+        bool HasRevenue(HcpCloseRateEntry item) => item.Status?.ToLowerInvariant() is
+            "complete rated" or "complete unrated" or "completed" or "complete" or "in progress";
+        var revenueJobs = jobs.Where(HasRevenue).ToList();
+        return new HcpCloseRateSummary(snapshot.Estimates.Values.Count(InYear),
+            jobs.Count(item => HasRevenue(item) || string.Equals(item.Status, "scheduled", StringComparison.OrdinalIgnoreCase)),
+            revenueJobs.Count, revenueJobs.Sum(item => item.Amount), snapshot.UpdatedThrough);
     }
 
-    private void CacheCloseRateMonths(LocalOperation operation, IReadOnlyList<JsonElement> estimates,
-        IReadOnlyList<JsonElement> jobs, DateTimeOffset retrievedAt)
+    public async Task RefreshCloseRateAsync(LocalOperation operation, CancellationToken cancellationToken)
     {
-        var zone = TimeZoneInfo.FindSystemTimeZoneById(operation.TimeZone);
-        var year = TimeZoneInfo.ConvertTime(retrievedAt, zone).Year;
-        int Month(DateTimeOffset? date) => date is { } value && value <= retrievedAt &&
-            TimeZoneInfo.ConvertTime(value, zone).Year == year
-                ? TimeZoneInfo.ConvertTime(value, zone).Month : 0;
-        var estimateMonths = estimates.Where(item => Text(item, "id") is not null)
-            .DistinctBy(item => Text(item, "id"))
-            .GroupBy(item => Month(Date(item, "created_at") ?? FirstOptionDate(item, "created_at")))
-            .ToDictionary(group => group.Key, group => group.Count());
-        var jobMonths = jobs.Where(item => Text(item, "id") is not null)
-            .DistinctBy(item => Text(item, "id"))
-            .GroupBy(item => Month(Date(item, "created_at")))
-            .ToDictionary(group => group.Key, group => group.ToList());
-        bool HasRevenue(JsonElement item) => Text(item, "work_status")?.ToLowerInvariant() is
-            "complete rated" or "complete unrated" or "completed" or "complete" or "in progress";
-        var months = Enumerable.Range(1, 12).Select(month =>
+        var apiKey = settings.GetApiKey(operation.Slug);
+        if (apiKey is null) return;
+        var gate = closeRateCache.Gate(operation.Slug);
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            var monthJobs = jobMonths.GetValueOrDefault(month) ?? [];
-            var revenueJobs = monthJobs.Where(HasRevenue).ToList();
-            return new HcpCloseRateSummary(estimateMonths.GetValueOrDefault(month),
-                monthJobs.Count(item => HasRevenue(item) || string.Equals(Text(item, "work_status"), "scheduled", StringComparison.OrdinalIgnoreCase)),
-                revenueJobs.Count, revenueJobs.Sum(item => Money(item, "total_amount")), retrievedAt);
-        }).ToList();
-        // Publish the complete snapshot atomically. Failed syncs leave the previous totals available.
-        // Recalculate historical months too: an older job may complete, cancel, or change value later.
-        cache.Set($"hcp-close-rate-months:{operation.Slug}", new HcpCloseRateMonthlyCache(year, months));
+            var previous = await closeRateCache.ReadAsync(operation.Slug, cancellationToken);
+            var through = DateTimeOffset.UtcNow;
+            // Overlap the checkpoint to catch records changed while the prior pages were being read.
+            var since = previous?.UpdatedThrough.AddMinutes(-10);
+            var estimates = await GetCloseRateChangesAsync(settings.EstimatesEndpoint, "estimates", apiKey, since, cancellationToken);
+            var jobs = await GetCloseRateChangesAsync(settings.JobsEndpoint, "jobs", apiKey, since, cancellationToken);
+            var estimateEntries = previous is null ? new Dictionary<string, HcpCloseRateEntry>() : new Dictionary<string, HcpCloseRateEntry>(previous.Estimates);
+            var jobEntries = previous is null ? new Dictionary<string, HcpCloseRateEntry>() : new Dictionary<string, HcpCloseRateEntry>(previous.Jobs);
+            void Merge(IEnumerable<JsonElement> changes, Dictionary<string, HcpCloseRateEntry> target, bool isJob)
+            {
+                foreach (var item in changes)
+                {
+                    var id = Text(item, "id") ?? throw new InvalidDataException("Housecall Pro record is missing its identifier.");
+                    var hash = HousecallProCloseRateCache.Hash(id);
+                    target[hash] = new HcpCloseRateEntry(hash,
+                        Date(item, "created_at") ?? (isJob ? null : FirstOptionDate(item, "created_at")),
+                        isJob ? Text(item, "work_status") : null, isJob ? Money(item, "total_amount") : 0);
+                }
+            }
+            Merge(estimates, estimateEntries, false);
+            Merge(jobs, jobEntries, true);
+            await closeRateCache.SaveAsync(operation.Slug, new HcpCloseRateState(through, estimateEntries, jobEntries), cancellationToken);
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task<List<JsonElement>> GetCloseRateChangesAsync(string endpoint, string collection,
+        string apiKey, DateTimeOffset? since, CancellationToken cancellationToken)
+    {
+        var result = new List<JsonElement>();
+        var page = 1;
+        DateTimeOffset? preceding = null;
+        while (true)
+        {
+            var query = $"{endpoint}{(endpoint.Contains('?') ? '&' : '?')}sort_by=updated_at&sort_direction=desc&page={page}&page_size=100";
+            using var document = await GetDocumentAsync(query, apiKey, cancellationToken);
+            if (!document.RootElement.TryGetProperty(collection, out var items) || items.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("Housecall Pro response is missing its record collection.");
+            var reachedCheckpoint = false;
+            foreach (var item in items.EnumerateArray())
+            {
+                var updated = Date(item, "updated_at") ?? throw new InvalidDataException("Housecall Pro record is missing its update timestamp.");
+                if (preceding is { } prior && updated > prior)
+                    throw new InvalidDataException("Housecall Pro did not return records ordered by update time; saved totals were retained.");
+                preceding = updated;
+                if (since is { } checkpoint && updated < checkpoint) reachedCheckpoint = true;
+                else result.Add(item.Clone());
+            }
+            if (reachedCheckpoint) return result;
+            if (!document.RootElement.TryGetProperty("total_pages", out var pages) || !pages.TryGetInt32(out var totalPages))
+                throw new InvalidDataException("Housecall Pro response is missing its pagination metadata.");
+            if (page >= totalPages) return result;
+            page++;
+        }
     }
 
     public async Task SyncAllConfiguredOperationsAsync(CancellationToken cancellationToken = default)
@@ -200,7 +234,6 @@ public sealed class HousecallProDataService(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-        CacheCloseRateMonths(operation, estimates, jobs, syncedAt);
         logger.LogInformation("Housecall Pro sync stored {JobCount} jobs and {EstimateCount} estimates for {Operation}.", jobs.Count, estimates.Count, operation.EffectiveDisplayName);
     }
 

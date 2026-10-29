@@ -116,6 +116,12 @@ The finance screen `/finance` is protected by ASP.NET Core Identity. It shows a 
 
 ## Configure Housecall Pro
 
+### Persistent close-rate cache
+
+The close-rate panel reads an encrypted, per-operation cache independently of the operational record sync. The dedicated close-rate worker performs one initial import, then reads records in descending `updated_at` order until it reaches the last successful checkpoint (with a ten-minute overlap). Changes to historical jobs replace their previous contributions. A failed refresh retains the previous complete snapshot and checkpoint. The panel never waits for a network refresh when saved totals exist.
+
+`HousecallPro:CloseRateCacheDirectory` controls the cache location. On Linux it defaults to `/var/lib/charlie-company/close-rate-cache`. Deployment must apply the repository systemd unit's `StateDirectory`, `StateDirectoryMode`, and additional `ReadWritePaths` directives and reload systemd before restarting. The directory and existing persistent Data Protection key ring must survive release replacement; cache files are encrypted with that key ring. No shared-database migration is required. The first deployment of this cache still requires its initial import. Locations without configured Housecall Pro integrations remain unavailable.
+
 No public Housecall Pro test API key was found during setup, so the app uses mock data by default.
 
 For local development, prefer .NET user-secrets:

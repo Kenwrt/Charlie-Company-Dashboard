@@ -20,6 +20,10 @@ public sealed class HousecallProOptions
 
     public int RecordSyncMaxPages { get; set; } = 5;
 
+    public string CloseRateCacheDirectory { get; set; } = OperatingSystem.IsLinux()
+        ? "/var/lib/charlie-company/close-rate-cache"
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CharlieCompany", "close-rate-cache");
+
     public string JobsEndpoint { get; set; } = "/jobs";
 
     public string EstimatesEndpoint { get; set; } = "/estimates";

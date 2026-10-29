@@ -130,6 +130,8 @@ try
     builder.Services.AddScoped<WebhookNotificationDispatcher>();
     builder.Services.AddScoped<HousecallProDashboardDataSource>();
     builder.Services.AddHttpClient<HousecallProDataService>();
+    builder.Services.AddSingleton<HousecallProCloseRateCache>();
+    builder.Services.AddHostedService<HousecallProCloseRateWorker>();
     builder.Services.AddHttpClient<HousecallProInvoiceLookupService>()
         .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
     builder.Services.AddHttpClient<CentComChatClient>((services, client) =>

@@ -19,6 +19,9 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/charlie-company/dataprotection /var/log/charlie-company
+StateDirectory=charlie-company/close-rate-cache
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/charlie-company/close-rate-cache
 
 [Install]
 WantedBy=multi-user.target

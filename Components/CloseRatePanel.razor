@@ -33,11 +33,11 @@
                 <h3 class="h5">@SelectedName</h3>
                 @if (UnavailableNames.Count > 0)
                 {
-                    <p class="text-warning" role="status">Cached Housecall Pro totals are not yet available for @string.Join(", ", UnavailableNames). These locations are excluded until their background sync completes.</p>
+                    <p class="text-warning" role="status">No saved close-rate totals are available for @string.Join(", ", UnavailableNames). These locations are excluded until their first cache is created or their integration is configured.</p>
                 }
                 @if (SelectedSummaries.Count == 0)
                 {
-                    <p role="status">Waiting for Housecall Pro background sync or integration configuration. This panel updates automatically when a sync completes.</p>
+                    <p role="status">The first cache requires an initial Housecall Pro import. After that, saved totals survive restarts and display while changes since the last successful refresh are imported.</p>
                 }
                 else
                 {
