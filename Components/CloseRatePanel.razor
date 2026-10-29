@@ -3,6 +3,8 @@
 @inject OperationAccessService OperationAccess
 @inject HousecallProDataService HousecallPro
 @inject ILogger<CloseRatePanel> Logger
+@inject DashboardNotificationService Notifications
+@implements IDisposable
 
 <section class="activity-panel close-rate-panel">
     <button type="button" class="btn btn-link p-0 text-start" aria-expanded="@expanded" aria-controls="close-rate-content" @onclick="ToggleAsync">
@@ -31,11 +33,11 @@
                 <h3 class="h5">@SelectedName</h3>
                 @if (UnavailableNames.Count > 0)
                 {
-                    <p class="text-warning" role="status">Housecall Pro totals unavailable for @string.Join(", ", UnavailableNames). These locations are excluded from the totals.</p>
+                    <p class="text-warning" role="status">Cached Housecall Pro totals are not yet available for @string.Join(", ", UnavailableNames). These locations are excluded until their background sync completes.</p>
                 }
                 @if (SelectedSummaries.Count == 0)
                 {
-                    <p>No Housecall Pro totals are available for this selection.</p>
+                    <p role="status">Waiting for Housecall Pro background sync or integration configuration. This panel updates automatically when a sync completes.</p>
                 }
                 else
                 {
@@ -66,7 +68,7 @@
                         </table>
                     </div>
                     <p class="small text-muted mt-3">Closed jobs include completed, in-progress, and scheduled jobs created this year; canceled jobs and jobs awaiting scheduling are excluded. Revenue is the full job value of completed and in-progress jobs created this year, rather than payments collected. Projections use that average job value and the same estimate volume; fractional jobs are scenario averages. This is a jobs-to-estimates ratio, not matched estimate conversions. Work may finish after this year.</p>
-                    <p class="small text-muted">Housecall Pro totals retrieved @SelectedSummaries.Min(item => item.RetrievedAt).ToLocalTime().ToString("MMM d, yyyy h:mm tt").</p>
+                    <p class="small text-muted">Cached Housecall Pro totals updated @SelectedSummaries.Min(item => item.RetrievedAt).ToLocalTime().ToString("MMM d, yyyy h:mm tt").</p>
                 }
             }
         </div>
@@ -93,6 +95,17 @@
     private int RevenueJobs => SelectedSummaries.Sum(item => item.RevenueJobs);
     private decimal? AverageValue => RevenueJobs == 0 ? null : Revenue / RevenueJobs;
     private decimal? CurrentRate => Estimates == 0 ? null : (decimal)ClosedJobs / Estimates;
+
+    protected override void OnInitialized() => Notifications.DashboardChanged += OnDashboardChangedAsync;
+
+    private Task OnDashboardChangedAsync() => InvokeAsync(async () =>
+    {
+        if (!expanded || loading) return;
+        await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => Notifications.DashboardChanged -= OnDashboardChangedAsync;
 
     protected override async Task OnParametersSetAsync()
     {
