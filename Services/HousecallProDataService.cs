@@ -34,6 +34,8 @@ public sealed record HcpEstimateStartRecord(
     string CustomerAddress,
     DateTimeOffset? EstimateDate);
 
+public sealed record HcpCloseRateSummary(int Estimates, int ClosedJobs, int RevenueJobs, decimal Revenue, DateTimeOffset RetrievedAt);
+
 public sealed class HousecallProDataService(
     HttpClient httpClient,
     IServiceScopeFactory scopeFactory,
@@ -42,6 +44,37 @@ public sealed class HousecallProDataService(
     ILogger<HousecallProDataService> logger)
 {
     private readonly HousecallProOptions settings = options.Value;
+
+    public async Task<HcpCloseRateSummary?> GetCloseRateSummaryAsync(
+        LocalOperation operation, CancellationToken cancellationToken = default)
+    {
+        var apiKey = settings.GetApiKey(operation.Slug);
+        if (apiKey is null) return null;
+
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(operation.TimeZone);
+        var now = DateTimeOffset.UtcNow;
+        var year = TimeZoneInfo.ConvertTime(now, zone).Year;
+        var localStart = new DateTime(year, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        var start = new DateTimeOffset(localStart, zone.GetUtcOffset(localStart)).ToUniversalTime();
+        return await cache.GetOrCreateAsync($"hcp-close-rate:{operation.Slug}:{year}", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+            var estimates = await GetPagesAsync(settings.EstimatesEndpoint, "estimates", apiKey, cancellationToken, int.MaxValue);
+            var jobs = await GetPagesAsync(settings.JobsEndpoint, "jobs", apiKey, cancellationToken, int.MaxValue);
+            bool InYear(DateTimeOffset? date) => date >= start && date <= now;
+            var estimateCount = estimates.DistinctBy(item => Text(item, "id"))
+                .Count(item => InYear(Date(item, "created_at") ?? FirstOptionDate(item, "created_at")));
+            var yearJobs = jobs.DistinctBy(item => Text(item, "id"))
+                .Where(item => InYear(Date(item, "created_at"))).ToList();
+            bool HasRevenue(JsonElement item) => Text(item, "work_status")?.ToLowerInvariant() is
+                "complete rated" or "complete unrated" or "completed" or "complete" or "in progress";
+            var revenueJobs = yearJobs.Where(HasRevenue).ToList();
+            var closedJobs = yearJobs.Count(item => HasRevenue(item) ||
+                string.Equals(Text(item, "work_status"), "scheduled", StringComparison.OrdinalIgnoreCase));
+            return new HcpCloseRateSummary(estimateCount, closedJobs, revenueJobs.Count,
+                revenueJobs.Sum(item => Money(item, "total_amount")), now);
+        });
+    }
 
     public async Task SyncAllConfiguredOperationsAsync(CancellationToken cancellationToken = default)
     {

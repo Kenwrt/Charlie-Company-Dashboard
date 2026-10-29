@@ -1,0 +1,141 @@
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@inject OperationAccessService OperationAccess
+@inject HousecallProDataService HousecallPro
+@inject ILogger<CloseRatePanel> Logger
+
+<section class="activity-panel close-rate-panel">
+    <button type="button" class="btn btn-link p-0 text-start" aria-expanded="@expanded" aria-controls="close-rate-content" @onclick="ToggleAsync">
+        <h2 class="mb-0">Close rate and revenue <span aria-hidden="true">@(expanded ? "▾" : "▸")</span></h2>
+    </button>
+    @if (expanded)
+    {
+        <div id="close-rate-content" class="mt-3">
+            @if (loading)
+            {
+                <p role="status">Loading year-to-date Housecall Pro totals…</p>
+            }
+            else
+            {
+                @if (string.IsNullOrWhiteSpace(OperationSlug))
+                {
+                    <label for="close-rate-operation" class="form-label">Location</label>
+                    <select id="close-rate-operation" class="form-select mb-3" @bind="selectedSlug">
+                        <option value="">@(administrator ? "Venture Group" : "My operations")</option>
+                        @foreach (var operation in operations)
+                        {
+                            <option value="@operation.Slug">@operation.EffectiveDisplayName</option>
+                        }
+                    </select>
+                }
+                <h3 class="h5">@SelectedName</h3>
+                @if (UnavailableNames.Count > 0)
+                {
+                    <p class="text-warning" role="status">Housecall Pro totals unavailable for @string.Join(", ", UnavailableNames). These locations are excluded from the totals.</p>
+                }
+                @if (SelectedSummaries.Count == 0)
+                {
+                    <p>No Housecall Pro totals are available for this selection.</p>
+                }
+                else
+                {
+                    <p>January 1–@Today.ToString("MMMM d, yyyy"): @Estimates.ToString("N0") estimates. Average completed or in-progress job value: @(AverageValue?.ToString("C2") ?? "Unavailable").</p>
+                    <div class="finance-table-wrap">
+                        <table class="finance-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Close Rate [@(CurrentRate?.ToString("P1") ?? "Unavailable")]</th>
+                                    <th scope="col" class="text-end">Jobs [@ClosedJobs.ToString("N0")]</th>
+                                    <th scope="col" class="text-end">Revenue [@Revenue.ToString("C2")]</th>
+                                    <th scope="col" class="text-end">Potential Increase Over Current</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var rate in new[] { 0.15m, 0.20m, 1m })
+                                {
+                                    var projectedRevenue = AverageValue * Estimates * rate;
+                                    var increase = projectedRevenue - Revenue;
+                                    <tr>
+                                        <th scope="row">@rate.ToString("P0")</th>
+                                        <td class="text-end">@((Estimates * rate).ToString("N1"))</td>
+                                        <td class="text-end">@(projectedRevenue?.ToString("C0") ?? "Unavailable")</td>
+                                        <td class="text-end">@(increase is null ? "Unavailable" : increase > 0 ? $"+{increase.Value:C0}" : increase.Value.ToString("C0"))</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="small text-muted mt-3">Closed jobs include completed, in-progress, and scheduled jobs created this year; canceled jobs and jobs awaiting scheduling are excluded. Revenue is the full job value of completed and in-progress jobs created this year, rather than payments collected. Projections use that average job value and the same estimate volume; fractional jobs are scenario averages. This is a jobs-to-estimates ratio, not matched estimate conversions. Work may finish after this year.</p>
+                    <p class="small text-muted">Housecall Pro totals retrieved @SelectedSummaries.Min(item => item.RetrievedAt).ToLocalTime().ToString("MMM d, yyyy h:mm tt").</p>
+                }
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public string? OperationSlug { get; set; }
+    private bool expanded;
+    private bool loading;
+    private bool administrator;
+    private string? loadedScope;
+    private string selectedSlug = string.Empty;
+    private IReadOnlyList<LocalOperation> operations = [];
+    private readonly Dictionary<string, HcpCloseRateSummary> summaries = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime Today => TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "America/Chicago").Date;
+    private IEnumerable<LocalOperation> SelectedOperations => operations.Where(item => string.IsNullOrEmpty(selectedSlug) || item.Slug.Equals(selectedSlug, StringComparison.OrdinalIgnoreCase));
+    private List<HcpCloseRateSummary> SelectedSummaries => SelectedOperations.Where(item => summaries.ContainsKey(item.Slug)).Select(item => summaries[item.Slug]).ToList();
+    private List<string> UnavailableNames => SelectedOperations.Where(item => !summaries.ContainsKey(item.Slug)).Select(item => item.EffectiveDisplayName).ToList();
+    private string SelectedName => string.IsNullOrEmpty(selectedSlug) ? administrator ? "Venture Group" : "My operations" : operations.FirstOrDefault(item => item.Slug.Equals(selectedSlug, StringComparison.OrdinalIgnoreCase))?.EffectiveDisplayName ?? "Local operation";
+    private int Estimates => SelectedSummaries.Sum(item => item.Estimates);
+    private int ClosedJobs => SelectedSummaries.Sum(item => item.ClosedJobs);
+    private decimal Revenue => SelectedSummaries.Sum(item => item.Revenue);
+    private int RevenueJobs => SelectedSummaries.Sum(item => item.RevenueJobs);
+    private decimal? AverageValue => RevenueJobs == 0 ? null : Revenue / RevenueJobs;
+    private decimal? CurrentRate => Estimates == 0 ? null : (decimal)ClosedJobs / Estimates;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var scope = OperationSlug ?? string.Empty;
+        if (loadedScope == scope) return;
+        loadedScope = scope;
+        selectedSlug = scope;
+        operations = [];
+        summaries.Clear();
+        if (expanded) await LoadAsync();
+    }
+
+    private async Task ToggleAsync()
+    {
+        expanded = !expanded;
+        if (expanded) await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            administrator = await OperationAccess.IsAdministratorAsync();
+            operations = (await OperationAccess.GetAccessibleOperationsAsync())
+                .Where(item => string.IsNullOrWhiteSpace(OperationSlug) || item.Slug.Equals(OperationSlug, StringComparison.OrdinalIgnoreCase)).ToList();
+            summaries.Clear();
+            foreach (var operation in operations)
+            {
+                try
+                {
+                    var summary = await HousecallPro.GetCloseRateSummaryAsync(operation);
+                    if (summary is not null) summaries[operation.Slug] = summary;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Could not load close rate totals for operation {OperationSlug}.", operation.Slug);
+                }
+            }
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}
