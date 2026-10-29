@@ -46,7 +46,7 @@
                         <table class="finance-table">
                             <thead>
                                 <tr>
-                                    <th scope="col">Close Rate [@(CurrentRate?.ToString("P1") ?? "Unavailable")]</th>
+                                    <th scope="col">Close Rate [<span class="@(CurrentRate is < 0.20m ? "text-danger fw-bold" : CurrentRate is >= 0.20m ? "text-success fw-bold" : null)">@(CurrentRate?.ToString("P1") ?? "Unavailable")</span>]</th>
                                     <th scope="col" class="text-end">Jobs [@ClosedJobs.ToString("N0")]</th>
                                     <th scope="col" class="text-end">Revenue [@Revenue.ToString("C2")]</th>
                                     <th scope="col" class="text-end">Potential Increase Over Current</th>
