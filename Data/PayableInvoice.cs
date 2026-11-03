@@ -10,6 +10,8 @@ public sealed class PayableInvoice
     public SupplyVendor SupplyVendor { get; set; } = null!;
     public int LocalOperationId { get; set; }
     public LocalOperation LocalOperation { get; set; } = null!;
+    [StringLength(80)] public string? PayingEntityCode { get; set; }
+    [StringLength(500)] public string? YourReference { get; set; }
     [Required, StringLength(100)] public string InvoiceNumber { get; set; } = string.Empty;
     [Required, StringLength(100)] public string JobNumber { get; set; } = string.Empty;
     public DateOnly InvoiceDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);

@@ -1,0 +1,15 @@
+.invoice-lines { min-width: 0; }
+.invoice-line { border: 1px solid #d7dfe8; border-radius: .6rem; padding: 1rem; margin: 1rem 0; min-width: 0; }
+.invoice-line legend { float: none; width: auto; font-size: 1rem; font-weight: 650; margin: 0; padding: 0 .35rem; }
+.line-identification { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(280px, 2fr); gap: 1rem; }
+.line-amounts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
+.line-identification > div, .line-amounts > div { min-width: 0; }
+.invoice-line ::deep input, .invoice-line ::deep textarea { width: 100%; box-sizing: border-box; }
+.line-description ::deep textarea { min-height: 5.5rem; resize: vertical; overflow-wrap: anywhere; }
+@media (max-width: 767.98px) {
+    .invoice-line { padding: .8rem; }
+    .line-identification { grid-template-columns: minmax(0, 1fr); gap: .8rem; }
+    .line-amounts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+    .line-total { grid-column: 1 / -1; }
+    .invoice-line ::deep input, .invoice-line ::deep textarea { font-size: 16px; }
+}

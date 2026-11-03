@@ -5,11 +5,15 @@
 @using CharleyCompany.Dashboard.Web.Data
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.EntityFrameworkCore
+@using CharleyCompany.Dashboard.Web.Options
+@using Microsoft.Extensions.Options
 @inject ApplicationDbContext DbContext
+@inject IOptions<SupplierInvoiceOptions> InvoiceOptions
 
 <PageTitle>Invoice Lines</PageTitle>
 @if (invoice is null) { <h1>Invoice not found</h1> }
 else {
+ <p>Paying entity: @(invoice.PayingEntityCode is string payer && InvoiceOptions.Value.PayingEntities.TryGetValue(payer, out var payerName) ? payerName : "Not assigned")<br />Your Reference: @(invoice.YourReference ?? "Not recorded")</p>
  <h1>Invoice @invoice.InvoiceNumber lines</h1><p>@invoice.SupplyVendor.Name · @invoice.LocalOperation.EffectiveDisplayName · Job @invoice.JobNumber<br /><a href="@($"admin/vendors/{VendorId}/invoices")">Back to invoices</a></p>
  @if (message is not null) { <div class="alert alert-info">@message</div> }
  @if (products.Count == 0) { <div class="alert alert-warning">Add products to this vendor's catalog before entering invoice lines.</div> }

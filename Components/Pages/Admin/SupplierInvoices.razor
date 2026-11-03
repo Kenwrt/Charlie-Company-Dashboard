@@ -1,0 +1,190 @@
+@page "/admin/supplier-invoices"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.Security.Claims
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Options
+@using Microsoft.Extensions.Options
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject SupplierInvoiceService ImportService
+@inject AuthenticationStateProvider AuthenticationState
+@inject ILogger<SupplierInvoices> Logger
+@inject IOptions<SupplierInvoiceOptions> InvoiceOptions
+
+<PageTitle>Supplier Invoice Review</PageTitle>
+<h1>Supplier invoice review</h1>
+<p>Review supplier documents before updating accounts payable. Catalog prices retain their effective dates; conflicting prices remain in <a href="/admin/catalog-automation">catalog review</a>.</p>
+@if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+<label for="invoice-status" class="form-label">Status</label>
+<select id="invoice-status" class="form-select mb-3" @bind="status" @bind:after="ReloadAsync" disabled="@busy">
+    <option>Needs Review</option><option>Posted</option><option>Duplicate Invoice</option><option>Rejected</option><option value="">All</option>
+</select>
+<button class="btn btn-outline-secondary mb-3" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
+<div class="table-responsive">
+<table class="table"><thead><tr><th>Received</th><th>Supplier / document</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+@foreach (var item in imports)
+{
+    <tr @key="item.Id"><td>@item.CreatedAt.ToLocalTime().ToString("g")</td><td>@item.PriceImportDocument.SupplyVendor.Name<br />@item.PriceImportDocument.OriginalFileName</td><td>@item.Status</td><td>
+        <a href="@($"/api/supplier-invoices/{item.Id}/document")" target="_blank" rel="noopener">Original PDF</a>
+        @if (item.Status == "Needs Review") { <button class="btn btn-sm btn-primary ms-2" @onclick="() => SelectAsync(item.Id)" disabled="@busy">Review</button> }
+        @if (item.PayableInvoiceId is int invoiceId) { <a class="ms-2" href="@($"/admin/vendors/{item.PriceImportDocument.SupplyVendorId}/invoices/{invoiceId}/lines")">AP invoice lines</a> }
+    </td></tr>
+}
+@if (imports.Count == 0) { <tr><td colspan="4">No invoices match this status.</td></tr> }
+</tbody></table></div>
+<p>Showing up to 100 most recent matching imports.</p>
+
+@if (selected is not null && payload is not null)
+{
+    <section class="activity-panel mt-4">
+    <h2>Review @selected.PriceImportDocument.OriginalFileName</h2>
+    <p><a href="@($"/api/supplier-invoices/{selected.Id}/document")" target="_blank" rel="noopener">Download original invoice</a></p>
+    @if (selected.ReviewReason is not null) { <p class="alert alert-warning">@selected.ReviewReason</p> }
+    @foreach (var warning in payload.Warnings) { <p class="alert alert-warning">@warning</p> }
+    <fieldset disabled="@busy">
+    <EditForm Model="payload" OnSubmit="ApproveAsync" FormName="supplier-invoice-review">
+    <div class="row g-3">
+        <div class="col-md-6"><label class="form-label">Paying entity (if known)</label><InputSelect class="form-select" @bind-Value="payload.PayingEntityCode"><option value="">Unknown / not confirmed</option>@foreach (var payer in InvoiceOptions.Value.PayingEntities) { <option value="@payer.Key">@payer.Value</option> }</InputSelect></div>
+        <div class="col-md-6"><label class="form-label">Your Reference (as printed)</label><InputText class="form-control" @bind-Value="payload.YourReference" /></div>
+        <div class="col-md-4"><label class="form-label">Invoice number</label><InputText class="form-control" @bind-Value="payload.InvoiceNumber" /></div>
+        <div class="col-md-4"><label class="form-label">Invoice date</label><InputDate class="form-control" @bind-Value="payload.InvoiceDate" /></div>
+        <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /></div>
+        <div class="col-md-6"><label class="form-label">Purchasing location</label><InputSelect class="form-select" @bind-Value="payload.LocalOperationId" @bind-Value:after="UpdateAccountingAssignment"><option value="">Select operation</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
+        <div class="col-md-6"><label class="form-label">Job number</label><InputText class="form-control" @bind-Value="payload.JobNumber" />@if (sourcePayload is not null && string.IsNullOrWhiteSpace(sourcePayload.JobNumber)) { <small class="text-muted">The original invoice leaves Job blank. Enter a verified job reference; Your Reference is shown separately.</small> }</div>
+        <div class="col-md-3"><label class="form-label">Tax</label><InputNumber class="form-control" @bind-Value="payload.Tax" />@if (sourcePayload?.ExtractionEvidence.ContainsKey("tax") == true) { <small class="text-muted">Original PDF: @sourcePayload.Tax.ToString("C2")</small> }</div>
+        <div class="col-md-3"><label class="form-label">Freight</label><InputNumber class="form-control" @bind-Value="payload.Freight" /></div>
+        <div class="col-md-3"><label class="form-label">Discount</label><InputNumber class="form-control" @bind-Value="payload.Discount" /></div>
+        <div class="col-md-3"><label class="form-label">Invoice total</label><InputNumber class="form-control" @bind-Value="payload.Total" />@if (sourcePayload?.ExtractionEvidence.ContainsKey("total") == true) { <small class="text-muted">Original PDF: @sourcePayload.Total.ToString("C2")</small> }</div>
+        <div class="col-md-3"><label class="form-label">Amount already paid</label><InputNumber class="form-control" @bind-Value="payload.AmountPaid" />@if (!payload.PaymentStateVerified) { <small class="text-muted">Unverified. Check supplier payment records before confirming this amount.</small> }</div>
+    </div>
+    <div class="alert alert-info mt-3">
+        <strong>Purchase-owning entity:</strong> @EntityName(payload.PurchaseEntityCode)<br />
+        <strong>Accounting scope:</strong> @(payload.AccountingPolicy == "ReportingOnly" ? "Dashboard reporting only. Excluded from the accounting posting queue." : "Eligible for a separate accounting review after dashboard approval.")
+        <p class="mb-0">Post to dashboard AP records this invoice in the dashboard. It does not post to Mercury or send a payment.</p>
+    </div>
+    <p class="mt-3">@payload.LocationAssignmentReason</p>
+    <label class="form-label">Location review explanation (required for uncertain or changed assignments)</label>
+    <InputTextArea class="form-control" @bind-Value="payload.LocationOverrideReason" />
+    <div class="form-check mt-3"><InputCheckbox class="form-check-input" @bind-Value="payload.LocationAssignmentConfirmed" /><label class="form-check-label">I confirmed the purchase-owning entity, location and payer information (including when the payer is unknown). Job numbers are interpreted within that location.</label></div>
+    <div class="form-check mt-3"><InputCheckbox class="form-check-input" @bind-Value="payload.PaymentStateVerified" /><label class="form-check-label">I confirmed the amount already paid against supplier records.</label></div>
+    <section class="invoice-lines mt-4" aria-label="Invoice line items">
+    <h3>Invoice items</h3>
+    @for (var lineIndex = 0; lineIndex < payload.Lines.Count; lineIndex++)
+    {
+        var line = payload.Lines[lineIndex];
+        <fieldset class="invoice-line" @key="line">
+        <legend>Item @(lineIndex + 1)</legend>
+        <div class="line-identification">
+            <div><label class="form-label">Supplier SKU</label><InputText class="form-control" aria-label="Supplier SKU" @bind-Value="line.Sku" /></div>
+            <div class="line-description"><label class="form-label">Description</label><InputTextArea class="form-control" aria-label="Description" rows="3" @bind-Value="line.Description" /></div>
+        </div>
+        <div class="line-amounts">
+            <div><label class="form-label">Purchase unit</label><InputText class="form-control" aria-label="Purchase unit" @bind-Value="line.PurchaseUnit" /></div>
+            <div><label class="form-label">Package quantity</label><InputNumber class="form-control" aria-label="Package quantity" @bind-Value="line.PackageQuantity" /></div>
+            <div><label class="form-label">Quantity</label><InputNumber class="form-control" aria-label="Quantity" @bind-Value="line.Quantity" /></div>
+            <div><label class="form-label">Unit price</label><InputNumber class="form-control" aria-label="Unit price" @bind-Value="line.UnitPrice" /></div>
+            <div class="line-total"><label class="form-label">Line total</label><InputNumber class="form-control" aria-label="Line total" @bind-Value="line.LineTotal" /></div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary mt-3" type="button" @onclick="() => payload.Lines.Remove(line)">Remove item</button>
+        </fieldset>
+    }
+    </section>
+    <button class="btn btn-outline-secondary" type="button" @onclick="() => payload.Lines.Add(new SupplierInvoiceItem())">Add line</button>
+    <div class="form-check mt-3"><InputCheckbox class="form-check-input" @bind-Value="allowNewProducts" /><label class="form-check-label">Create catalog products for the new SKUs I reviewed.</label></div>
+    <div class="form-check"><InputCheckbox class="form-check-input" @bind-Value="approvePrices" /><label class="form-check-label">Approve reviewed prices. Different prices already recorded on the same date stay in catalog review.</label></div>
+    <div class="form-check"><InputCheckbox class="form-check-input" @bind-Value="confirmedOriginal" /><label class="form-check-label">I checked the original invoice, line items, totals, dates, operation and job assignment.</label></div>
+    <button class="btn btn-primary mt-3" type="submit">Post to dashboard AP</button>
+    <button class="btn btn-outline-danger mt-3 ms-2" type="button" @onclick="RejectAsync">Reject import</button>
+    </EditForm>
+    </fieldset>
+    </section>
+}
+
+@code {
+    private List<SupplierInvoiceImport> imports = [];
+    private List<LocalOperation> operations = [];
+    private SupplierInvoiceImport? selected;
+    private SupplierInvoicePayload? payload;
+    private SupplierInvoicePayload? sourcePayload;
+    private string status = "Needs Review";
+    private string? message;
+    private bool busy, allowNewProducts, approvePrices, confirmedOriginal;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+    private async Task ReloadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = db.SupplierInvoiceImports.AsNoTracking();
+        if (status.Length > 0) query = query.Where(x => x.Status == status);
+        imports = await query.Include(x => x.PriceImportDocument).ThenInclude(x => x.SupplyVendor).OrderByDescending(x => x.Id).Take(100).ToListAsync();
+        operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync();
+    }
+    private Task SelectAsync(int id)
+    {
+        selected = imports.Single(x => x.Id == id);
+        payload = JsonSerializer.Deserialize<SupplierInvoicePayload>(selected.PayloadJson, SupplierInvoicePayload.JsonOptions);
+        var source = JsonNode.Parse(selected.PayloadJson)?["_extractionBaseline"];
+        sourcePayload = source is not null ? source.Deserialize<SupplierInvoicePayload>(SupplierInvoicePayload.JsonOptions)
+            : JsonSerializer.Deserialize<SupplierInvoicePayload>(selected.PayloadJson, SupplierInvoicePayload.JsonOptions);
+        if (payload is not null)
+        {
+            payload.LocationAssignmentConfirmed = false;
+            // Older pending imports inherited an unverified Ventures payer default.
+            if (string.IsNullOrWhiteSpace(payload.AccountingPolicyVersion)) payload.PayingEntityCode = "";
+            UpdateAccountingAssignment();
+        }
+        allowNewProducts = approvePrices = confirmedOriginal = false;
+        message = null;
+        return Task.CompletedTask;
+    }
+    private string EntityName(string code) => InvoiceOptions.Value.PayingEntities.GetValueOrDefault(code, "Unassigned: resolve location mapping before posting");
+    private void UpdateAccountingAssignment()
+    {
+        if (payload is null) return;
+        SupplierInvoiceAccounting.Assign(payload, operations.SingleOrDefault(x => x.Id == payload.LocalOperationId)?.Slug, InvoiceOptions.Value);
+        payload.LocationAssignmentConfirmed = false;
+    }
+    private async Task<string> ActorAsync() => (await AuthenticationState.GetAuthenticationStateAsync()).User.FindFirstValue(ClaimTypes.NameIdentifier)
+        ?? throw new InvalidOperationException("Sign in again before reviewing an invoice.");
+    private async Task ApproveAsync(EditContext _)
+    {
+        if (busy || selected is null || payload is null) return;
+        if (!confirmedOriginal) { message = "Review the original invoice and confirm the checklist before posting."; return; }
+        await RunAsync(async () =>
+        {
+            await ImportService.ApproveAsync(selected.Id, payload, allowNewProducts, approvePrices, await ActorAsync(), CancellationToken.None);
+            message = "Invoice recorded in dashboard AP. No external accounting entry or payment was sent. Any unapproved price changes remain in catalog review.";
+            selected = null; payload = null;
+        });
+    }
+    private async Task RejectAsync()
+    {
+        if (busy || selected is null) return;
+        await RunAsync(async () =>
+        {
+            await ImportService.RejectAsync(selected.Id, await ActorAsync(), CancellationToken.None);
+            message = "Import rejected. The original document was retained.";
+            selected = null; payload = null;
+        });
+    }
+    private async Task RunAsync(Func<Task> action)
+    {
+        busy = true;
+        try { await action(); await ReloadAsync(); }
+        catch (ArgumentException ex) { message = ex.Message; }
+        catch (Exception ex)
+        {
+            Logger.LogWarning("Supplier invoice review failed with {ErrorType}", ex.GetType().Name);
+            message = "The action could not finish. Refresh the list before retrying.";
+        }
+        finally { busy = false; }
+    }
+}

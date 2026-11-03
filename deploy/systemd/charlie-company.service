@@ -22,6 +22,8 @@ ReadWritePaths=/var/lib/charlie-company/dataprotection /var/log/charlie-company
 StateDirectory=charlie-company/close-rate-cache
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/charlie-company/close-rate-cache
+StateDirectory=charlie-company/supplier-invoices
+ReadWritePaths=/var/lib/charlie-company/supplier-invoices
 
 [Install]
 WantedBy=multi-user.target

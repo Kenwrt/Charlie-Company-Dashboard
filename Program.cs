@@ -84,6 +84,12 @@ try
     });
     builder.Services.AddScoped<IEmailSender<ApplicationUser>, SmtpIdentityEmailSender>();
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
+    builder.Services.Configure<SupplierInvoiceOptions>(builder.Configuration.GetSection(SupplierInvoiceOptions.SectionName));
+    builder.Services.AddScoped<SupplierInvoiceService>();
+    builder.Services.AddScoped<SupplierInvoiceRouting>();
+    builder.Services.AddRateLimiter(options => options.AddPolicy("supplier-invoices", context => RateLimitPartition.GetTokenBucketLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new TokenBucketRateLimiterOptions
+        { TokenLimit = 60, TokensPerPeriod = 60, ReplenishmentPeriod = TimeSpan.FromMinutes(1), AutoReplenishment = true, QueueLimit = 0 })));
     builder.Services.Configure<CentComOptions>(builder.Configuration.GetSection(CentComOptions.SectionName));
     builder.Services.Configure<SerpApiOptions>(builder.Configuration.GetSection(SerpApiOptions.SectionName));
     builder.Services.AddHttpClient<HomeDepotCatalogLookupService>((services, client) =>
@@ -192,6 +198,7 @@ try
     app.MapHealthEndpoints();
     app.MapHousecallProWebhookEndpoints();
     app.MapObservabilityEndpoints();
+    app.MapSupplierInvoiceEndpoints();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
 

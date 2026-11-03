@@ -1,0 +1,36 @@
+{
+  "enabled": false,
+  "dashboard_url": "https://YOUR-CHARLIE-COMPANY-HOST",
+  "dashboard_connect_address": "",
+  "ingestion_key_file": "/srv/ai/hermes/supplier-invoices/ingestion-key",
+  "state_directory": "/srv/ai/hermes/supplier-invoices/state",
+  "inbox_directory": "/srv/ai/hermes/supplier-invoices/inbox/decks-docks",
+  "portal": {
+    "enabled": false,
+    "adapter": "suppli",
+    "login_url": "https://customer.gosuppli.com/decks-docks/auth/login",
+    "login_selector": "#login-button",
+    "tenant_path": "/decks-docks/",
+    "account_path": "",
+    "invoice_list_url": "",
+    "authenticated_selector": "nav[aria-label=\"Tabs\"]",
+    "invoice_link_selector": "",
+    "next_page_link_selector": "",
+    "allowed_download_hosts": ["suppli-prod.s3.amazonaws.com"],
+    "refresh_existing_hours": 24,
+    "profile_directory": "/srv/ai/hermes/supplier-invoices/browser-profile",
+    "browser_executable_path": "",
+    "max_pages": 50,
+    "max_invoices": 200
+  },
+  "extraction": {
+    "parser": "decks-docks-positioned",
+    "engine": "pypdf",
+    "pdftotext": "pdftotext",
+    "pdftoppm": "pdftoppm",
+    "tesseract": "tesseract",
+    "ocr_enabled": false,
+    "max_pages": 30,
+    "line_pattern": ""
+  }
+}

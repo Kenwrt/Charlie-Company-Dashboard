@@ -21,6 +21,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<VendorProduct> VendorProducts => Set<VendorProduct>();
     public DbSet<VendorPrice> VendorPrices => Set<VendorPrice>();
     public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
+    public DbSet<SupplierInvoiceImport> SupplierInvoiceImports => Set<SupplierInvoiceImport>();
     public DbSet<PriceImportDocument> PriceImportDocuments => Set<PriceImportDocument>();
     public DbSet<PriceImportRow> PriceImportRows => Set<PriceImportRow>();
     public DbSet<PriceApprovalRule> PriceApprovalRules => Set<PriceApprovalRule>();
@@ -140,6 +141,16 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.HasOne(line => line.PayableInvoice).WithMany(invoice => invoice.Lines).HasForeignKey(line => line.PayableInvoiceId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(line => line.VendorProduct).WithMany(item => item.InvoiceLines).HasForeignKey(line => line.VendorProductId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<SupplierInvoiceImport>(entity =>
+        {
+            entity.HasIndex(x => x.PriceImportDocumentId).IsUnique();
+            entity.HasIndex(x => x.PayableInvoiceId);
+            entity.HasIndex(x => new { x.Status, x.Id });
+            entity.Property(x => x.ReviewedAt).IsConcurrencyToken();
+            entity.HasOne(x => x.PriceImportDocument).WithMany().HasForeignKey(x => x.PriceImportDocumentId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_SupplierImports_Documents");
+            entity.HasOne(x => x.PayableInvoice).WithMany().HasForeignKey(x => x.PayableInvoiceId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_SupplierImports_AP");
         });
 
         builder.Entity<PriceImportDocument>(entity =>

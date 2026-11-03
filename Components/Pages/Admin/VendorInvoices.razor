@@ -8,6 +8,7 @@
 @inject ApplicationDbContext DbContext
 
 <PageTitle>Vendor Payable Invoices</PageTitle>
+<p><a href="/admin/supplier-invoices">Supplier invoice documents and import review</a></p>
 @if (vendor is null) { <h1>Vendor not found</h1> }
 else {
  <h1>@vendor.Name payable invoices</h1><p><a href="admin/vendors">Back to vendors</a></p>
