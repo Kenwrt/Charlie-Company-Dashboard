@@ -29,16 +29,16 @@
 </select>
 <button class="btn btn-outline-secondary mb-3" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
 <div class="table-responsive">
-<table class="table"><thead><tr><th>Received</th><th>Supplier / document</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+<table class="table"><thead><tr><th>Invoice number</th><th>Received</th><th>Supplier / document</th><th>Status</th><th>Actions</th></tr></thead><tbody>
 @foreach (var item in imports)
 {
-    <tr @key="item.Id"><td>@item.CreatedAt.ToLocalTime().ToString("g")</td><td>@item.PriceImportDocument.SupplyVendor.Name<br />@item.PriceImportDocument.OriginalFileName</td><td>@item.Status</td><td>
+    <tr @key="item.Id"><td>@InvoiceNumber(item)</td><td>@item.CreatedAt.ToLocalTime().ToString("g")</td><td>@item.PriceImportDocument.SupplyVendor.Name<br />@item.PriceImportDocument.OriginalFileName</td><td>@item.Status</td><td>
         <a href="@($"/api/supplier-invoices/{item.Id}/document")" target="_blank" rel="noopener">Original PDF</a>
         @if (item.Status == "Needs Review") { <button class="btn btn-sm btn-primary ms-2" @onclick="() => SelectAsync(item.Id)" disabled="@busy">Review</button> }
         @if (item.PayableInvoiceId is int invoiceId) { <a class="ms-2" href="@($"/admin/vendors/{item.PriceImportDocument.SupplyVendorId}/invoices/{invoiceId}/lines")">AP invoice lines</a> }
     </td></tr>
 }
-@if (imports.Count == 0) { <tr><td colspan="4">No invoices match this status.</td></tr> }
+@if (imports.Count == 0) { <tr><td colspan="5">No invoices match this status.</td></tr> }
 </tbody></table></div>
 <p>Showing up to 100 most recent matching imports.</p>
 
@@ -135,6 +135,15 @@
     private bool busy, allowNewProducts, approvePrices, confirmedOriginal;
 
     protected override Task OnInitializedAsync() => ReloadAsync();
+    private static string InvoiceNumber(SupplierInvoiceImport item)
+    {
+        try
+        {
+            var number = JsonSerializer.Deserialize<SupplierInvoicePayload>(item.PayloadJson, SupplierInvoicePayload.JsonOptions)?.InvoiceNumber;
+            return string.IsNullOrWhiteSpace(number) ? "Not extracted" : number;
+        }
+        catch (JsonException) { return "Not available"; }
+    }
     private async Task ReloadAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
