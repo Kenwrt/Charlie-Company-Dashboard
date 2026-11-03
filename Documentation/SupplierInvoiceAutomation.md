@@ -310,3 +310,19 @@ Review corrections do not train or change parser rules automatically. Report par
 exceptions for explicit source changes; preserve original PDFs and extraction history.
 No controller export, production setting change or remote deployment is activated
 by this source implementation.
+
+## Customer-name and reference-number job lookup
+
+Lookup uses synchronized Housecall Pro jobs scoped to the purchasing operation.
+Whole job-number tokens in Your Reference are validated against HCP jobs first.
+Otherwise the entire normalized customer name is matched, ignoring case, punctuation
+and extra spaces. No fuzzy match, job status filter or date filter is used.
+A printed or previously selected Job is retained only when it validates in that
+operation. Distinct matching numbers appear as a comma-separated reference list and
+individual dropdown options. One match can fill automatically; multiple matches
+require one selection. No combined list is saved as the AP job number. Posting
+revalidates the single number against operation-scoped HCP data on the server.
+Missing or unsynchronized jobs must be resolved before approval. Lookup runs on
+new intake and when a pending review opens; the button repeats it after edits.
+This uses synchronized dashboard data, not a fresh live API scan. Source sync time
+is displayed. No historical posted invoice is backfilled. No schema change required.

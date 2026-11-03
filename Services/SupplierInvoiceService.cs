@@ -107,6 +107,7 @@ public sealed class SupplierInvoiceService(
         // Incoming collector assertions cannot impersonate administrator review.
         payload.LocationAssignmentConfirmed = false;
         payload.LocationOverrideReason = "";
+        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct);
         var import = new SupplierInvoiceImport { PriceImportDocument = document,
             PayloadJson = JsonSerializer.Serialize(payload, SupplierInvoicePayload.JsonOptions), OriginalPayloadJson = json };
         db.SupplierInvoiceImports.Add(import);
@@ -289,7 +290,10 @@ public sealed class SupplierInvoiceService(
         if (p.InvoiceDate is null || p.InvoiceDate > DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1))) issues.Add("A valid invoice date is required.");
         if (p.DueDate is null || p.DueDate < p.InvoiceDate) issues.Add("Confirm the due date.");
         if (p.LocalOperationId is null || !await db.LocalOperations.AnyAsync(x => x.Id == p.LocalOperationId && x.IsActive, ct)) issues.Add("Select an active local operation.");
-        if (string.IsNullOrWhiteSpace(p.JobNumber)) issues.Add("Confirm the job number.");
+        if (string.IsNullOrWhiteSpace(p.JobNumber)) issues.Add("Select exactly one validated Housecall Pro job number.");
+        else if (p.LocalOperationId is null || !await db.HousecallProJobs.AsNoTracking().AnyAsync(
+            x => x.LocalOperationId == p.LocalOperationId && x.JobNumber != null && x.JobNumber.Trim() == p.JobNumber.Trim(), ct))
+            issues.Add("The selected job number must match one Housecall Pro job number in the purchasing location. Multiple numbers cannot be posted.");
         if (p.Currency != "USD") issues.Add("Only USD invoices are supported.");
         if (p.IsCreditNote) issues.Add("Credit notes must use the existing vendor-credit workflow.");
         if (!p.PaymentStateVerified) issues.Add("Confirm the amount already paid.");

@@ -58,7 +58,13 @@
         <div class="col-md-4"><label class="form-label">Invoice date</label><InputDate class="form-control" @bind-Value="payload.InvoiceDate" /></div>
         <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /></div>
         <div class="col-md-6"><label class="form-label">Purchasing location</label><InputSelect class="form-select" @bind-Value="payload.LocalOperationId" @bind-Value:after="UpdateAccountingAssignment"><option value="">Select operation</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
-        <div class="col-md-6"><label class="form-label">Job number</label><InputText class="form-control" @bind-Value="payload.JobNumber" />@if (sourcePayload is not null && string.IsNullOrWhiteSpace(sourcePayload.JobNumber)) { <small class="text-muted">The original invoice leaves Job blank. Enter a verified job reference; Your Reference is shown separately.</small> }</div>
+        <div class="col-md-6"><label class="form-label" for="supplier-job">Job number</label>
+            <InputSelect id="supplier-job" class="form-select" @bind-Value="payload.JobNumber">
+                <option value="">Select one validated job</option>
+                @foreach (var number in payload.MatchedJobNumbers) { <option value="@number">@number</option> }
+            </InputSelect>
+            <small class="text-muted">Exactly one job is required. All matching numbers are listed below, separated by commas.</small>
+        </div>
         <div class="col-md-3"><label class="form-label">Tax</label><InputNumber class="form-control" @bind-Value="payload.Tax" />@if (sourcePayload?.ExtractionEvidence.ContainsKey("tax") == true) { <small class="text-muted">Original PDF: @sourcePayload.Tax.ToString("C2")</small> }</div>
         <div class="col-md-3"><label class="form-label">Freight</label><InputNumber class="form-control" @bind-Value="payload.Freight" /></div>
         <div class="col-md-3"><label class="form-label">Discount</label><InputNumber class="form-control" @bind-Value="payload.Discount" /></div>
@@ -69,6 +75,16 @@
         <strong>Purchase-owning entity:</strong> @EntityName(payload.PurchaseEntityCode)<br />
         <strong>Accounting scope:</strong> @(payload.AccountingPolicy == "ReportingOnly" ? "Dashboard reporting only. Excluded from the accounting posting queue." : "Eligible for a separate accounting review after dashboard approval.")
         <p class="mb-0">Post to dashboard AP records this invoice in the dashboard. It does not post to Mercury or send a payment.</p>
+    </div>
+    <div class="mt-3">
+        <button type="button" class="btn btn-outline-secondary" @onclick="LookupJobsAsync" disabled="@busy">Look up customer jobs</button>
+        <small class="d-block text-muted">Uses synchronized Housecall Pro jobs for the selected location. Validates numbers in Your Reference or matches the full customer name.</small>
+        @if (!string.IsNullOrWhiteSpace(payload.JobLookupMessage)) { <p>@payload.JobLookupMessage</p> }
+        @if (payload.MatchedJobNumbers.Count > 0)
+        {
+            <p>Matching job numbers: @string.Join(", ", payload.MatchedJobNumbers)</p>
+            <small>Source records last synchronized: @payload.JobLookupSourceSyncedAt?.ToString("u"). Multiple matches identify customer jobs, not an allocation of this invoice's cost.</small>
+        }
     </div>
     <p class="mt-3">@payload.LocationAssignmentReason</p>
     <label class="form-label">Location review explanation (required for uncertain or changed assignments)</label>
@@ -127,7 +143,7 @@
         imports = await query.Include(x => x.PriceImportDocument).ThenInclude(x => x.SupplyVendor).OrderByDescending(x => x.Id).Take(100).ToListAsync();
         operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync();
     }
-    private Task SelectAsync(int id)
+    private async Task SelectAsync(int id)
     {
         selected = imports.Single(x => x.Id == id);
         payload = JsonSerializer.Deserialize<SupplierInvoicePayload>(selected.PayloadJson, SupplierInvoicePayload.JsonOptions);
@@ -143,7 +159,16 @@
         }
         allowNewProducts = approvePrices = confirmedOriginal = false;
         message = null;
-        return Task.CompletedTask;
+        await LookupJobsAsync();
+    }
+    private async Task LookupJobsAsync()
+    {
+        if (payload is null) return;
+        await RunAsync(async () =>
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await SupplierInvoiceJobLookup.PopulateAsync(db, payload, CancellationToken.None);
+        });
     }
     private string EntityName(string code) => InvoiceOptions.Value.PayingEntities.GetValueOrDefault(code, "Unassigned: resolve location mapping before posting");
     private void UpdateAccountingAssignment()
@@ -151,6 +176,13 @@
         if (payload is null) return;
         SupplierInvoiceAccounting.Assign(payload, operations.SingleOrDefault(x => x.Id == payload.LocalOperationId)?.Slug, InvoiceOptions.Value);
         payload.LocationAssignmentConfirmed = false;
+        if (payload.JobLookupLocationId != payload.LocalOperationId)
+        {
+            payload.JobNumber = "";
+            payload.JobLookupFilledValue = "";
+            payload.MatchedJobNumbers = [];
+            payload.JobLookupMessage = "Location changed. Look up jobs again for this location.";
+        }
     }
     private async Task<string> ActorAsync() => (await AuthenticationState.GetAuthenticationStateAsync()).User.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? throw new InvalidOperationException("Sign in again before reviewing an invoice.");

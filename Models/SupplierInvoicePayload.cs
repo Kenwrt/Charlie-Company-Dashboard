@@ -20,6 +20,13 @@ public sealed class SupplierInvoicePayload
     public bool LocationAssignmentConfirmed { get; set; }
     public string LocationOverrideReason { get; set; } = "";
     public string JobNumber { get; set; } = "";
+    public List<string> MatchedJobNumbers { get; set; } = [];
+    public string JobLookupMessage { get; set; } = "";
+    public string JobLookupReference { get; set; } = "";
+    public int? JobLookupLocationId { get; set; }
+    public string JobLookupFilledValue { get; set; } = "";
+    public DateTimeOffset? JobLookupAt { get; set; }
+    public DateTimeOffset? JobLookupSourceSyncedAt { get; set; }
     public string Currency { get; set; } = "USD";
     public bool IsCreditNote { get; set; }
     public decimal Tax { get; set; }
