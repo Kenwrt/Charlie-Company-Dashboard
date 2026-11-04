@@ -353,7 +353,10 @@ public sealed class SupplierInvoiceService(
             if (item is null && !allowNewProducts) issues.Add("New supplier SKUs require explicit catalog review.");
             if (item is not null && (!item.IsActive || item.PackageQuantity != line.PackageQuantity
                 || !item.PurchaseUnit.Equals(line.PurchaseUnit.Trim(), StringComparison.OrdinalIgnoreCase)))
-                issues.Add("An existing SKU has a different purchase unit or package quantity, or is inactive. Resolve its catalog mapping first.");
+                issues.Add($"SKU '{line.Sku.Trim()}' conflicts with the catalog. "
+                    + $"Invoice: purchase unit '{line.PurchaseUnit.Trim()}', package quantity {line.PackageQuantity}. "
+                    + $"Catalog: purchase unit '{item.PurchaseUnit}', package quantity {item.PackageQuantity}, "
+                    + $"inactive: {(item.IsActive ? "No" : "Yes")}. Resolve this SKU's catalog mapping before posting.");
         }
         if (p.Lines.GroupBy(x => x.Sku.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Select(x => (x.PurchaseUnit.Trim().ToUpperInvariant(), x.PackageQuantity)).Distinct().Count() > 1))
             issues.Add("The same SKU has conflicting units or package quantities.");
