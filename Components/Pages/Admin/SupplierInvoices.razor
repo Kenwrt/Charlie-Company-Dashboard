@@ -80,7 +80,9 @@
         <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /><small class="text-muted">If missing, defaults to 30 days after the invoice date.</small></div>
         <div class="col-md-6"><label class="form-label">Purchasing location</label><InputSelect class="form-select" @bind-Value="payload.LocalOperationId" @bind-Value:after="UpdateAccountingAssignment"><option value="">Select operation</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
         <div class="col-md-6"><label class="form-label" for="supplier-job">Job number</label>
-            <InputSelect id="supplier-job" class="form-select" @bind-Value="payload.JobNumber">
+            <InputText id="supplier-job" class="form-control" @bind-Value="payload.JobNumber" readonly />
+            <label class="form-label mt-2" for="supplier-job-choice">Choose job (description for reference)</label>
+            <InputSelect id="supplier-job-choice" class="form-select" @bind-Value="payload.JobNumber">
                 <option value="">Select one validated job</option>
                 @foreach (var number in payload.MatchedJobNumbers) { <option value="@number">@number - @payload.JobOptionLabels.GetValueOrDefault(number, "Description unavailable")</option> }
             </InputSelect>
