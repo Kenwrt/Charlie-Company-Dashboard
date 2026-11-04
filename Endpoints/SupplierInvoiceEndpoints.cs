@@ -91,7 +91,7 @@ public static class SupplierInvoiceEndpoints
                 var approvedPolicy = payload.AccountingPolicy;
                 var approvedVersion = payload.AccountingPolicyVersion;
                 SupplierInvoiceAccounting.Assign(payload, x.LocationSlug, options.Value);
-                var eligible = x.Status == "Posted" && x.PayableInvoiceId is not null
+                var eligible = !payload.JobUnassigned && !string.IsNullOrWhiteSpace(payload.JobNumber) && x.Status == "Posted" && x.PayableInvoiceId is not null
                     && approvedVersion == SupplierInvoiceAccounting.Version
                     && approvedOwner == payload.PurchaseEntityCode && approvedPolicy == "AccountingReview"
                     && payload.AccountingPolicy == "AccountingReview";

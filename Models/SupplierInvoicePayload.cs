@@ -19,6 +19,8 @@ public sealed class SupplierInvoicePayload
     public bool LocationRequiresReview { get; set; }
     public bool LocationAssignmentConfirmed { get; set; }
     public string LocationOverrideReason { get; set; } = "";
+    public bool JobUnassigned { get; set; }
+    public string JobUnassignedReason { get; set; } = "";
     public string JobNumber { get; set; } = "";
     public List<string> MatchedJobNumbers { get; set; } = [];
     public string JobLookupMessage { get; set; } = "";

@@ -13,6 +13,7 @@ public static class SupplierInvoiceJobLookup
 
     public static async Task PopulateAsync(ApplicationDbContext db, SupplierInvoicePayload payload, CancellationToken ct)
     {
+        if (payload.JobUnassigned) return;
         // Preserve only a single verified existing selection; never select among multiple matches.
         payload.YourReference = payload.YourReference.Trim();
         var existing = payload.JobNumber.Trim();

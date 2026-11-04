@@ -160,6 +160,7 @@ public sealed class SupplierInvoiceService(
         payload.LocationAssignmentReason = overridesLocation ? payload.LocationOverrideReason.Trim() : assignment.Reason;
         payload.LocationRequiresReview = false;
         SupplierInvoiceAccounting.Assign(payload, (await db.LocalOperations.FindAsync([payload.LocalOperationId ?? 0], ct))?.Slug, options.Value);
+        if (payload.JobUnassigned) payload.JobNumber = "";
         var items = await LoadProductsAsync(db, vendorId, ct);
         var issues = await PostingIssuesAsync(db, payload, items, allowNewProducts, ct);
         if (issues.Count > 0) throw new ArgumentException(string.Join(" ", issues));
@@ -183,6 +184,36 @@ public sealed class SupplierInvoiceService(
         await transaction.CommitAsync(ct);
         logger.LogInformation("Supplier invoice {ImportId} posted with correlation {CorrelationId}", id, import.CorrelationId);
         return new(import.Id, import.Status, import.PayableInvoiceId, false);
+    }
+
+    public async Task AssignJobAsync(int id, string jobNumber, string actor, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(jobNumber) || jobNumber.Length > 100)
+            throw new ArgumentException("Select one validated job number.");
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var vendorId = await db.SupplierInvoiceImports.Where(x => x.Id == id)
+            .Select(x => x.PriceImportDocument.SupplyVendorId).SingleAsync(ct);
+        await LockVendorAsync(db, vendorId, ct);
+        var import = await db.SupplierInvoiceImports.Include(x => x.PayableInvoice).SingleAsync(x => x.Id == id, ct);
+        var invoice = import.PayableInvoice;
+        if (import.Status != "Posted" || invoice is null || !string.IsNullOrWhiteSpace(invoice.JobNumber))
+            throw new ArgumentException("This invoice is no longer awaiting job assignment. Refresh the queue.");
+        jobNumber = jobNumber.Trim();
+        if (!await db.HousecallProJobs.AnyAsync(x => x.LocalOperationId == invoice.LocalOperationId
+            && x.JobNumber != null && x.JobNumber.Trim() == jobNumber, ct))
+            throw new ArgumentException("Select a Housecall Pro job from this invoice's purchasing location.");
+        var payload = JsonSerializer.Deserialize<SupplierInvoicePayload>(import.PayloadJson, SupplierInvoicePayload.JsonOptions)!;
+        payload.JobNumber = jobNumber;
+        payload.JobUnassigned = false;
+        invoice.JobNumber = jobNumber;
+        invoice.UpdatedAt = DateTimeOffset.UtcNow;
+        import.ReviewedAt = invoice.UpdatedAt;
+        import.PayloadJson = JsonSerializer.Serialize(payload, SupplierInvoicePayload.JsonOptions);
+        // The original reason and original extraction remain available; append an assignment audit.
+        AddAudit(db, import, "JobAssigned", actor);
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     public async Task RejectAsync(int id, string actor, CancellationToken ct)
@@ -295,7 +326,12 @@ public sealed class SupplierInvoiceService(
         if (p.InvoiceDate is null || p.InvoiceDate > DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1))) issues.Add("A valid invoice date is required.");
         if (p.DueDate is null || p.DueDate < p.InvoiceDate) issues.Add("Confirm the due date.");
         if (p.LocalOperationId is null || !await db.LocalOperations.AnyAsync(x => x.Id == p.LocalOperationId && x.IsActive, ct)) issues.Add("Select an active local operation.");
-        if (string.IsNullOrWhiteSpace(p.JobNumber)) issues.Add("Select exactly one validated Housecall Pro job number.");
+        if (p.JobUnassigned)
+        {
+            if (string.IsNullOrWhiteSpace(p.JobUnassignedReason) || p.JobUnassignedReason.Length > 500)
+                issues.Add("Explain why the job is unassigned (up to 500 characters).");
+        }
+        else if (string.IsNullOrWhiteSpace(p.JobNumber)) issues.Add("Select one job or explicitly choose job unknown / assign later.");
         else if (p.LocalOperationId is null || !await db.HousecallProJobs.AsNoTracking().AnyAsync(
             x => x.LocalOperationId == p.LocalOperationId && x.JobNumber != null && x.JobNumber.Trim() == p.JobNumber.Trim(), ct))
             issues.Add("The selected job number must match one Housecall Pro job number in the purchasing location. Multiple numbers cannot be posted.");

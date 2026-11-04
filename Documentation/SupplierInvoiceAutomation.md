@@ -348,3 +348,15 @@ unrelated customers, so the reviewer must confirm customer identity in HCP.
 Missing invoice due dates default to invoice date plus 30 calendar days, per the
 supplier terms confirmed by the owner. Existing due dates are preserved. The default
 applies on intake, extraction refresh, opening pending reviews, and approval.
+
+## Unassigned job expenses
+
+Reviewers can explicitly choose Job unknown / assign later with a required reason.
+The posted payable uses an empty job string, never a fabricated job number. Other
+posting checks remain required. The review payload stores the flag and explanation;
+no schema migration is required. The Unassigned job expenses filter lists posted
+supplier imports whose linked AP job is blank. Assignment uses same-location HCP
+jobs and a serialized supplier transaction to update the existing payable and its
+payload, recording actor/time in an append-only JobAssigned event. No amounts,
+lines or catalog decisions are recreated. Assigned rows leave the queue on refresh.
+Unassigned invoices remain excluded from accounting-review export candidates.

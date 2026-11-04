@@ -27,7 +27,7 @@
 @if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
 <label for="invoice-status" class="form-label">Status</label>
 <select id="invoice-status" class="form-select mb-3" @bind="status" @bind:after="ReloadAsync" disabled="@busy">
-    <option>Needs Review</option><option>Posted</option><option>Duplicate Invoice</option><option>Rejected</option><option value="">All</option>
+    <option value="Unassigned Jobs">Unassigned job expenses</option><option>Needs Review</option><option>Posted</option><option>Duplicate Invoice</option><option>Rejected</option><option value="">All</option>
 </select>
 <button class="btn btn-outline-secondary mb-3" @onclick="ReloadAsync" disabled="@busy">Refresh</button>
 <div class="table-responsive">
@@ -37,12 +37,28 @@
     <tr @key="item.Id"><td>@InvoiceNumber(item)</td><td>@item.CreatedAt.ToLocalTime().ToString("g")</td><td>@item.PriceImportDocument.SupplyVendor.Name<br />@item.PriceImportDocument.OriginalFileName</td><td>@item.Status</td><td>
         <a href="@($"/api/supplier-invoices/{item.Id}/document")" target="_blank" rel="noopener">Original PDF</a>
         @if (item.Status == "Needs Review") { <button class="btn btn-sm btn-primary ms-2" @onclick="() => SelectAsync(item.Id)" disabled="@busy">Review</button> }
+        @if (status == "Unassigned Jobs") { <button class="btn btn-sm btn-primary ms-2" @onclick="() => OpenAssignmentAsync(item.Id)" disabled="@busy">Assign job</button> }
         @if (item.PayableInvoiceId is int invoiceId) { <a class="ms-2" href="@($"/admin/vendors/{item.PriceImportDocument.SupplyVendorId}/invoices/{invoiceId}/lines")">AP invoice lines</a> }
     </td></tr>
 }
 @if (imports.Count == 0) { <tr><td colspan="5">No invoices match this status.</td></tr> }
 </tbody></table></div>
 <p>Showing up to 100 most recent matching imports.</p>
+
+@if (assignmentImportId is not null)
+{
+    <section class="activity-panel mt-4">
+        <h2>Assign job to invoice @assignmentInvoiceNumber</h2>
+        <p>@assignmentReason</p>
+        <label class="form-label">Housecall Pro job (same purchasing location)</label>
+        <select class="form-select" @bind="assignmentJobNumber" disabled="@busy">
+            <option value="">Select one job</option>
+            @foreach (var job in assignmentJobs) { <option value="@job.Number">@job.Number - @job.Customer</option> }
+        </select>
+        <button type="button" class="btn btn-primary mt-3" @onclick="SaveAssignmentAsync" disabled="@busy">Save job assignment</button>
+        <p>This updates the existing payable. Invoice amounts and catalog prices are retained.</p>
+    </section>
+}
 
 @if (selected is not null && payload is not null)
 {
@@ -61,7 +77,7 @@
         <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /><small class="text-muted">If missing, defaults to 30 days after the invoice date.</small></div>
         <div class="col-md-6"><label class="form-label">Purchasing location</label><InputSelect class="form-select" @bind-Value="payload.LocalOperationId" @bind-Value:after="UpdateAccountingAssignment"><option value="">Select operation</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
         <div class="col-md-6"><label class="form-label" for="supplier-job">Job number</label>
-            <InputSelect id="supplier-job" class="form-select" @bind-Value="payload.JobNumber">
+            <InputSelect id="supplier-job" disabled="@payload.JobUnassigned" class="form-select" @bind-Value="payload.JobNumber">
                 <option value="">Select one validated job</option>
                 @foreach (var number in payload.MatchedJobNumbers) { <option value="@number">@number</option> }
             </InputSelect>
@@ -73,6 +89,16 @@
         <div class="col-md-3"><label class="form-label">Invoice total</label><InputNumber class="form-control" @bind-Value="payload.Total" />@if (sourcePayload?.ExtractionEvidence.ContainsKey("total") == true) { <small class="text-muted">Original PDF: @sourcePayload.Total.ToString("C2")</small> }</div>
         <div class="col-md-3"><label class="form-label">Amount already paid</label><InputNumber class="form-control" @bind-Value="payload.AmountPaid" />@if (!payload.PaymentStateVerified) { <small class="text-muted">Unverified. Check supplier payment records before confirming this amount.</small> }</div>
     </div>
+    <div class="form-check mt-3">
+        <InputCheckbox class="form-check-input" @bind-Value="payload.JobUnassigned" />
+        <label class="form-check-label">Job unknown / assign later</label>
+    </div>
+    @if (payload.JobUnassigned)
+    {
+        <label class="form-label">Why is the job unassigned? (required)</label>
+        <InputTextArea class="form-control" @bind-Value="payload.JobUnassignedReason" maxlength="500" />
+        <p>This invoice will post to dashboard AP and remain in the unassigned job expenses queue until assigned.</p>
+    }
     <div class="alert alert-info mt-3">
         <strong>Purchase-owning entity:</strong> @EntityName(payload.PurchaseEntityCode)<br />
         <strong>Accounting scope:</strong> @(payload.AccountingPolicy == "ReportingOnly" ? "Dashboard reporting only. Excluded from the accounting posting queue." : "Eligible for a separate accounting review after dashboard approval.")
@@ -140,6 +166,9 @@
     private SupplierInvoicePayload? sourcePayload;
     private string status = "Needs Review";
     private string? message;
+    private int? assignmentImportId;
+    private string assignmentInvoiceNumber = "", assignmentJobNumber = "", assignmentReason = "";
+    private List<(string Number, string Customer)> assignmentJobs = [];
     private bool returnToList;
     private bool focusPostingError;
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -170,12 +199,44 @@
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         var query = db.SupplierInvoiceImports.AsNoTracking();
-        if (status.Length > 0) query = query.Where(x => x.Status == status);
+        if (status == "Unassigned Jobs") query = query.Where(x => x.Status == "Posted" && x.PayableInvoice != null && x.PayableInvoice.JobNumber == "");
+        else if (status.Length > 0) query = query.Where(x => x.Status == status);
         imports = await query.Include(x => x.PriceImportDocument).ThenInclude(x => x.SupplyVendor).OrderByDescending(x => x.Id).Take(100).ToListAsync();
         operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync();
     }
+    private async Task OpenAssignmentAsync(int id)
+    {
+        selected = null; payload = null; message = null;
+        await RunAsync(async () =>
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var item = await db.SupplierInvoiceImports.AsNoTracking().Include(x => x.PayableInvoice).SingleAsync(x => x.Id == id);
+            if (item.Status != "Posted" || item.PayableInvoice is null || item.PayableInvoice.JobNumber.Length > 0)
+                throw new ArgumentException("This invoice no longer needs a job. Refresh the queue.");
+            var jobs = await db.HousecallProJobs.AsNoTracking().Where(x => x.LocalOperationId == item.PayableInvoice.LocalOperationId
+                && x.JobNumber != null && x.JobNumber != "").Select(x => new { x.JobNumber, x.CustomerName }).ToListAsync();
+            assignmentJobs = jobs.Select(x => (Number: x.JobNumber!.Trim(), Customer: x.CustomerName ?? ""))
+                .DistinctBy(x => x.Number).OrderBy(x => x.Number).ToList();
+            assignmentInvoiceNumber = InvoiceNumber(item);
+            assignmentReason = JsonSerializer.Deserialize<SupplierInvoicePayload>(item.PayloadJson, SupplierInvoicePayload.JsonOptions)?.JobUnassignedReason ?? "";
+            assignmentJobNumber = "";
+            assignmentImportId = id;
+        });
+    }
+    private async Task SaveAssignmentAsync()
+    {
+        if (busy || assignmentImportId is not int id) return;
+        await RunAsync(async () =>
+        {
+            await ImportService.AssignJobAsync(id, assignmentJobNumber, await ActorAsync(), CancellationToken.None);
+            assignmentImportId = null; assignmentJobs = []; assignmentJobNumber = "";
+            message = "Job assigned to the existing invoice.";
+            returnToList = true;
+        });
+    }
     private async Task SelectAsync(int id)
     {
+        assignmentImportId = null;
         selected = imports.Single(x => x.Id == id);
         payload = JsonSerializer.Deserialize<SupplierInvoicePayload>(selected.PayloadJson, SupplierInvoicePayload.JsonOptions);
         var source = JsonNode.Parse(selected.PayloadJson)?["_extractionBaseline"];
