@@ -298,7 +298,7 @@
     private async Task ApproveAsync(EditContext _)
     {
         if (busy || selected is null || payload is null) return;
-        if (!confirmedOriginal) { message = "Review the original invoice and confirm the checklist before posting."; focusPostingError = true; return; }
+        // Reporting posts retain validation conflicts instead of blocking on review checklists.
         message = null;
         payload.ApplyDefaultDueDate();
         await RunAsync(async () =>

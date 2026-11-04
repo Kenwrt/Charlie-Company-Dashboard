@@ -155,21 +155,31 @@ public sealed class SupplierInvoiceService(
         var savedCandidate = JsonSerializer.Deserialize<SupplierInvoicePayload>(import.PayloadJson, SupplierInvoicePayload.JsonOptions)!;
         if (savedCandidate.ExtractionVersion != payload.ExtractionVersion)
             throw new ArgumentException("This extraction was refreshed while the review was open. Keep a copy of your edits, then reload the review before posting.");
-        if (!payload.LocationAssignmentConfirmed)
-            throw new ArgumentException("Confirm the purchase-owning entity, purchasing location and payer information before posting.");
+        payload.PostingConflicts = [];
+        if (!payload.LocationAssignmentConfirmed) payload.PostingConflicts.Add("Location/payer confirmation not supplied at reporting post.");
         var assignment = await routing.ResolveAsync(db, payload.YourReference, ct);
         var overridesLocation = assignment.RequiresReview || assignment.OperationId != payload.LocalOperationId;
         if (overridesLocation && string.IsNullOrWhiteSpace(payload.LocationOverrideReason))
-            throw new ArgumentException("Explain the order, job or supplier record used to resolve the uncertain location.");
+            payload.PostingConflicts.Add("Location assignment needs later confirmation: " + assignment.Reason);
         payload.LocationAssignmentSource = overridesLocation ? "AdministratorOverride" : assignment.Source;
         payload.LocationAssignmentReason = overridesLocation ? payload.LocationOverrideReason.Trim() : assignment.Reason;
         payload.LocationRequiresReview = false;
         SupplierInvoiceAccounting.Assign(payload, (await db.LocalOperations.FindAsync([payload.LocalOperationId ?? 0], ct))?.Slug, options.Value);
         // Recompute eligibility on the server; client flags cannot bypass job selection.
-        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct, hcp);
+        if (string.IsNullOrWhiteSpace(payload.JobNumber))
+        {
+            payload.JobUnassigned = true;
+            payload.JobUnassignedReason = "No job selected at reporting post; assign later.";
+        }
         var items = await LoadProductsAsync(db, vendorId, ct);
         var issues = await PostingIssuesAsync(db, payload, items, allowNewProducts, ct);
-        if (issues.Count > 0) throw new ArgumentException(string.Join(" ", issues));
+        payload.PostingConflicts.AddRange(issues);
+        payload.CatalogUpdatesDeferred = true;
+        // Required storage/identity facts cannot be fabricated; all business discrepancies are recorded.
+        if (string.IsNullOrWhiteSpace(payload.InvoiceNumber) || payload.InvoiceDate is null || payload.DueDate is null
+            || payload.LocalOperationId is null || !await db.LocalOperations.AnyAsync(x => x.Id == payload.LocalOperationId && x.IsActive, ct)
+            || !payload.HasSupportedPostingPrecision())
+            throw new ArgumentException("Invoice identity, dates, active location and supported numeric precision are required to store the invoice.");
         if (await FindExistingInvoiceAsync(db, vendorId, payload.InvoiceNumber, ct) is not null)
             throw new ArgumentException("An AP invoice already uses this supplier invoice number. No changes were made.");
         var priorPayload = JsonSerializer.Deserialize<SupplierInvoicePayload>(import.PayloadJson, SupplierInvoicePayload.JsonOptions);
@@ -177,7 +187,7 @@ public sealed class SupplierInvoiceService(
         {
             Environment = environment.EnvironmentName, Machine = System.Environment.MachineName,
             Service = "CharlieCompanyDashboard", Module = "SupplierInvoices", CorrelationId = import.CorrelationId,
-            Step = "AssignmentReviewed", Status = "Approved", Message = "Supplier invoice payer and purchasing location reviewed.",
+            Step = "AssignmentReviewed", Status = "Approved", Message = "Supplier invoice reporting assignment and outstanding conflicts recorded.",
             MetadataJson = JsonSerializer.Serialize(new
             {
                 actor, previousPayer = priorPayload?.PayingEntityCode, previousLocation = priorPayload?.LocalOperationId,
@@ -185,11 +195,34 @@ public sealed class SupplierInvoiceService(
                 handoff = payload.AccountingHandoffStatus, location = payload.LocalOperationId, source = payload.LocationAssignmentSource
             })
         });
-        await PostCoreAsync(db, import, payload, items, allowNewProducts, approvePrices, actor, ct);
+        await PostCoreAsync(db, import, payload, items, true, false, actor, ct);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         logger.LogInformation("Supplier invoice {ImportId} posted with correlation {CorrelationId}", id, import.CorrelationId);
         return new(import.Id, import.Status, import.PayableInvoiceId, false);
+    }
+
+    public async Task<object> PostPendingNashvilleReportingAsync(CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var pending = await db.SupplierInvoiceImports.AsNoTracking().Where(x => x.Status == "Needs Review"
+            && x.PriceImportDocument.SupplyVendorId == options.Value.DecksDocksVendorId).OrderBy(x => x.Id).ToListAsync(ct);
+        var posted = 0; var duplicates = 0; var deferred = new List<object>();
+        foreach (var import in pending)
+        {
+            var payload = JsonSerializer.Deserialize<SupplierInvoicePayload>(import.PayloadJson, SupplierInvoicePayload.JsonOptions)!;
+            var operation = await db.LocalOperations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == payload.LocalOperationId, ct);
+            if (operation?.Slug != "nashville") { deferred.Add(new { import.Id, reason = "Nashville location not established" }); continue; }
+            if (await FindExistingInvoiceAsync(db, options.Value.DecksDocksVendorId, payload.InvoiceNumber, ct) is not null)
+            { duplicates++; continue; }
+            try
+            {
+                await ApproveAsync(import.Id, payload, true, false, "operator-request:nashville-reporting-batch", ct);
+                posted++;
+            }
+            catch (ArgumentException) { deferred.Add(new { import.Id, reason = "Required storage identity/date/precision missing" }); }
+        }
+        return new { posted, duplicates, deferred, catalog_updates = "deferred", external_accounting_postings = 0 };
     }
 
     public async Task AssignJobAsync(int id, string jobNumber, string actor, CancellationToken ct)
@@ -287,7 +320,7 @@ public sealed class SupplierInvoiceService(
             var previousDecision = import.PriceImportDocument.Rows.FirstOrDefault(x => x.VendorSku.Equals(sku, StringComparison.OrdinalIgnoreCase)
                 && x.EffectiveDate == date && x.ProposedUnitPrice == line.UnitPrice && x.ReviewStatus != "Pending");
             var packaging = VendorPackagingService.At(item, date);
-            var canApprove = packaging?.IsConfirmed == true && !conflicts.Contains(sku) && (sameDate is null || sameDate.UnitPrice == line.UnitPrice)
+            var canApprove = !payload.CatalogUpdatesDeferred && item.IsActive && packaging?.IsConfirmed == true && !conflicts.Contains(sku) && (sameDate is null || sameDate.UnitPrice == line.UnitPrice)
                 && previousDecision?.ReviewStatus != "Rejected"
                 && (approvePrices || current?.UnitPrice == line.UnitPrice || (!isNew && WithinRule(rule, current?.UnitPrice, line.UnitPrice)));
             if (canApprove && sameDate is null)
@@ -317,14 +350,16 @@ public sealed class SupplierInvoiceService(
                 PackageQuantitySnapshot = line.PackagingConfirmed ? line.PackageQuantity : packaging?.IsConfirmed == true ? packaging.PackageQuantity : null,
                 PackagingConfirmed = line.PackagingConfirmed || packaging?.IsConfirmed == true,
                 VendorProduct = item, Quantity = line.Quantity, UnitPrice = line.UnitPrice, LineTotal = line.LineTotal,
-                PriceReviewStatus = canApprove ? "Approved" : "Pending"
+                PriceReviewStatus = canApprove ? "Approved" : "Pending",
+                Notes = payload.CatalogUpdatesDeferred ? "Invoice prices retained. Catalog/packaging review deferred; see supplier import conflict record." : null
             });
         }
         import.PayloadJson = JsonSerializer.Serialize(payload, SupplierInvoicePayload.JsonOptions);
-        import.PayableInvoice = invoice; import.Status = "Posted"; import.ReviewReason = null;
+        import.PayableInvoice = invoice; import.Status = "Posted"; import.ReviewReason = payload.PostingConflicts.Count > 0 ? "Posted with conflicts recorded for later review." : null;
         import.ReviewedAt = DateTimeOffset.UtcNow; import.ReviewedBy = actor;
         import.PriceImportDocument.Status = "AP Invoice Posted";
         AddAudit(db, import, "Posted", actor);
+        if (payload.PostingConflicts.Count > 0) AddAudit(db, import, "PostedWithConflicts", actor);
     }
 
     private static bool WithinRule(PriceApprovalRule? rule, decimal? oldPrice, decimal newPrice)

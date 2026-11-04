@@ -158,6 +158,15 @@ try
 
     var app = builder.Build();
 
+    if (args.Contains("--post-pending-nashville-reporting"))
+    {
+        using var postingScope = app.Services.CreateScope();
+        var result = await postingScope.ServiceProvider.GetRequiredService<SupplierInvoiceService>()
+            .PostPendingNashvilleReportingAsync(CancellationToken.None);
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));
+        return;
+    }
+
     using (var scope = app.Services.CreateScope())
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

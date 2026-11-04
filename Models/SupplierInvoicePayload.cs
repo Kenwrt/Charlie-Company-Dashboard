@@ -5,6 +5,8 @@ namespace CharleyCompany.Dashboard.Web.Models;
 
 public sealed class SupplierInvoicePayload
 {
+    public List<string> PostingConflicts { get; set; } = [];
+    public bool CatalogUpdatesDeferred { get; set; }
     public string InvoiceNumber { get; set; } = "";
     public DateOnly? InvoiceDate { get; set; }
     public DateOnly? DueDate { get; set; }

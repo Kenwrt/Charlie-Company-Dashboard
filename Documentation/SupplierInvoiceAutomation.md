@@ -439,3 +439,18 @@ Box/1). Such legacy differences do not block AP: invoice snapshots retain the
 verified packaging, catalog price updates remain pending, and confirmed catalog
 conflicts or inactive SKUs still block. No existing packaging history or prices
 are overwritten merely to clear an invoice validation error.
+
+## Reporting-first posting policy
+
+Per the owner's explicit request, dashboard AP posting records business-validation
+conflicts in reviewed payload PostingConflicts and marks catalog updates deferred.
+Invoice unit prices and line totals are retained exactly. Packaging, inactive-item,
+unit, job, payment-verification and reconciliation discrepancies are recorded for
+later resolution rather than blocking reporting. No fake verification flags are set.
+Duplicate protection, storage limits, identity/date/location and supported precision
+remain essential database constraints. New supplier items may be created; existing
+catalog prices and packaging are not overwritten. Missing jobs remain in the queue.
+A local-only --post-pending-nashville-reporting command processes current Nashville
+pending supplier imports under this owner authorization and prints aggregate results.
+It creates no external Mercury posting or payment. Future conflict reporting reads
+PostingConflicts and pending price rows. Explicit actor and conflict audit retained.
