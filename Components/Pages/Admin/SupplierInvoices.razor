@@ -119,6 +119,12 @@
     <div class="form-check mt-3"><InputCheckbox class="form-check-input" @bind-Value="allowNewProducts" /><label class="form-check-label">Create catalog products for the new SKUs I reviewed.</label></div>
     <div class="form-check"><InputCheckbox class="form-check-input" @bind-Value="approvePrices" /><label class="form-check-label">Approve reviewed prices. Different prices already recorded on the same date stay in catalog review.</label></div>
     <div class="form-check"><InputCheckbox class="form-check-input" @bind-Value="confirmedOriginal" /><label class="form-check-label">I checked the original invoice, line items, totals, dates, operation and job assignment.</label></div>
+    @if (message is not null)
+    {
+        <div id="supplier-invoice-post-feedback" class="alert alert-danger mt-3" role="alert" tabindex="-1">
+            <strong>Invoice was not posted.</strong> @message
+        </div>
+    }
     <button class="btn btn-primary mt-3" type="submit">Post to dashboard AP</button>
     <button class="btn btn-outline-danger mt-3 ms-2" type="button" @onclick="RejectAsync">Reject import</button>
     </EditForm>
@@ -135,14 +141,16 @@
     private string status = "Needs Review";
     private string? message;
     private bool returnToList;
+    private bool focusPostingError;
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!returnToList || busy) return;
-        returnToList = false;
+        if ((!returnToList && !focusPostingError) || busy) return;
+        var target = focusPostingError ? "supplier-invoice-post-feedback" : "supplier-invoice-list-top";
+        returnToList = focusPostingError = false;
         try
         {
             await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/supplier-invoice-review.js");
-            await module.InvokeVoidAsync("returnToList");
+            await module.InvokeVoidAsync("returnToList", target);
         }
         catch (JSDisconnectedException) { }
     }
@@ -216,7 +224,8 @@
     private async Task ApproveAsync(EditContext _)
     {
         if (busy || selected is null || payload is null) return;
-        if (!confirmedOriginal) { message = "Review the original invoice and confirm the checklist before posting."; return; }
+        if (!confirmedOriginal) { message = "Review the original invoice and confirm the checklist before posting."; focusPostingError = true; return; }
+        message = null;
         await RunAsync(async () =>
         {
             await ImportService.ApproveAsync(selected.Id, payload, allowNewProducts, approvePrices, await ActorAsync(), CancellationToken.None);
@@ -225,6 +234,7 @@
             message = null;
             returnToList = true;
         });
+        if (selected is not null && message is not null) focusPostingError = true;
     }
     private async Task RejectAsync()
     {
