@@ -499,3 +499,30 @@ only their available contribution becomes zero, with a before/after audit. They 
 not recorded as a payment or consumption of a credit memo. Other unmatched credits
 are left untouched. The source balance and actual credit memo records replace the
 old aggregate, preventing duplicate subtraction from net AP.
+
+## Supply library exceptions report
+
+Administrator route /admin/supply-library-exceptions compares invoice snapshots with
+packaging and prices effective on each invoice date, across all vendors. Filters
+cover vendor, invoice/proposal dates, category, source and SKU/invoice/job/description.
+Fifty cases per page are displayed after all matching cases are counted. One case
+can contain multiple categories; this is not an expense-total report.
+
+Categories cover package counts, purchase units, unknown invoice packaging,
+unverified catalog mappings, missing/changed prices, pending/competing proposals,
+inactive or ambiguous SKUs, quantity/line-extension inconsistencies, fractional
+count quantities, description differences, catalog health and confirmed packaging
+history. Informational/historical cases can be shown separately. Changes in ordered
+quantity alone are not a packaging exception. Price deltas are suppressed when
+packaging/unit bases differ or are unverified. Posted price-import rows are not
+counted a second time when invoice cases already represent them.
+
+The report is read-only and never blocks posting or changes invoice snapshots.
+Resolution links prefilter catalog packaging/price review to the vendor and SKU;
+refresh the report after using existing review actions. Historical unknown invoice
+snapshots and harmless description differences are retained as information rather
+than silently rewritten. There is no dismissal/waiver workflow in this report.
+
+Saved packaging/catalog/line-related PostingConflicts are also available as
+historical Posting notes. They are not automatically counted as newly detected
+open cases. Malformed posting evidence is flagged without changing the source.

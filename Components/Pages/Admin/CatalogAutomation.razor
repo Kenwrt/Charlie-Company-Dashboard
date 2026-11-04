@@ -19,7 +19,8 @@
 <p>Upload CSV price lists for automatic staging and matching. PDFs are preserved securely and queued for OCR review.</p>
 @if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
 
-<PackagingReview />
+<p><a href="/admin/supply-library-exceptions">Supply library exceptions report</a></p>
+<PackagingReview InitialSku="@ExceptionSku" InitialVendorId="@ExceptionVendor" />
 <fieldset disabled="@isReviewBusy">
 <section class="activity-panel mb-4"><h2>Import vendor price list</h2><div class="row g-3">
  <div class="col-md-4"><label class="form-label">Vendor</label><InputSelect class="form-select" @bind-Value="selectedVendorId"><option value="0">Select vendor…</option>@foreach (var v in vendors) { <option value="@v.Id">@v.Name</option> }</InputSelect></div>
@@ -70,6 +71,13 @@
 </fieldset>
 
 @code {
+ [SupplyParameterFromQuery(Name="exceptionSku")] public string? ExceptionSku { get; set; }
+ [SupplyParameterFromQuery(Name="exceptionVendor")] public int? ExceptionVendor { get; set; }
+ protected override async Task OnParametersSetAsync()
+ {
+  if (ExceptionSku is not null) { reviewSearch=ExceptionSku; reviewVendorId=ExceptionVendor ?? 0; await ResetReviewAsync(); }
+ }
+
  private List<SupplyVendor> vendors = []; private List<PriceImportRow> rows = []; private List<ComparisonRow> comparison = []; private int selectedVendorId; private DateOnly effectiveDate = DateOnly.FromDateTime(DateTime.Today); private RuleInput ruleInput = new(); private int syncVendorId; private string syncProvider = "VendorApi"; private string? message;
  protected override Task OnInitializedAsync() => ReloadAsync();
  private async Task ReloadAsync() { await using var DbContext = await DbContextFactory.CreateDbContextAsync(); vendors = await DbContext.SupplyVendors.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync(); await LoadReviewAsync(); var today = DateOnly.FromDateTime(DateTime.Today); comparison = await DbContext.VendorPrices.AsNoTracking().Where(x => x.EffectiveDate <= today && (x.ExpirationDate == null || x.ExpirationDate >= today)).OrderBy(x => x.VendorProduct.Product.Name).ThenBy(x => x.UnitPrice).Select(x => new ComparisonRow(x.VendorProduct.Product.Name, x.VendorProduct.SupplyVendor.Name, x.VendorProduct.VendorSku, x.UnitPrice, x.EffectiveDate)).ToListAsync(); }

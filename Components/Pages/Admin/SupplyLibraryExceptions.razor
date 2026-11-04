@@ -1,0 +1,88 @@
+@page "/admin/supply-library-exceptions"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> Factory
+@inject SupplyLibraryExceptionService Report
+<PageTitle>Supply library exceptions</PageTitle>
+<h1>Supply library exceptions</h1>
+<p>Review quantity, packaging, price and SKU differences across vendors. Invoice comparisons use the catalog version and price effective on the invoice date. This report does not change invoices, catalog records or posting behavior.</p>
+@if (error is not null) { <p class="alert alert-danger" role="alert">@error</p> }
+<fieldset disabled="@busy">
+<div class="row g-3">
+<div class="col-md-4"><label>Vendor</label><select class="form-select" @bind="vendorId" @bind:after="ReloadAsync"><option value="0">All vendors</option>@foreach(var vendor in vendors){<option value="@vendor.Id">@vendor.Name</option>}</select></div>
+<div class="col-md-4"><label>Invoice/proposal date from</label><InputDate class="form-control" @bind-Value="from" @bind-Value:after="ReloadAsync" /></div>
+<div class="col-md-4"><label>Through</label><InputDate class="form-control" @bind-Value="through" @bind-Value:after="ReloadAsync" /></div>
+<div class="col-md-4"><label>Exception type</label><select class="form-select" @bind="category" @bind:after="ResetPage"><option value="">All types</option>@foreach(var type in cases.SelectMany(x=>x.Categories).Distinct().OrderBy(x=>x)){<option>@type</option>}</select></div>
+<div class="col-md-3"><label>Source</label><select class="form-select" @bind="source" @bind:after="ResetPage"><option value="">All sources</option><option>Invoice</option><option>Price import</option><option>Library</option><option>Packaging history</option><option>Posting notes</option></select></div>
+<div class="col-md-5"><label>SKU, invoice, job or description</label><input class="form-control" @bind="search" @bind:after="ResetPage" /></div>
+</div>
+<div class="form-check mt-3"><input id="library-check" type="checkbox" class="form-check-input" @bind="includeLibrary" @bind:after="ReloadAsync" /><label for="library-check">Include current library health and confirmed packaging history</label></div>
+<div class="form-check"><input id="info-check" type="checkbox" class="form-check-input" @bind="includeInformation" @bind:after="ResetPage" /><label for="info-check">Show historical unknowns, description-only differences and library information</label></div>
+<button type="button" class="btn btn-outline-secondary mt-2" @onclick="ReloadAsync">Refresh report after resolving an item</button>
+</fieldset>
+@if (busy) { <p role="status">Loading exceptions...</p> }
+else
+{
+<p class="mt-3" role="status"><strong>@Filtered.Count() matching cases</strong>. Page @(page+1) of @Pages. One case may contain several variance types; these counts are not expense totals.</p>
+<p class="text-muted">Invoice snapshots retain what was known at posting. Unknown legacy packaging is distinguished from a confirmed change. Current library health is assessed today, independently of the invoice date range. Price deltas are shown only when units and confirmed package quantities match.</p>
+@foreach(var group in Filtered.SelectMany(x=>x.Categories).GroupBy(x=>x).OrderByDescending(x=>x.Count())) { <span class="badge bg-secondary me-2 mb-2">@group.Key: @group.Count()</span> }
+<div class="table-responsive"><table class="table"><thead><tr><th>Vendor / SKU</th><th>Source / invoice</th><th>Date / job</th><th>Exceptions</th><th>Compare / resolve</th></tr></thead><tbody>
+@foreach(var item in Filtered.Skip(page*PageSize).Take(PageSize))
+{
+<tr @key="item.Key"><td>@item.Vendor<br /><strong>@item.Sku</strong><br />@item.Description</td><td>@item.Source<br />@item.Reference<br />@item.Location</td><td>@item.Date?.ToString("MM/dd/yyyy")<br />Job: @(string.IsNullOrWhiteSpace(item.Job)?"Unassigned / not applicable":item.Job)</td><td>@string.Join("; ",item.Categories)<br /><small>@(item.NeedsReview?"Needs review":"Historical / informational")</small></td>
+<td><details><summary>View values and next steps</summary>
+<table class="table table-sm"><thead><tr><th>Field</th><th>Invoice / proposed / previous</th><th>Catalog on date / new</th></tr></thead><tbody>
+<tr><td>Purchase unit</td><td>@(item.InvoiceUnit ?? "Not recorded")</td><td>@(item.CatalogUnit ?? "Not mapped")</td></tr>
+<tr><td>Package quantity</td><td>@Number(item.InvoicePackage) (@(item.InvoicePackagingConfirmed?"Confirmed":"Unverified"))</td><td>@Number(item.CatalogPackage) (@(item.CatalogPackagingConfirmed?"Confirmed":"Unverified"))</td></tr>
+<tr><td>Unit price</td><td>@Money(item.UnitPrice)</td><td>@Money(item.CatalogPrice)</td></tr>
+<tr><td>Ordered quantity</td><td>@Number(item.Quantity)</td><td>Invoice fact; not inferred from catalog</td></tr>
+<tr><td>Line total</td><td>@Money(item.LineTotal)</td><td>Original invoice amount retained</td></tr>
+@if(item.ComparablePrices && item.UnitPrice is decimal price && item.CatalogPrice is decimal catalogPrice) { <tr><td>Unit price difference</td><td colspan="2">@((price-catalogPrice).ToString("C4"))</td></tr> }
+</tbody></table>
+<ul>@foreach(var detail in item.Details){<li>@detail</li>}</ul>
+@if(!string.IsNullOrWhiteSpace(item.Sku)){<a href="@item.CatalogReviewUrl">Review this SKU's packaging and prices</a><br />}
+<a href="@($"/admin/vendors/{item.CatalogVendorId ?? item.VendorId}/catalog")">Open vendor catalog</a>
+@if(item.InvoiceId is not null){<br /><a href="@item.InvoiceUrl">Open original invoice lines</a>}
+</details></td></tr>
+}
+@if(!Filtered.Any()){<tr><td colspan="5">No exceptions match these filters.</td></tr>}
+</tbody></table></div>
+<button class="btn btn-outline-secondary" @onclick="Previous" disabled="@(page==0)">Previous</button>
+<button class="btn btn-outline-secondary ms-2" @onclick="Next" disabled="@(page+1>=Pages)">Next</button>
+}
+@code {
+    private const int PageSize=50;
+    private List<SupplyVendor> vendors=[];
+    private List<SupplyLibraryException> cases=[];
+    private int vendorId,page;
+    private DateOnly? from=DateOnly.FromDateTime(DateTime.Today.AddYears(-1)),through=DateOnly.FromDateTime(DateTime.Today);
+    private string category="",source="",search="";
+    private string? error;
+    private bool busy,includeLibrary=true,includeInformation;
+    private IEnumerable<SupplyLibraryException> Filtered => cases.Where(x=>(includeInformation || x.NeedsReview)
+        && (category.Length==0 || x.Categories.Contains(category)) && (source.Length==0 || x.Source==source)
+        && (string.IsNullOrWhiteSpace(search) || string.Join(" ",x.Vendor,x.Sku,x.Reference,x.Job,x.Description).Contains(search.Trim(),StringComparison.OrdinalIgnoreCase)))
+        .OrderByDescending(x=>x.NeedsReview).ThenBy(x=>x.Vendor).ThenBy(x=>x.Sku).ThenBy(x=>x.Date).ThenBy(x=>x.Key);
+    private int Pages=>Math.Max(1,(Filtered.Count()+PageSize-1)/PageSize);
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db=await Factory.CreateDbContextAsync();vendors=await db.SupplyVendors.AsNoTracking().OrderBy(x=>x.Name).ToListAsync();await ReloadAsync();
+    }
+    private async Task ReloadAsync()
+    {
+        busy=true;error=null;
+        try{cases=await Report.ReadAsync(vendorId,from,through,includeLibrary,CancellationToken.None);page=0;}
+        catch(ArgumentException ex){error=ex.Message;cases=[];}
+        finally{busy=false;}
+    }
+    private void ResetPage()=>page=0;
+    private void Previous(){if(page>0)page--;}
+    private void Next(){if(page+1<Pages)page++;}
+    private static string Number(decimal? value)=>value?.ToString("0.############################") ?? "Unknown";
+    private static string Money(decimal? value)=>value?.ToString("C4") ?? "Not recorded";
+}

@@ -37,6 +37,15 @@
 }
 </section>
 @code {
+    [Parameter] public string? InitialSku { get; set; }
+    [Parameter] public int? InitialVendorId { get; set; }
+    private string? loadedSearch;
+    protected override async Task OnParametersSetAsync()
+    {
+        var key=InitialVendorId+":"+InitialSku;
+        if (InitialSku is not null && key!=loadedSearch) { loadedSearch=key; skuSearch=InitialSku; await SearchAsync(); }
+    }
+
     private string skuSearch = "";
     private string? feedback;
     private bool working;
@@ -49,7 +58,7 @@
         await using var db = await Factory.CreateDbContextAsync();
         var search = skuSearch.Trim();
         products = search.Length == 0 ? [] : await db.VendorProducts.AsNoTracking().Include(x => x.SupplyVendor).Include(x => x.PackagingVersions)
-            .Where(x => x.VendorSku.Contains(search)).OrderBy(x => x.VendorSku).Take(50).ToListAsync();
+            .Where(x => x.VendorSku.Contains(search) && (InitialVendorId == null || x.SupplyVendorId == InitialVendorId)).OrderBy(x => x.VendorSku).Take(50).ToListAsync();
         chosen = null;
         feedback = products.Count == 0 ? "No matching SKU." : "Select an item to view its history.";
     }
