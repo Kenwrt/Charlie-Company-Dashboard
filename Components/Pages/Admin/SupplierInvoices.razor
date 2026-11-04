@@ -26,6 +26,7 @@
 <h1 id="supplier-invoice-list-top" tabindex="-1">Supplier invoice review</h1>
 <p>Review supplier documents before updating accounts payable. Catalog prices retain their effective dates; conflicting prices remain in <a href="/admin/catalog-automation">catalog review</a>.</p>
 @if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+<p class="fw-semibold" role="status">Remaining to review: @remainingReviewCount</p>
 <label for="invoice-status" class="form-label">Status</label>
 <select id="invoice-status" class="form-select mb-3" @bind="status" @bind:after="ReloadAsync" disabled="@busy">
     <option value="Unassigned Jobs">Unassigned job expenses</option><option>Needs Review</option><option>Posted</option><option>Duplicate Invoice</option><option>Rejected</option><option value="">All</option>
@@ -155,6 +156,7 @@
 }
 
 @code {
+    private int remainingReviewCount;
     private List<SupplierInvoiceImport> imports = [];
     private List<LocalOperation> operations = [];
     private SupplierInvoiceImport? selected;
@@ -194,6 +196,7 @@
     private async Task ReloadAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
+        remainingReviewCount = await db.SupplierInvoiceImports.CountAsync(x => x.Status == "Needs Review");
         var query = db.SupplierInvoiceImports.AsNoTracking();
         if (status == "Unassigned Jobs") query = query.Where(x => x.Status == "Posted" && x.PayableInvoice != null && x.PayableInvoice.JobNumber == "");
         else if (status.Length > 0) query = query.Where(x => x.Status == status);

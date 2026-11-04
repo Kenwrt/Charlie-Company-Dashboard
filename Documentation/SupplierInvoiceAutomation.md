@@ -385,3 +385,9 @@ Positioned parser v2 extracts the printed Delivery Address line. Pending origina
 can be re-extracted without touching posted imports. A delivery-address input also
 allows the reviewer to correct missing or wrapped address extraction before lookup.
 This phase makes no new HCP writes and adds no database columns.
+
+Positioned parser v3 reads both inline Delivery Address text and the legacy top
+address block, keeping its extraction within that column. Pending originals can
+be refreshed with preservation of review edits. The review list displays a total
+Needs Review count independent of its 100-row display limit and active filter,
+refreshed after successful review actions and manual refresh.

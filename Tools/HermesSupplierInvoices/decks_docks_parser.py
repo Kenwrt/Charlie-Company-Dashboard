@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 
-VERSION = "decks-docks-positioned-v2"
+VERSION = "decks-docks-positioned-v3"
 AMOUNT = re.compile(r"^\(?[+-]?\$?(?:\d[\d,]*)(?:\.\d+)?\)?$")
 
 
@@ -81,11 +81,40 @@ def parse_pages(pages: list[dict]) -> dict:
                 header[key] = header_value(page_rows, label, width)
 
         if page_number == 1:
+            # Modern forms print an inline label; legacy forms place the address
+            # in a narrow column underneath a Delivery Address heading at the top.
             for row in page_rows:
                 delivery = re.search(r"Delivery\s+Address\s*:\s*(.+)", text(row), re.I)
                 if delivery:
                     header["deliveryAddress"] = delivery.group(1).strip()
+                    evidence["deliveryAddress"] = "Printed inline Delivery Address"
                     break
+            if not header.get("deliveryAddress"):
+                for row in page_rows:
+                    for index, word in enumerate(row[:-1]):
+                        if word["text"].lower() != "delivery" or row[index + 1]["text"].lower().rstrip(":") != "address":
+                            continue
+                        left = word["x0"] - 2
+                        bottom = max(word["bottom"], row[index + 1]["bottom"])
+                        right = min(width, left + width * .22)
+                        nearby = [w for w in page["words"] if left <= w["x0"] < right
+                                  and bottom + 1 < w["top"] < bottom + 85]
+                        lines = []
+                        for address_row in rows(nearby):
+                            value = text(address_row).strip()
+                            if not value or re.search(r"Invoice\s+(?:No|Address)|Special\s+Instructions", value, re.I):
+                                break
+                            lines.append(value)
+                            if re.search(r"\b[A-Z]{2}\s*,?\s*\d{5}(?:-\d{4})?\b", value):
+                                break
+                            if len(lines) == 4:
+                                break
+                        if lines:
+                            header["deliveryAddress"] = ", ".join(lines)
+                            evidence["deliveryAddress"] = "Printed Delivery Address block beneath heading"
+                        break
+                    if header.get("deliveryAddress"):
+                        break
 
         footer_top = height
         for row in page_rows:
