@@ -344,3 +344,7 @@ results. Multiple candidates require dropdown selection; an existing validated j
 entry is preserved.
 A fallback message identifies which name component matched. Common names can return
 unrelated customers, so the reviewer must confirm customer identity in HCP.
+
+Missing invoice due dates default to invoice date plus 30 calendar days, per the
+supplier terms confirmed by the owner. Existing due dates are preserved. The default
+applies on intake, extraction refresh, opening pending reviews, and approval.

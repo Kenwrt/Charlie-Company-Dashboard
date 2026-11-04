@@ -28,6 +28,7 @@ public sealed class SupplierInvoiceService(
         if (pdf.Length < 5 || pdf.Length > MaxPdfBytes || !pdf.AsSpan(0, 5).SequenceEqual("%PDF-"u8))
             throw new ArgumentException("A PDF of at most 20 MB is required.");
         GuardPayload(payload);
+        payload.ApplyDefaultDueDate();
         var hash = Convert.ToHexString(SHA256.HashData(pdf));
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -62,6 +63,8 @@ public sealed class SupplierInvoiceService(
                             merged["locationRequiresReview"] = resolved.RequiresReview;
                             candidate = merged.Deserialize<SupplierInvoicePayload>(SupplierInvoicePayload.JsonOptions)!;
                         }
+                        candidate.ApplyDefaultDueDate();
+                        merged["dueDate"] = candidate.DueDate?.ToString("yyyy-MM-dd");
                         var products = await LoadProductsAsync(db, vendor.Id, ct);
                         var errors = await PostingIssuesAsync(db, candidate, products, false, ct);
                         prior.PayloadJson = merged.ToJsonString(SupplierInvoicePayload.JsonOptions);
@@ -133,6 +136,7 @@ public sealed class SupplierInvoiceService(
         bool allowNewProducts, bool approvePrices, string actor, CancellationToken ct)
     {
         GuardPayload(payload);
+        payload.ApplyDefaultDueDate();
         payload.YourReference = payload.YourReference.Trim();
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);

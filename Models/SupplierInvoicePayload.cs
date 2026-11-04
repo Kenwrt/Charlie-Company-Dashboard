@@ -41,6 +41,12 @@ public sealed class SupplierInvoicePayload
     public List<string> Warnings { get; set; } = [];
     public List<SupplierInvoiceItem> Lines { get; set; } = [];
 
+    public void ApplyDefaultDueDate()
+    {
+        if (DueDate is null && InvoiceDate is DateOnly date && date <= DateOnly.MaxValue.AddDays(-30))
+            DueDate = date.AddDays(30);
+    }
+
     public bool HasSupportedPostingPrecision() =>
         new[] { Total, Tax, Freight, Discount, AmountPaid }.All(x => decimal.Round(x, 2) == x)
         && Lines.All(x => decimal.Round(x.Quantity, 4) == x.Quantity && decimal.Round(x.UnitPrice, 4) == x.UnitPrice

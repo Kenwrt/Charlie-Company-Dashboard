@@ -58,7 +58,7 @@
         <div class="col-md-6"><label class="form-label">Your Reference (as printed)</label><InputText class="form-control" @bind-Value="payload.YourReference" @bind-Value:after="TrimReference" /></div>
         <div class="col-md-4"><label class="form-label">Invoice number</label><InputText class="form-control" @bind-Value="payload.InvoiceNumber" /></div>
         <div class="col-md-4"><label class="form-label">Invoice date</label><InputDate class="form-control" @bind-Value="payload.InvoiceDate" /></div>
-        <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /></div>
+        <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /><small class="text-muted">If missing, defaults to 30 days after the invoice date.</small></div>
         <div class="col-md-6"><label class="form-label">Purchasing location</label><InputSelect class="form-select" @bind-Value="payload.LocalOperationId" @bind-Value:after="UpdateAccountingAssignment"><option value="">Select operation</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
         <div class="col-md-6"><label class="form-label" for="supplier-job">Job number</label>
             <InputSelect id="supplier-job" class="form-select" @bind-Value="payload.JobNumber">
@@ -183,6 +183,7 @@
             : JsonSerializer.Deserialize<SupplierInvoicePayload>(selected.PayloadJson, SupplierInvoicePayload.JsonOptions);
         if (payload is not null)
         {
+            payload.ApplyDefaultDueDate();
             payload.LocationAssignmentConfirmed = false;
             // Older pending imports inherited an unverified Ventures payer default.
             if (string.IsNullOrWhiteSpace(payload.AccountingPolicyVersion)) payload.PayingEntityCode = "";
@@ -226,6 +227,7 @@
         if (busy || selected is null || payload is null) return;
         if (!confirmedOriginal) { message = "Review the original invoice and confirm the checklist before posting."; focusPostingError = true; return; }
         message = null;
+        payload.ApplyDefaultDueDate();
         await RunAsync(async () =>
         {
             await ImportService.ApproveAsync(selected.Id, payload, allowNewProducts, approvePrices, await ActorAsync(), CancellationToken.None);
