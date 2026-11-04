@@ -139,7 +139,27 @@ public sealed class SupplierReconciliationService(IDbContextFactory<ApplicationD
             matchedCredits.Add(credit.Id);
         }
         foreach (var credit in credits.Where(x => x.Id > 0 && !matchedCredits.Contains(x.Id)))
-            Flag("UnmatchedDashboardCredit", credit.Reference, "No matching supplier credit; available balance retained for review.");
+        {
+            // A known prior portal-summary placeholder is not an additional credit memo.
+            // Retire only its available contribution after complete itemized records arrive.
+            if (credit.Reference.StartsWith("SUPPLI-AVAILABLE-CREDIT-", StringComparison.Ordinal)
+                && credit.Notes?.StartsWith("Available credit balance reported in the Decks & Docks Suppli portal", StringComparison.Ordinal) == true
+                && (credit.UpdatedAt is null || credit.UpdatedAt <= source.CapturedAt))
+            {
+                if (credit.AvailableAmount != 0)
+                {
+                    db.OperationalEvents.Add(new OperationalEvent { Environment = environment.EnvironmentName,
+                        Machine = System.Environment.MachineName, Service = "CharlieCompanyDashboard", Module = "SupplierReconciliation",
+                        LocalOperationId = operation.Id, CorrelationId = hash, Step = "AggregateCreditSuperseded", Status = "Completed",
+                        Message = "Prior portal-summary credit superseded by complete itemized supplier credit records; original amount retained.",
+                        MetadataJson = JsonSerializer.Serialize(new { creditId = credit.Id, previousAvailable = credit.AvailableAmount,
+                            itemizedAvailable = source.Summary.AvailableCreditsCents / 100m }) });
+                    credit.AvailableAmount = 0; credit.UpdatedAt = DateTimeOffset.UtcNow; result.UpdatedCredits++;
+                }
+                Flag("AggregateCreditSuperseded", credit.Reference, "Historical aggregate credit is retained, with zero available contribution, because current itemized credits replace it.");
+            }
+            else Flag("UnmatchedDashboardCredit", credit.Reference, "No matching supplier credit; available balance retained for review.");
+        }
         if (source.Summary.AvailableDepositsCents != 0) Flag("SupplierDeposits", "Account", "Supplier deposits are not represented as vendor credits and require separate review.");
         result.DashboardNetDue = Math.Max(0, invoices.Sum(x => Math.Max(0, x.OriginalAmount - x.AmountPaid)) - credits.Sum(x => x.AvailableAmount));
         if (result.DashboardNetDue != result.SupplierNetDue) Flag("AccountBalanceDifference", "Account", "Dashboard and supplier net totals differ; no balancing adjustment was invented.");

@@ -491,3 +491,11 @@ then reconciles; newly imported invoices awaiting AP posting are flagged as unma
 Reconciliation deployment includes supplier_reconciliation.py in addition to the
 existing worker source files; preserve the profile, receipt database, scheduler and
 private configuration. New reconciliation audit tables inherit the catalog owner.
+
+Known historical SUPPLI-AVAILABLE-CREDIT-* portal-summary placeholders whose notes
+explicitly identify an aggregate available balance are superseded when complete
+itemized supplier credits are collected. Their original amount and record remain;
+only their available contribution becomes zero, with a before/after audit. They are
+not recorded as a payment or consumption of a credit memo. Other unmatched credits
+are left untouched. The source balance and actual credit memo records replace the
+old aggregate, preventing duplicate subtraction from net AP.
