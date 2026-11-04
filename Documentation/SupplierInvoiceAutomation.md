@@ -339,7 +339,8 @@ PDF and immutable original extraction are preserved.
 
 When exact reference-number and full-name matching find no jobs, try an exact last
 name component, then an exact first name component if the last name finds nothing.
-All searches remain location-scoped. Partial-name results require manual dropdown
-selection even for one candidate; an existing validated job entry is preserved.
+All searches remain location-scoped. A single distinct job number is selected automatically, including partial-name
+results. Multiple candidates require dropdown selection; an existing validated job
+entry is preserved.
 A fallback message identifies which name component matched. Common names can return
 unrelated customers, so the reviewer must confirm customer identity in HCP.

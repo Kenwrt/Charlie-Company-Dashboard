@@ -76,12 +76,14 @@ public static class SupplierInvoiceJobLookup
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
         payload.JobLookupSourceSyncedAt = matches.Count > 0 ? matches.Min(x => x.LastSyncedAt) : null;
         payload.JobNumber = existingMatch is not null ? existingMatch.JobNumber!.Trim()
-            : !partialMatch && payload.MatchedJobNumbers.Count == 1 ? payload.MatchedJobNumbers[0] : "";
+            : payload.MatchedJobNumbers.Count == 1 ? payload.MatchedJobNumbers[0] : "";
         payload.JobLookupFilledValue = payload.JobNumber;
         payload.JobLookupMessage = payload.MatchedJobNumbers.Count == 0
             ? "No validated job match in synchronized Housecall Pro data for this location. Confirm the reference or the HCP synchronization before posting."
             : partialMatch
-                ? matchDescription + ". Confirm the customer in Housecall Pro and select exactly one job; no job was automatically selected from a partial name."
+                ? matchDescription + (payload.MatchedJobNumbers.Count == 1
+                    ? ". The only matching job was selected automatically. Confirm the customer and job before approving."
+                    : ". Confirm the customer in Housecall Pro and select exactly one job.")
             : payload.MatchedJobNumbers.Count > 1
                 ? "Multiple validated jobs found. Select exactly one job for this invoice before posting."
                 : "One job validated in synchronized Housecall Pro data for this location. Confirm it belongs to this invoice.";
