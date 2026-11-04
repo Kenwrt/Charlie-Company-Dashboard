@@ -13,6 +13,8 @@ public sealed class SupplierInvoicePayload
     public string AccountingHandoffStatus { get; set; } = "NotEligible";
     public string AccountingPolicyVersion { get; set; } = "";
     public string PayingEntityCode { get; set; } = "";
+    public string DeliveryAddress { get; set; } = "";
+    public Dictionary<string, string> JobOptionLabels { get; set; } = [];
     public string YourReference { get; set; } = "";
     public string LocationAssignmentSource { get; set; } = "";
     public string LocationAssignmentReason { get; set; } = "";

@@ -11,7 +11,16 @@ public static class SupplierInvoiceJobLookup
         new string(value.Normalize().Select(c => char.IsLetterOrDigit(c) ? char.ToUpperInvariant(c) : ' ').ToArray())
             .Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
-    public static async Task PopulateAsync(ApplicationDbContext db, SupplierInvoicePayload payload, CancellationToken ct)
+    private static string StreetKey(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address)) return "";
+        var match = Regex.Match(address.ToUpperInvariant(), @"\b\d+[A-Z]?\s+[^,\r\n]+", RegexOptions.CultureInvariant);
+        if (!match.Success) return "";
+        var street = Regex.Split(match.Value, @"\b(?:DRIVE|DR|STREET|ST|ROAD|RD|AVENUE|AVE|LANE|LN|COURT|CT|BOULEVARD|BLVD|CIRCLE|CIR|TRAIL|TRL|WAY|PLACE|PL|PIKE|PKWY|PARKWAY|APT|UNIT|SUITE)\b", RegexOptions.CultureInvariant)[0];
+        return Normalize(street);
+    }
+
+    public static async Task PopulateAsync(ApplicationDbContext db, SupplierInvoicePayload payload, CancellationToken ct, HousecallProDataService hcp)
     {
         payload.JobUnassigned = false;
         payload.JobUnassignedReason = "";
@@ -33,9 +42,8 @@ public static class SupplierInvoiceJobLookup
         var reference = (separator >= 0 ? payload.YourReference[..separator] : payload.YourReference).Trim();
         var name = Normalize(reference);
         // Read the existing synchronized HCP interface data, never a different operation's jobs.
-        var jobs = await db.HousecallProJobs.AsNoTracking()
-            .Where(x => x.LocalOperationId == payload.LocalOperationId && x.JobNumber != null && x.JobNumber != "")
-            .Select(x => new { x.CustomerName, x.JobNumber, x.LastSyncedAt }).ToListAsync(ct);
+        var operation = await db.LocalOperations.AsNoTracking().SingleAsync(x => x.Id == payload.LocalOperationId, ct);
+        var jobs = await hcp.GetSupplierJobsAsync(operation.Slug, ct);
         var numberMatches = jobs.Where(x => Regex.IsMatch(reference,
             @"(?<![\p{L}\p{N}])" + Regex.Escape(x.JobNumber!.Trim()) + @"(?![\p{L}\p{N}])",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100))).ToList();
@@ -66,11 +74,22 @@ public static class SupplierInvoiceJobLookup
             }
             partialMatch = matches.Count > 0;
         }
+        if (matches.Count == 0)
+        {
+            var street = StreetKey(payload.DeliveryAddress);
+            if (street.Length > 0)
+            {
+                matches = jobs.Where(x => StreetKey(x.Address) == street).ToList();
+                if (matches.Count > 0) { partialMatch = true; matchDescription = "Delivery-address match"; }
+            }
+        }
         // A printed Job is a candidate too, but must exist in this operation's HCP data.
         var existingMatch = jobs.FirstOrDefault(x => x.JobNumber!.Trim().Equals(existing, StringComparison.OrdinalIgnoreCase));
         if (existingMatch is not null && !matches.Any(x => x.JobNumber == existingMatch.JobNumber)) matches.Add(existingMatch);
         payload.MatchedJobNumbers = matches.Select(x => x.JobNumber!.Trim()).Where(x => x.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        payload.JobOptionLabels = matches.GroupBy(x => x.JobNumber.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => string.Join(" | ", g.Select(x => x.Description + " - " + x.CustomerName + " - " + x.Address).Distinct()), StringComparer.OrdinalIgnoreCase);
         payload.JobLookupSourceSyncedAt = matches.Count > 0 ? matches.Min(x => x.LastSyncedAt) : null;
         payload.JobNumber = existingMatch is not null ? existingMatch.JobNumber!.Trim()
             : payload.MatchedJobNumbers.Count == 1 ? payload.MatchedJobNumbers[0] : "";
@@ -79,7 +98,7 @@ public static class SupplierInvoiceJobLookup
             payload.JobUnassigned = true;
             payload.JobUnassignedReason = string.IsNullOrWhiteSpace(payload.YourReference)
                 ? "Your Reference is blank; job assignment deferred."
-                : "No job found in this location's synchronized Housecall Pro data after checking reference job numbers, full name, last name and first name; job assignment deferred.";
+                : "No job found in this location's Housecall Pro API data after checking reference job numbers, full name, last name, first name and delivery address; job assignment deferred.";
         }
         payload.JobLookupFilledValue = payload.JobNumber;
         payload.JobLookupMessage = payload.MatchedJobNumbers.Count == 0
@@ -90,6 +109,6 @@ public static class SupplierInvoiceJobLookup
                     : ". Confirm the customer in Housecall Pro and select exactly one job.")
             : payload.MatchedJobNumbers.Count > 1
                 ? "Multiple validated jobs found. Select exactly one job for this invoice before posting."
-                : "One job validated in synchronized Housecall Pro data for this location. Confirm it belongs to this invoice.";
+                : "One job validated in Housecall Pro API data for this location. Confirm it belongs to this invoice.";
     }
 }

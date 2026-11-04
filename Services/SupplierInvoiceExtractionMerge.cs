@@ -5,7 +5,7 @@ namespace CharleyCompany.Dashboard.Web.Services;
 public static class SupplierInvoiceExtractionMerge
 {
     public static readonly string[] ExtractedFields = ["invoiceNumber", "invoiceDate", "dueDate", "jobNumber", "yourReference",
-        "currency", "isCreditNote", "tax", "freight", "discount", "total", "amountPaid", "paymentStateVerified", "lines"];
+        "deliveryAddress", "currency", "isCreditNote", "tax", "freight", "discount", "total", "amountPaid", "paymentStateVerified", "lines"];
 
     public static JsonObject Merge(JsonObject current, JsonObject original, JsonObject incoming, out List<string> preserved)
     {

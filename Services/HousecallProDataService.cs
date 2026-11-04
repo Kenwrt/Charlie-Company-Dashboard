@@ -8,6 +8,8 @@ using Microsoft.Extensions.Options;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
+public sealed record HcpSupplierJob(string ExternalId, string JobNumber, string CustomerName, string Address, string Description, DateTimeOffset LastSyncedAt);
+
 public sealed record HcpImportedCommunication(string Type, string Notes, string EnteredBy, DateTimeOffset? EnteredAt);
 public sealed record HcpJobPayment(
     string InvoiceNumber,
@@ -45,6 +47,40 @@ public sealed class HousecallProDataService(
     ILogger<HousecallProDataService> logger)
 {
     private readonly HousecallProOptions settings = options.Value;
+
+    public async Task<List<HcpSupplierJob>> GetSupplierJobsAsync(string operationSlug, CancellationToken ct)
+    {
+        var key = settings.GetApiKey(operationSlug);
+        if (key is null) throw new ArgumentException("Housecall Pro job lookup is unavailable for this location; no empty search was assumed.");
+        return (await cache.GetOrCreateAsync("supplier-job-lookup:" + operationSlug, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+            var result = new List<HcpSupplierJob>();
+            var seen = new HashSet<string>();
+            int? expectedPages = null;
+            for (var page = 1; page <= 100; page++)
+            {
+                using var doc = await GetDocumentAsync($"{settings.JobsEndpoint}?page={page}&page_size=100", key, ct);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("total_pages", out var pages) || !pages.TryGetInt32(out var total)
+                    || total < 0 || total > 100 || expectedPages is not null && expectedPages != total
+                    || !root.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
+                    throw new ArgumentException("Housecall Pro job lookup was incomplete. Retry after refreshing; no empty search was assumed.");
+                expectedPages = total;
+                foreach (var job in jobs.EnumerateArray())
+                {
+                    var id = Text(job, "id");
+                    if (id is null || !seen.Add(id)) throw new ArgumentException("Housecall Pro returned inconsistent job pages. Retry lookup.");
+                    var number = Text(job, "invoice_number") ?? Text(job, "job_number");
+                    if (string.IsNullOrWhiteSpace(number)) continue;
+                    var description = Text(job, "description") ?? Text(job, "name") ?? Text(job, "summary") ?? "Description unavailable";
+                    result.Add(new(id, number, CustomerName(job) ?? "", Address(job) ?? CustomerAddress(job) ?? "", description, DateTimeOffset.UtcNow));
+                }
+                if (page >= total) return result;
+            }
+            throw new ArgumentException("Housecall Pro job lookup exceeded its page limit.");
+        }))!;
+    }
 
     public async Task<HcpCloseRateSummary?> GetCloseRateSummaryAsync(
         LocalOperation operation, CancellationToken cancellationToken = default)

@@ -367,3 +367,21 @@ no jobs generates its own deferred-assignment reason. A valid existing job is ke
 Multiple candidates still require one selection. Approval repeats the lookup on the
 server so a supplied unknown-job flag cannot bypass matching. Deferred invoices post
 to the existing unassigned queue without an extra reviewer acknowledgment.
+
+## Address fallback and job descriptions
+
+The review now uses complete paginated HCP API job reads scoped to the selected
+operation credential, cached for five minutes. Incomplete or failed reads block the
+lookup instead of being treated as no matches. After number/full/last/first-name
+matching finds no jobs, compare the invoice delivery address against job addresses,
+using the house number and street name before the street-type suffix; city, ZIP and
+unit text are excluded. Matching is exact after punctuation/whitespace normalization.
+Description/name/summary, customer and address appear beside job numbers; absent
+source descriptions are explicitly labeled unavailable. The same labels are used
+in the later-assignment queue. Multiple numbers require one selection; a single
+number fills automatically. Same-street ambiguity remains subject to review.
+
+Positioned parser v2 extracts the printed Delivery Address line. Pending originals
+can be re-extracted without touching posted imports. A delivery-address input also
+allows the reviewer to correct missing or wrapped address extraction before lookup.
+This phase makes no new HCP writes and adds no database columns.

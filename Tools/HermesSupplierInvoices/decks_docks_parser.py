@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 
-VERSION = "decks-docks-positioned-v1"
+VERSION = "decks-docks-positioned-v2"
 AMOUNT = re.compile(r"^\(?[+-]?\$?(?:\d[\d,]*)(?:\.\d+)?\)?$")
 
 
@@ -79,6 +79,13 @@ def parse_pages(pages: list[dict]) -> dict:
             for key, label in (("invoiceNumber", "Invoice No"), ("invoiceDate", "Invoice Date"),
                                ("dueDate", "Due Date"), ("terms", "Terms"), ("jobNumber", "Job"), ("yourReference", "Your Ref")):
                 header[key] = header_value(page_rows, label, width)
+
+        if page_number == 1:
+            for row in page_rows:
+                delivery = re.search(r"Delivery\s+Address\s*:\s*(.+)", text(row), re.I)
+                if delivery:
+                    header["deliveryAddress"] = delivery.group(1).strip()
+                    break
 
         footer_top = height
         for row in page_rows:
@@ -207,7 +214,7 @@ def parse_pages(pages: list[dict]) -> dict:
     warnings.append("Confirm purchasing location, job assignment and amount already paid before AP posting.")
     return {"invoiceNumber": header.get("invoiceNumber", ""), "invoiceDate": invoice_date.isoformat() if invoice_date else None,
             "dueDate": due_date.isoformat() if due_date else None, "localOperationId": None,
-            "yourReference": header.get("yourReference", ""), "payingEntityCode": "", "jobNumber": header.get("jobNumber", ""),
+            "deliveryAddress": header.get("deliveryAddress", ""), "yourReference": header.get("yourReference", ""), "payingEntityCode": "", "jobNumber": header.get("jobNumber", ""),
             "currency": "USD", "isCreditNote": False, "tax": float(tax), "freight": float(freight), "discount": float(discount),
             "total": float(total), "amountPaid": 0, "paymentStateVerified": False,
             "extractionVersion": VERSION, "extractionComplete": bool(items) and recognized_pages + legal_pages == len(pages) and structural_warnings == 0,

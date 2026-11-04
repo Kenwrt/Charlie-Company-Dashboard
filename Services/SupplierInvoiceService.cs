@@ -13,6 +13,7 @@ public sealed class SupplierInvoiceService(
     IDbContextFactory<ApplicationDbContext> factory,
     IOptions<SupplierInvoiceOptions> options,
     SupplierInvoiceRouting routing,
+    HousecallProDataService hcp,
     IWebHostEnvironment environment,
     ILogger<SupplierInvoiceService> logger)
 {
@@ -110,7 +111,7 @@ public sealed class SupplierInvoiceService(
         // Incoming collector assertions cannot impersonate administrator review.
         payload.LocationAssignmentConfirmed = false;
         payload.LocationOverrideReason = "";
-        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct);
+        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct, hcp);
         var import = new SupplierInvoiceImport { PriceImportDocument = document,
             PayloadJson = JsonSerializer.Serialize(payload, SupplierInvoicePayload.JsonOptions), OriginalPayloadJson = json };
         db.SupplierInvoiceImports.Add(import);
@@ -161,7 +162,7 @@ public sealed class SupplierInvoiceService(
         payload.LocationRequiresReview = false;
         SupplierInvoiceAccounting.Assign(payload, (await db.LocalOperations.FindAsync([payload.LocalOperationId ?? 0], ct))?.Slug, options.Value);
         // Recompute eligibility on the server; client flags cannot bypass job selection.
-        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct);
+        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct, hcp);
         var items = await LoadProductsAsync(db, vendorId, ct);
         var issues = await PostingIssuesAsync(db, payload, items, allowNewProducts, ct);
         if (issues.Count > 0) throw new ArgumentException(string.Join(" ", issues));
@@ -201,8 +202,9 @@ public sealed class SupplierInvoiceService(
         if (import.Status != "Posted" || invoice is null || !string.IsNullOrWhiteSpace(invoice.JobNumber))
             throw new ArgumentException("This invoice is no longer awaiting job assignment. Refresh the queue.");
         jobNumber = jobNumber.Trim();
-        if (!await db.HousecallProJobs.AnyAsync(x => x.LocalOperationId == invoice.LocalOperationId
-            && x.JobNumber != null && x.JobNumber.Trim() == jobNumber, ct))
+        var operation = await db.LocalOperations.AsNoTracking().SingleAsync(x => x.Id == invoice.LocalOperationId, ct);
+        var jobs = await hcp.GetSupplierJobsAsync(operation.Slug, ct);
+        if (!jobs.Any(x => x.JobNumber.Trim() == jobNumber))
             throw new ArgumentException("Select a Housecall Pro job from this invoice's purchasing location.");
         var payload = JsonSerializer.Deserialize<SupplierInvoicePayload>(import.PayloadJson, SupplierInvoicePayload.JsonOptions)!;
         payload.JobNumber = jobNumber;
@@ -333,8 +335,7 @@ public sealed class SupplierInvoiceService(
                 issues.Add("Explain why the job is unassigned (up to 500 characters).");
         }
         else if (string.IsNullOrWhiteSpace(p.JobNumber)) issues.Add("Select one job or explicitly choose job unknown / assign later.");
-        else if (p.LocalOperationId is null || !await db.HousecallProJobs.AsNoTracking().AnyAsync(
-            x => x.LocalOperationId == p.LocalOperationId && x.JobNumber != null && x.JobNumber.Trim() == p.JobNumber.Trim(), ct))
+        else if (p.LocalOperationId is null || !p.MatchedJobNumbers.Contains(p.JobNumber.Trim(), StringComparer.OrdinalIgnoreCase))
             issues.Add("The selected job number must match one Housecall Pro job number in the purchasing location. Multiple numbers cannot be posted.");
         if (p.Currency != "USD") issues.Add("Only USD invoices are supported.");
         if (p.IsCreditNote) issues.Add("Credit notes must use the existing vendor-credit workflow.");
