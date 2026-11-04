@@ -160,7 +160,8 @@ public sealed class SupplierInvoiceService(
         payload.LocationAssignmentReason = overridesLocation ? payload.LocationOverrideReason.Trim() : assignment.Reason;
         payload.LocationRequiresReview = false;
         SupplierInvoiceAccounting.Assign(payload, (await db.LocalOperations.FindAsync([payload.LocalOperationId ?? 0], ct))?.Slug, options.Value);
-        if (payload.JobUnassigned) payload.JobNumber = "";
+        // Recompute eligibility on the server; client flags cannot bypass job selection.
+        await SupplierInvoiceJobLookup.PopulateAsync(db, payload, ct);
         var items = await LoadProductsAsync(db, vendorId, ct);
         var issues = await PostingIssuesAsync(db, payload, items, allowNewProducts, ct);
         if (issues.Count > 0) throw new ArgumentException(string.Join(" ", issues));

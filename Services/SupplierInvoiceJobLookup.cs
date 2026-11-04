@@ -13,7 +13,8 @@ public static class SupplierInvoiceJobLookup
 
     public static async Task PopulateAsync(ApplicationDbContext db, SupplierInvoicePayload payload, CancellationToken ct)
     {
-        if (payload.JobUnassigned) return;
+        payload.JobUnassigned = false;
+        payload.JobUnassignedReason = "";
         // Preserve only a single verified existing selection; never select among multiple matches.
         payload.YourReference = payload.YourReference.Trim();
         var existing = payload.JobNumber.Trim();
@@ -31,11 +32,6 @@ public static class SupplierInvoiceJobLookup
         var separator = payload.YourReference.IndexOfAny(['-', '\u2013', '\u2014']);
         var reference = (separator >= 0 ? payload.YourReference[..separator] : payload.YourReference).Trim();
         var name = Normalize(reference);
-        if (name.Length < 3)
-        {
-            payload.JobLookupMessage = "Your Reference does not contain a usable customer name.";
-            return;
-        }
         // Read the existing synchronized HCP interface data, never a different operation's jobs.
         var jobs = await db.HousecallProJobs.AsNoTracking()
             .Where(x => x.LocalOperationId == payload.LocalOperationId && x.JobNumber != null && x.JobNumber != "")
@@ -44,7 +40,7 @@ public static class SupplierInvoiceJobLookup
             @"(?<![\p{L}\p{N}])" + Regex.Escape(x.JobNumber!.Trim()) + @"(?![\p{L}\p{N}])",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100))).ToList();
         var matches = numberMatches.Count > 0 ? numberMatches
-            : jobs.Where(x => Normalize(x.CustomerName ?? "") == name).ToList();
+            : jobs.Where(x => name.Length > 0 && Normalize(x.CustomerName ?? "") == name).ToList();
         var partialMatch = false;
         var matchDescription = "";
         if (matches.Count == 0)
@@ -78,9 +74,16 @@ public static class SupplierInvoiceJobLookup
         payload.JobLookupSourceSyncedAt = matches.Count > 0 ? matches.Min(x => x.LastSyncedAt) : null;
         payload.JobNumber = existingMatch is not null ? existingMatch.JobNumber!.Trim()
             : payload.MatchedJobNumbers.Count == 1 ? payload.MatchedJobNumbers[0] : "";
+        if (payload.MatchedJobNumbers.Count == 0)
+        {
+            payload.JobUnassigned = true;
+            payload.JobUnassignedReason = string.IsNullOrWhiteSpace(payload.YourReference)
+                ? "Your Reference is blank; job assignment deferred."
+                : "No job found in this location's synchronized Housecall Pro data after checking reference job numbers, full name, last name and first name; job assignment deferred.";
+        }
         payload.JobLookupFilledValue = payload.JobNumber;
         payload.JobLookupMessage = payload.MatchedJobNumbers.Count == 0
-            ? "No validated job match in synchronized Housecall Pro data for this location. Confirm the reference or the HCP synchronization before posting."
+            ? payload.JobUnassignedReason + " The invoice will enter the unassigned job expenses queue when approved."
             : partialMatch
                 ? matchDescription + (payload.MatchedJobNumbers.Count == 1
                     ? ". The only matching job was selected automatically. Confirm the customer and job before approving."

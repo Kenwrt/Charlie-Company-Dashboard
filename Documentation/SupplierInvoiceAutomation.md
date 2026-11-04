@@ -360,3 +360,10 @@ jobs and a serialized supplier transaction to update the existing payable and it
 payload, recording actor/time in an append-only JobAssigned event. No amounts,
 lines or catalog decisions are recreated. Assigned rows leave the queue on refresh.
 Unassigned invoices remain excluded from accounting-review export candidates.
+
+The manual unknown-job checkbox and reason entry are superseded by automatic
+classification. A blank Your Reference or a completed location-scoped lookup with
+no jobs generates its own deferred-assignment reason. A valid existing job is kept.
+Multiple candidates still require one selection. Approval repeats the lookup on the
+server so a supplied unknown-job flag cannot bypass matching. Deferred invoices post
+to the existing unassigned queue without an extra reviewer acknowledgment.
