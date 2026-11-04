@@ -44,6 +44,31 @@ public static class SupplierInvoiceJobLookup
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100))).ToList();
         var matches = numberMatches.Count > 0 ? numberMatches
             : jobs.Where(x => Normalize(x.CustomerName ?? "") == name).ToList();
+        var partialMatch = false;
+        var matchDescription = "";
+        if (matches.Count == 0)
+        {
+            var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            // Whole name components only: never match a substring inside a surname.
+            var lastName = parts.LastOrDefault() ?? "";
+            if (lastName.Length >= 2 && lastName.All(char.IsLetter))
+            {
+                matches = jobs.Where(x => Normalize(x.CustomerName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .LastOrDefault() == lastName).ToList();
+                if (matches.Count > 0) matchDescription = "Last-name-only match";
+            }
+            if (matches.Count == 0)
+            {
+                var firstName = parts.FirstOrDefault() ?? "";
+                if (firstName.Length >= 2 && firstName.All(char.IsLetter))
+                {
+                    matches = jobs.Where(x => Normalize(x.CustomerName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                        .FirstOrDefault() == firstName).ToList();
+                    if (matches.Count > 0) matchDescription = "First-name-only match";
+                }
+            }
+            partialMatch = matches.Count > 0;
+        }
         // A printed Job is a candidate too, but must exist in this operation's HCP data.
         var existingMatch = jobs.FirstOrDefault(x => x.JobNumber!.Trim().Equals(existing, StringComparison.OrdinalIgnoreCase));
         if (existingMatch is not null && !matches.Any(x => x.JobNumber == existingMatch.JobNumber)) matches.Add(existingMatch);
@@ -51,10 +76,12 @@ public static class SupplierInvoiceJobLookup
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
         payload.JobLookupSourceSyncedAt = matches.Count > 0 ? matches.Min(x => x.LastSyncedAt) : null;
         payload.JobNumber = existingMatch is not null ? existingMatch.JobNumber!.Trim()
-            : payload.MatchedJobNumbers.Count == 1 ? payload.MatchedJobNumbers[0] : "";
+            : !partialMatch && payload.MatchedJobNumbers.Count == 1 ? payload.MatchedJobNumbers[0] : "";
         payload.JobLookupFilledValue = payload.JobNumber;
         payload.JobLookupMessage = payload.MatchedJobNumbers.Count == 0
             ? "No validated job match in synchronized Housecall Pro data for this location. Confirm the reference or the HCP synchronization before posting."
+            : partialMatch
+                ? matchDescription + ". Confirm the customer in Housecall Pro and select exactly one job; no job was automatically selected from a partial name."
             : payload.MatchedJobNumbers.Count > 1
                 ? "Multiple validated jobs found. Select exactly one job for this invoice before posting."
                 : "One job validated in synchronized Housecall Pro data for this location. Confirm it belongs to this invoice.";
