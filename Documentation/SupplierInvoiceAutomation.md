@@ -326,3 +326,13 @@ Missing or unsynchronized jobs must be resolved before approval. Lookup runs on
 new intake and when a pending review opens; the button repeats it after edits.
 This uses synchronized dashboard data, not a fresh live API scan. Source sync time
 is displayed. No historical posted invoice is backfilled. No schema change required.
+
+Customer/job lookup ignores the first dash (hyphen, en dash or em dash) and all
+following reference text. For example, `Hannah Wemhoener-TREX` looks up
+`Hannah Wemhoener`. Numbers in the ignored suffix are not job candidates. The
+original Your Reference value is retained in the immutable source payload. This rule also treats a dash
+inside a hyphenated customer name as the start of an ignored suffix.
+
+Leading and trailing whitespace is trimmed from the editable Your Reference value
+before job lookup and approval, and after editing the reference field. The original
+PDF and immutable original extraction are preserved.

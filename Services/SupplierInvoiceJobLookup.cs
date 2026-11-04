@@ -14,6 +14,7 @@ public static class SupplierInvoiceJobLookup
     public static async Task PopulateAsync(ApplicationDbContext db, SupplierInvoicePayload payload, CancellationToken ct)
     {
         // Preserve only a single verified existing selection; never select among multiple matches.
+        payload.YourReference = payload.YourReference.Trim();
         var existing = payload.JobNumber.Trim();
         payload.MatchedJobNumbers = [];
         payload.JobLookupLocationId = payload.LocalOperationId;
@@ -24,7 +25,11 @@ public static class SupplierInvoiceJobLookup
             payload.JobLookupMessage = "Resolve the purchasing location before matching customer jobs.";
             return;
         }
-        var name = Normalize(payload.YourReference);
+        // Supplier annotations such as customer-TREX are not part of the lookup.
+        // Keep suffix text in YourReference; the immutable original payload retains source whitespace.
+        var separator = payload.YourReference.IndexOfAny(['-', '\u2013', '\u2014']);
+        var reference = (separator >= 0 ? payload.YourReference[..separator] : payload.YourReference).Trim();
+        var name = Normalize(reference);
         if (name.Length < 3)
         {
             payload.JobLookupMessage = "Your Reference does not contain a usable customer name.";
@@ -34,7 +39,7 @@ public static class SupplierInvoiceJobLookup
         var jobs = await db.HousecallProJobs.AsNoTracking()
             .Where(x => x.LocalOperationId == payload.LocalOperationId && x.JobNumber != null && x.JobNumber != "")
             .Select(x => new { x.CustomerName, x.JobNumber, x.LastSyncedAt }).ToListAsync(ct);
-        var numberMatches = jobs.Where(x => Regex.IsMatch(payload.YourReference,
+        var numberMatches = jobs.Where(x => Regex.IsMatch(reference,
             @"(?<![\p{L}\p{N}])" + Regex.Escape(x.JobNumber!.Trim()) + @"(?![\p{L}\p{N}])",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100))).ToList();
         var matches = numberMatches.Count > 0 ? numberMatches

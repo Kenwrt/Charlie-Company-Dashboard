@@ -53,7 +53,7 @@
     <EditForm Model="payload" OnSubmit="ApproveAsync" FormName="supplier-invoice-review">
     <div class="row g-3">
         <div class="col-md-6"><label class="form-label">Paying entity (if known)</label><InputSelect class="form-select" @bind-Value="payload.PayingEntityCode"><option value="">Unknown / not confirmed</option>@foreach (var payer in InvoiceOptions.Value.PayingEntities) { <option value="@payer.Key">@payer.Value</option> }</InputSelect></div>
-        <div class="col-md-6"><label class="form-label">Your Reference (as printed)</label><InputText class="form-control" @bind-Value="payload.YourReference" /></div>
+        <div class="col-md-6"><label class="form-label">Your Reference (as printed)</label><InputText class="form-control" @bind-Value="payload.YourReference" @bind-Value:after="TrimReference" /></div>
         <div class="col-md-4"><label class="form-label">Invoice number</label><InputText class="form-control" @bind-Value="payload.InvoiceNumber" /></div>
         <div class="col-md-4"><label class="form-label">Invoice date</label><InputDate class="form-control" @bind-Value="payload.InvoiceDate" /></div>
         <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /></div>
@@ -169,6 +169,10 @@
         allowNewProducts = approvePrices = confirmedOriginal = false;
         message = null;
         await LookupJobsAsync();
+    }
+    private void TrimReference()
+    {
+        if (payload is not null) payload.YourReference = payload.YourReference.Trim();
     }
     private async Task LookupJobsAsync()
     {

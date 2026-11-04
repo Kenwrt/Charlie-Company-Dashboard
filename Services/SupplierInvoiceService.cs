@@ -133,6 +133,7 @@ public sealed class SupplierInvoiceService(
         bool allowNewProducts, bool approvePrices, string actor, CancellationToken ct)
     {
         GuardPayload(payload);
+        payload.YourReference = payload.YourReference.Trim();
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         // Read the supplier first, then reload inside the supplier lock.
