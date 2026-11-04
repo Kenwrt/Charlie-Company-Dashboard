@@ -5,6 +5,7 @@ namespace CharleyCompany.Dashboard.Web.Data;
 
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
+    public DbSet<SupplierReconciliationRun> SupplierReconciliationRuns => Set<SupplierReconciliationRun>();
     public DbSet<NotificationRecipient> NotificationRecipients => Set<NotificationRecipient>();
     public DbSet<SmsConsentEvent> SmsConsentEvents => Set<SmsConsentEvent>();
     public DbSet<ScheduledReportDefinition> ScheduledReportDefinitions => Set<ScheduledReportDefinition>();
@@ -105,6 +106,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(integration => new { integration.LocalOperationId, integration.Provider }).IsUnique();
         });
 
+        builder.Entity<SupplierReconciliationRun>(entity =>
+        {
+            entity.HasIndex(x => x.SnapshotHash).IsUnique();
+            entity.HasIndex(x => new { x.SupplyVendorId, x.LocalOperationId, x.CapturedAt });
+        });
         builder.Entity<SupplyVendor>(entity =>
         {
             entity.HasIndex(vendor => vendor.Name);

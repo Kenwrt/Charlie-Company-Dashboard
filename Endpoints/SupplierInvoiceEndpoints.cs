@@ -52,6 +52,23 @@ public static class SupplierInvoiceEndpoints
         }).AllowAnonymous().DisableAntiforgery().RequireRateLimiting("supplier-invoices")
             .WithMetadata(new RequestSizeLimitAttribute(SupplierInvoiceService.MaxPdfBytes + SupplierInvoiceService.MaxPayloadBytes + 65536));
 
+        endpoints.MapPost("/api/supplier-invoices/decks-docks/reconcile", async (HttpContext context,
+            IOptions<SupplierInvoiceOptions> options, SupplierReconciliationService service, CancellationToken ct) =>
+        {
+            if (!options.Value.Enabled || !options.Value.ReconciliationEnabled) return Results.StatusCode(503);
+            if (!SecureTransport(context) || !KeyEquals(options.Value.IngestionKey, context.Request.Headers["X-CCV-Supplier-Key"].ToString())) return Results.Unauthorized();
+            if (context.Request.ContentLength is null or > 2097152 || !context.Request.HasJsonContentType()) return Results.BadRequest(new { error = "A bounded JSON snapshot is required." });
+            try
+            {
+                var source = await context.Request.ReadFromJsonAsync<SupplierReconciliationSnapshot>(cancellationToken: ct);
+                if (source is null) return Results.BadRequest(new { error = "Supplier snapshot required." });
+                return Results.Ok(await service.ApplyAsync(source, ct));
+            }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (JsonException) { return Results.BadRequest(new { error = "Invalid snapshot JSON." }); }
+        }).AllowAnonymous().DisableAntiforgery().RequireRateLimiting("supplier-invoices")
+            .WithMetadata(new RequestSizeLimitAttribute(2097152));
+
         // Separate read-only credential: AP consumers cannot submit or approve invoices.
         endpoints.MapGet("/api/supplier-invoices/ap", async (HttpContext context, IOptions<SupplierInvoiceOptions> options,
             IDbContextFactory<ApplicationDbContext> factory, IWebHostEnvironment environment,

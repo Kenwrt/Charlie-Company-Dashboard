@@ -16,7 +16,9 @@
     "authenticated_selector": "nav[aria-label=\"Tabs\"]",
     "invoice_link_selector": "",
     "next_page_link_selector": "",
-    "allowed_download_hosts": ["suppli-prod.s3.amazonaws.com"],
+    "allowed_download_hosts": [
+      "suppli-prod.s3.amazonaws.com"
+    ],
     "refresh_existing_hours": 24,
     "profile_directory": "/srv/ai/hermes/supplier-invoices/browser-profile",
     "browser_executable_path": "",
@@ -32,5 +34,8 @@
     "ocr_enabled": false,
     "max_pages": 30,
     "line_pattern": ""
+  },
+  "reconciliation": {
+    "enabled": false
   }
 }

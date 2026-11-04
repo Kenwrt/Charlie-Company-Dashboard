@@ -454,3 +454,40 @@ A local-only --post-pending-nashville-reporting command processes current Nashvi
 pending supplier imports under this owner authorization and prints aggregate results.
 It creates no external Mercury posting or payment. Future conflict reporting reads
 PostingConflicts and pending price rows. Explicit actor and conflict audit retained.
+
+## Supplier settlement reconciliation
+
+The existing Hermes job reuses its signed-in Suppli browser profile. It visits
+outstanding, paid, credits and payments using the same query-only GraphQL guard;
+no supplier mutations or payment actions are allowed. All four views must be
+complete, uniquely identified, single-page snapshots and reconcile to the selected
+account's summary before dashboard handoff. Multiple pages/layout/auth failures
+block reconciliation rather than silently completing partial data. Collection is
+account-reference scoped. Raw normalized financial evidence remains private on AI01
+and is retained in dashboard reconciliation runs, without cookies or card details.
+
+Opt-in flags: worker reconciliation.enabled and SupplierInvoices:ReconciliationEnabled.
+The bounded reconciliation endpoint uses the existing intake credential over the
+same private TLS route. AP read credentials remain read-only. The same vendor lock
+serializes imports/posting/reconciliation. Snapshot hashes make request replay safe;
+stale snapshots or account changes are rejected. No second agent/schedule is created.
+
+Matching is supplier + Nashville location + invoice number + original amount +
+invoice date, never job number. Original amounts/lines/jobs/PDFs are not rewritten.
+Only supplier-confirmed outstanding balances change settlement and status; absent
+invoices are never assumed paid. Settled amounts may include cash, credits or other
+adjustments; unavailable allocation detail is explicitly flagged. Pending payments
+are not applied again. Supplier due dates update matched records with audit history.
+
+Credits match normalized reference and original amount, or a unique original
+amount/date pair for manually labeled entries. Source credit availability is
+updated; unmatched local credits remain flagged and unchanged. Missing source
+credits are added idempotently. Both source and result evidence are persisted per
+run, with an Administrator-only exception/payment view at /admin/supplier-reconciliation.
+Reconciliation is reporting-only: no Mercury entry, supplier payment or original
+invoice deletion is performed. The daily existing worker collects invoices first,
+then reconciles; newly imported invoices awaiting AP posting are flagged as unmatched.
+
+Reconciliation deployment includes supplier_reconciliation.py in addition to the
+existing worker source files; preserve the profile, receipt database, scheduler and
+private configuration. New reconciliation audit tables inherit the catalog owner.

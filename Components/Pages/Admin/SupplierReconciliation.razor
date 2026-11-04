@@ -1,0 +1,62 @@
+@page "/admin/supplier-reconciliation"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.Text.Json
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Models
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@inject IDbContextFactory<ApplicationDbContext> Factory
+<PageTitle>Supplier reconciliation</PageTitle>
+<h1>Decks &amp; Docks reconciliation</h1>
+<p>Supplier-confirmed balances update existing payables. Invoice amounts, original documents, line items and job assignments are retained. Settled amounts can include payments, applied credits, discounts or adjustments; available credits below are unapplied balances.</p>
+<p><a href="/admin/supplier-invoices">Supplier invoice review</a></p>
+<button class="btn btn-outline-secondary" @onclick="ReloadAsync">Refresh</button>
+@if (runs.Count == 0) { <p>No reconciliation has been applied.</p> }
+else
+{
+    <label class="form-label d-block mt-3">Reconciliation run</label>
+    <select class="form-select" @bind="selectedId" @bind:after="SelectRun">
+        @foreach (var run in runs) { <option value="@run.Id">@run.CapturedAt.ToLocalTime().ToString("g") / Run @run.Id</option> }
+    </select>
+}
+@if (result is not null && source is not null)
+{
+    <div class="row mt-3">
+        <p class="col-md-4"><strong>Supplier net due:</strong> @result.SupplierNetDue.ToString("C2")</p>
+        <p class="col-md-4"><strong>Dashboard net due at reconciliation:</strong> @result.DashboardNetDue.ToString("C2")</p>
+        <p class="col-md-4"><strong>Difference:</strong> @((result.DashboardNetDue - result.SupplierNetDue).ToString("C2"))</p>
+    </div>
+    <p>@result.MatchedInvoices invoices matched; @result.UpdatedInvoices invoice balances/dates updated; @result.UpdatedCredits credit balances updated; @result.CreatedCredits credit records added.</p>
+    <p>Source: @source.Invoices.Count invoice/finance-charge records, @source.Payments.Count payment records, @source.Credits.Count credit records. Available supplier credits: @((source.Summary.AvailableCreditsCents / 100m).ToString("C2")).</p>
+    <h2>Exceptions and evidence gaps (@result.IssueCount)</h2>
+    <p>Unmatched balances are retained. Missing allocation detail is identified separately from an unmatched invoice balance. No balancing entry is invented.</p>
+    <div class="table-responsive"><table class="table"><thead><tr><th>Type</th><th>Reference</th><th>Detail</th></tr></thead><tbody>
+    @foreach (var issue in result.Issues) { <tr><td>@issue.Kind</td><td>@issue.Reference</td><td>@issue.Detail</td></tr> }
+    </tbody></table></div>
+    <h2>Supplier payment evidence</h2>
+    <div class="table-responsive"><table class="table"><thead><tr><th>Reference</th><th>Status</th><th>Date</th><th>Amount</th><th>Invoice allocations</th></tr></thead><tbody>
+    @foreach (var payment in source.Payments)
+    { <tr><td>@payment.SourceId</td><td>@payment.DisplayStatus</td><td>@payment.EntryDate</td><td>@((payment.TotalCents / 100m).ToString("C2"))</td><td>@string.Join(", ", payment.Allocations.Select(x => x.InvoiceNumber))</td></tr> }
+    </tbody></table></div>
+}
+@code {
+    private List<SupplierReconciliationRun> runs = [];
+    private int selectedId;
+    private SupplierReconciliationResult? result;
+    private SupplierReconciliationSnapshot? source;
+    protected override Task OnInitializedAsync() => ReloadAsync();
+    private async Task ReloadAsync()
+    {
+        await using var db = await Factory.CreateDbContextAsync();
+        runs = await db.SupplierReconciliationRuns.AsNoTracking().OrderByDescending(x => x.CapturedAt).Take(50).ToListAsync();
+        if (!runs.Any(x => x.Id == selectedId)) selectedId = runs.FirstOrDefault()?.Id ?? 0;
+        SelectRun();
+    }
+    private void SelectRun()
+    {
+        var run = runs.SingleOrDefault(x => x.Id == selectedId);
+        result = run is null ? null : JsonSerializer.Deserialize<SupplierReconciliationResult>(run.ResultJson, SupplierInvoicePayload.JsonOptions);
+        source = run is null ? null : JsonSerializer.Deserialize<SupplierReconciliationSnapshot>(run.SourceJson, SupplierInvoicePayload.JsonOptions);
+    }
+}

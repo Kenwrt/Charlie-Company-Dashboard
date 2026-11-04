@@ -3109,6 +3109,49 @@ namespace CharleyCompany.Dashboard.Web.Migrations
                     b.ToTable("SupplierInvoiceImports");
                 });
 
+            modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.SupplierReconciliationRun", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("AppliedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CapturedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("LocalOperationId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SnapshotHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SourceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("SupplyVendorId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SnapshotHash")
+                        .IsUnique();
+
+                    b.HasIndex("SupplyVendorId", "LocalOperationId", "CapturedAt");
+
+                    b.ToTable("SupplierReconciliationRuns");
+                });
+
             modelBuilder.Entity("CharleyCompany.Dashboard.Web.Data.SupplyVendor", b =>
                 {
                     b.Property<int>("Id")

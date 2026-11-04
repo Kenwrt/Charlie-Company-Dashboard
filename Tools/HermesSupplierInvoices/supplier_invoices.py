@@ -363,6 +363,7 @@ def collect_portal(config: dict, inbox: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
+    parser.add_argument("--reconcile-only", action="store_true", help="Read supplier invoice/payment/credit records and reconcile dashboard balances without downloading PDFs.")
     parser.add_argument("--refresh-existing", action="store_true", help="Re-extract cached originals; only untouched fields on pending dashboard imports can change.")
     args = parser.parse_args()
     os.umask(0o077)
@@ -382,6 +383,11 @@ def main() -> int:
         key = os.environ.get("CCV_SUPPLIER_INGESTION_KEY") or read_protected(Path(config["ingestion_key_file"])).strip()
         if not key:
             raise Blocked("ingestion_key_not_configured")
+        if args.reconcile_only:
+            from supplier_reconciliation import reconcile
+            result = reconcile(config, key, dashboard_opener)
+            print(json.dumps({"status": "reconciled", **{k: result[k] for k in ("runId", "matchedInvoices", "updatedInvoices", "updatedCredits", "createdCredits", "issueCount", "supplierNetDue", "dashboardNetDue")}}))
+            return 0
         db = sqlite3.connect(state / "receipts.sqlite3")
         db.execute("CREATE TABLE IF NOT EXISTS receipts (sha256 TEXT PRIMARY KEY, import_id INTEGER NOT NULL, status TEXT NOT NULL, submitted_at TEXT NOT NULL)")
         submitted = refreshed = acknowledged = 0
@@ -417,7 +423,16 @@ def main() -> int:
         db.close()
         if collection_error:
             raise collection_error
-        print(json.dumps({"status": "completed", "submitted": submitted, "refreshed": refreshed,
+        reconciliation = None
+        if not args.refresh_existing and config.get("reconciliation", {}).get("enabled", False):
+            from supplier_reconciliation import reconcile
+            try:
+                receipt = reconcile(config, key, dashboard_opener)
+                reconciliation = {k: receipt[k] for k in ("runId", "matchedInvoices", "updatedInvoices", "updatedCredits", "createdCredits", "issueCount", "supplierNetDue", "dashboardNetDue")}
+            except Exception as error:
+                # No source credentials, financial payloads or request URLs in console logs.
+                raise Blocked("supplier_reconciliation_" + type(error).__name__) from None
+        print(json.dumps({"status": "completed", "reconciliation": reconciliation, "submitted": submitted, "refreshed": refreshed,
                           "acknowledged": acknowledged, "ap_approval": "dashboard_review"}))
     return 0
 

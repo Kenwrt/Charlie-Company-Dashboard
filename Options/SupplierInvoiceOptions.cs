@@ -3,6 +3,7 @@ namespace CharleyCompany.Dashboard.Web.Options;
 public sealed class SupplierInvoiceOptions
 {
     public const string SectionName = "SupplierInvoices";
+    public bool ReconciliationEnabled { get; set; }
     public bool Enabled { get; set; }
     public int DecksDocksVendorId { get; set; }
     public string? IngestionKey { get; set; }

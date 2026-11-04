@@ -86,6 +86,8 @@ updates = {
     'SupplierInvoices__StoragePath': '/var/lib/charlie-company/supplier-invoices',
     'SupplierInvoices__IngestionKey': key, 'SupplierInvoices__ApReadKey': ap_key,
 }
+if '--enable-supplier-reconciliation' in sys.argv[3:]:
+    updates['SupplierInvoices__ReconciliationEnabled'] = 'true'
 # Remove prior participation entries so this activation serves Nashville alone.
 lines = [line for line in original.splitlines() if line.split('=', 1)[0].strip() not in updates
          and not line.split('=', 1)[0].strip().startswith('SupplierInvoices__ParticipatingLocationSlugs__')]
