@@ -5,6 +5,11 @@ namespace CharleyCompany.Dashboard.Web.Data;
 
 public sealed class InvoiceLine
 {
+    [StringLength(100)] public string? SkuSnapshot { get; set; }
+    [StringLength(300)] public string? DescriptionSnapshot { get; set; }
+    [StringLength(40)] public string? PurchaseUnitSnapshot { get; set; }
+    [Column(TypeName = "numeric(18,4)")] public decimal? PackageQuantitySnapshot { get; set; }
+    public bool PackagingConfirmed { get; set; }
     public int Id { get; set; }
     public int PayableInvoiceId { get; set; }
     public PayableInvoice PayableInvoice { get; set; } = null!;

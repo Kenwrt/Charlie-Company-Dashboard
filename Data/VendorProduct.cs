@@ -17,6 +17,7 @@ public sealed class VendorProduct
     public bool IsPreferred { get; set; }
     [Range(0, 1000)] public int PreferencePriority { get; set; } = 100;
     public bool IsActive { get; set; } = true;
+    public ICollection<VendorPackagingVersion> PackagingVersions { get; set; } = [];
     public ICollection<VendorPrice> Prices { get; set; } = [];
     public ICollection<InvoiceLine> InvoiceLines { get; set; } = [];
 }

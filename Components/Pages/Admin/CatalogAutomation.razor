@@ -19,6 +19,7 @@
 <p>Upload CSV price lists for automatic staging and matching. PDFs are preserved securely and queued for OCR review.</p>
 @if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
 
+<PackagingReview />
 <fieldset disabled="@isReviewBusy">
 <section class="activity-panel mb-4"><h2>Import vendor price list</h2><div class="row g-3">
  <div class="col-md-4"><label class="form-label">Vendor</label><InputSelect class="form-select" @bind-Value="selectedVendorId"><option value="0">Select vendor…</option>@foreach (var v in vendors) { <option value="@v.Id">@v.Name</option> }</InputSelect></div>
@@ -123,6 +124,11 @@
   await using var DbContext = await DbContextFactory.CreateDbContextAsync();
   var tracked = await DbContext.PriceImportRows.FindAsync(row.Id);
   if (tracked is null || tracked.ReviewStatus != "Pending" || tracked.VendorProductId is null) { await ReloadAsync(); return; }
+  var packaging = await DbContext.VendorPackagingVersions.Where(x => x.VendorProductId == tracked.VendorProductId && x.EffectiveDate <= tracked.EffectiveDate)
+   .OrderByDescending(x => x.EffectiveDate).FirstOrDefaultAsync();
+  if (packaging?.IsConfirmed != true) { message = "Confirm supplier packaging for this SKU and effective date in Supplier packaging review before approving the price."; return; }
+  var nextPackagingDate = await DbContext.VendorPackagingVersions.Where(x => x.VendorProductId == tracked.VendorProductId && x.EffectiveDate > tracked.EffectiveDate)
+   .OrderBy(x => x.EffectiveDate).Select(x => (DateOnly?)x.EffectiveDate).FirstOrDefaultAsync();
   var prices = await DbContext.VendorPrices.Where(x => x.VendorProductId == tracked.VendorProductId).OrderBy(x => x.EffectiveDate).ToListAsync();
   var sameDate = prices.FirstOrDefault(x => x.EffectiveDate == tracked.EffectiveDate);
   if (sameDate is not null && sameDate.UnitPrice != tracked.ProposedUnitPrice)
@@ -136,7 +142,7 @@
    var previous = prices.LastOrDefault(x => x.EffectiveDate < tracked.EffectiveDate);
    var next = prices.FirstOrDefault(x => x.EffectiveDate > tracked.EffectiveDate);
    if (previous is not null && (previous.ExpirationDate == null || previous.ExpirationDate >= tracked.EffectiveDate)) previous.ExpirationDate = tracked.EffectiveDate.AddDays(-1);
-   DbContext.VendorPrices.Add(new VendorPrice { VendorProductId = tracked.VendorProductId.Value, UnitPrice = tracked.ProposedUnitPrice, EffectiveDate = tracked.EffectiveDate, ExpirationDate = next?.EffectiveDate.AddDays(-1), SourceType = "Price List", SourceReference = row.PriceImportDocument.OriginalFileName });
+   DbContext.VendorPrices.Add(new VendorPrice { VendorProductId = tracked.VendorProductId.Value, UnitPrice = tracked.ProposedUnitPrice, EffectiveDate = tracked.EffectiveDate, ExpirationDate = (next is null ? nextPackagingDate : nextPackagingDate is null ? next.EffectiveDate : next.EffectiveDate < nextPackagingDate ? next.EffectiveDate : nextPackagingDate)?.AddDays(-1), SourceType = "Price List", SourceReference = row.PriceImportDocument.OriginalFileName });
   }
   tracked.ReviewStatus = "Approved";
   await DbContext.SaveChangesAsync();

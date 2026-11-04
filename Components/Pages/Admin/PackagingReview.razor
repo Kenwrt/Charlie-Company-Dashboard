@@ -1,0 +1,72 @@
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IDbContextFactory<ApplicationDbContext> Factory
+@inject VendorPackagingService Packaging
+@inject AuthenticationStateProvider Auth
+
+<section class="activity-panel mb-4">
+<h2>Supplier packaging review</h2>
+<p>Search a supplier SKU, select the item, then confirm packaging from supplier evidence. History is preserved by effective date; existing invoice snapshots are retained.</p>
+<input class="form-control" @bind="skuSearch" placeholder="Supplier SKU" />
+<button type="button" class="btn btn-outline-secondary mt-2" @onclick="SearchAsync" disabled="@working">Find SKU</button>
+@if (feedback is not null) { <p role="status">@feedback</p> }
+@foreach (var item in products)
+{
+    <button type="button" class="btn btn-link" @onclick="() => Select(item)" disabled="@working">@item.SupplyVendor.Name / @item.VendorSku</button>
+}
+@if (chosen is not null)
+{
+<h3>@chosen.SupplyVendor.Name / @chosen.VendorSku</h3>
+<table class="table"><thead><tr><th>Effective from</th><th>Purchase unit</th><th>Package quantity</th><th>Confirmed</th><th>Evidence / recorded</th></tr></thead><tbody>
+@foreach (var version in chosen.PackagingVersions.OrderBy(x => x.EffectiveDate))
+{
+<tr><td>@version.EffectiveDate</td><td>@version.PurchaseUnit</td><td>@(version.IsConfirmed ? version.PackageQuantity?.ToString() : "Unknown (legacy value not verified)")</td><td>@version.IsConfirmed</td><td>@version.Evidence<br />@version.CreatedAt.ToString("u")</td></tr>
+}
+</tbody></table>
+<EditForm Model="entry" OnSubmit="ConfirmAsync" FormName="packaging-confirmation">
+<label>Effective from</label><InputDate class="form-control" @bind-Value="entry.Date" />
+<label>Purchase unit (what the supplier's unit price buys)</label><InputText class="form-control" @bind-Value="entry.Unit" />
+<label>Items per purchase unit / package</label><InputNumber class="form-control" @bind-Value="entry.Quantity" />
+<label>Supplier evidence for packaging (required)</label><InputTextArea class="form-control" @bind-Value="entry.Evidence" maxlength="500" />
+<p>A changed package closes old prices before this date. Review a new price for the new package. Confirming packaging does not approve prices or post invoices.</p>
+<button class="btn btn-primary mt-2" disabled="@working">Confirm supplier packaging change</button>
+</EditForm>
+}
+</section>
+@code {
+    private string skuSearch = "";
+    private string? feedback;
+    private bool working;
+    private List<VendorProduct> products = [];
+    private VendorProduct? chosen;
+    private Entry entry = new();
+    private sealed class Entry { public DateOnly Date { get; set; } = DateOnly.FromDateTime(DateTime.Today); public string Unit { get; set; } = ""; public decimal Quantity { get; set; } = 1; public string Evidence { get; set; } = ""; }
+    private async Task SearchAsync()
+    {
+        await using var db = await Factory.CreateDbContextAsync();
+        var search = skuSearch.Trim();
+        products = search.Length == 0 ? [] : await db.VendorProducts.AsNoTracking().Include(x => x.SupplyVendor).Include(x => x.PackagingVersions)
+            .Where(x => x.VendorSku.Contains(search)).OrderBy(x => x.VendorSku).Take(50).ToListAsync();
+        chosen = null;
+        feedback = products.Count == 0 ? "No matching SKU." : "Select an item to view its history.";
+    }
+    private void Select(VendorProduct item) { chosen = item; entry = new() { Unit = item.PurchaseUnit, Quantity = item.PackageQuantity }; }
+    private async Task ConfirmAsync()
+    {
+        if (working || chosen is null) return;
+        working = true;
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User;
+            if (!user.IsInRole(ApplicationRoles.Administrator)) throw new ArgumentException("Administrator access required.");
+            await Packaging.ConfirmAsync(chosen.Id, entry.Date, entry.Unit, entry.Quantity, entry.Evidence,
+                user.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new ArgumentException("Sign in again."), CancellationToken.None);
+            await SearchAsync(); feedback = "Packaging version confirmed. Reopen the invoice review to use its dated mapping.";
+        }
+        catch (ArgumentException ex) { feedback = ex.Message; }
+        finally { working = false; }
+    }
+}

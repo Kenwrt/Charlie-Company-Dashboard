@@ -86,6 +86,7 @@ try
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
     builder.Services.Configure<SupplierInvoiceOptions>(builder.Configuration.GetSection(SupplierInvoiceOptions.SectionName));
     builder.Services.AddScoped<SupplierInvoiceService>();
+    builder.Services.AddScoped<VendorPackagingService>();
     builder.Services.AddScoped<SupplierInvoiceRouting>();
     builder.Services.AddRateLimiter(options => options.AddPolicy("supplier-invoices", context => RateLimitPartition.GetTokenBucketLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new TokenBucketRateLimiterOptions

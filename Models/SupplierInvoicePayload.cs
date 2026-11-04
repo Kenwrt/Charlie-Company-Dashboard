@@ -61,6 +61,8 @@ public sealed class SupplierInvoicePayload
 
 public sealed class SupplierInvoiceItem
 {
+    public bool PackagingConfirmed { get; set; }
+    public string PackagingEvidence { get; set; } = "";
     public string Sku { get; set; } = "";
     public string Description { get; set; } = "";
     public string PurchaseUnit { get; set; } = "Each";

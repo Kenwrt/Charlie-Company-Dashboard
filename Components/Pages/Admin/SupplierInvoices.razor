@@ -125,6 +125,10 @@
     {
         var line = payload.Lines[lineIndex];
         <fieldset class="invoice-line" @key="line">
+            <div class="form-check"><InputCheckbox class="form-check-input" @bind-Value="line.PackagingConfirmed" /><label>Packaging quantity verified from the invoice or supplier</label></div>
+            @if (line.PackagingConfirmed) { <label>Packaging evidence (required)</label><InputText class="form-control" @bind-Value="line.PackagingEvidence" maxlength="500" /> }
+            else { <p class="text-muted">Package quantity is unknown. A confirmed catalog version for the invoice date will be used if available; otherwise packaging stays unknown and catalog price approval remains pending.</p> }
+
         <legend>Item @(lineIndex + 1)</legend>
         <div class="line-identification">
             <div><label class="form-label">Supplier SKU</label><InputText class="form-control" aria-label="Supplier SKU" @bind-Value="line.Sku" /></div>
@@ -132,7 +136,7 @@
         </div>
         <div class="line-amounts">
             <div><label class="form-label">Purchase unit</label><InputText class="form-control" aria-label="Purchase unit" @bind-Value="line.PurchaseUnit" /></div>
-            <div><label class="form-label">Package quantity</label><InputNumber class="form-control" aria-label="Package quantity" @bind-Value="line.PackageQuantity" /></div>
+            <div><label class="form-label">Package quantity (confirmed only when verified)</label><InputNumber class="form-control" aria-label="Package quantity" @bind-Value="line.PackageQuantity" /></div>
             <div><label class="form-label">Quantity</label><InputNumber class="form-control" aria-label="Quantity" @bind-Value="line.Quantity" /></div>
             <div><label class="form-label">Unit price</label><InputNumber class="form-control" aria-label="Unit price" @bind-Value="line.UnitPrice" /></div>
             <div class="line-total"><label class="form-label">Line total</label><InputNumber class="form-control" aria-label="Line total" @bind-Value="line.LineTotal" /></div>

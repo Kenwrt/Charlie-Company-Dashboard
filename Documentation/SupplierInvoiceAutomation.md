@@ -391,3 +391,26 @@ address block, keeping its extraction within that column. Pending originals can
 be refreshed with preservation of review edits. The review list displays a total
 Needs Review count independent of its 100-row display limit and active filter,
 refreshed after successful review actions and manual refresh.
+
+## Effective-dated packaging history
+
+Catalog review includes Supplier packaging review: search a SKU, select the vendor
+item, view history, and confirm unit, package quantity, effective date and supplier
+evidence. History is append-only; confirmation requires administrator identity and
+records an operational audit. Recorded legacy values are seeded as unverified, not
+as proof that every package contains one item. A packaging change closes earlier
+prices before its effective date; existing prices on/after that date require prior
+resolution. No automatic per-item price conversion is performed.
+
+Supplier invoice lines explicitly distinguish verified packaging with evidence from
+unknown package quantity. A confirmed catalog version on the invoice date can resolve
+unknown packaging. Otherwise the AP line retains unknown packaging and catalog price
+approval stays pending; the payable amounts remain as printed. Confirmed conflicts
+and purchase-unit conflicts still block posting. New AP lines snapshot SKU,
+description, purchase unit, package quantity and confirmed status independently of
+later catalog changes. Existing posted imported lines are backfilled only from an
+unambiguous match to their saved reviewed payload; unknown quantities stay unknown.
+Other historical lines remain unverified rather than receiving invented quantities.
+Catalog price review requires a confirmed packaging version for its effective date.
+A schema migration adds history and nullable invoice snapshots without changing
+invoice amounts or replacing original documents.

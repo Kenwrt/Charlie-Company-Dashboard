@@ -18,6 +18,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PayableInvoice> PayableInvoices => Set<PayableInvoice>();
     public DbSet<VendorCredit> VendorCredits => Set<VendorCredit>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<VendorPackagingVersion> VendorPackagingVersions => Set<VendorPackagingVersion>();
     public DbSet<VendorProduct> VendorProducts => Set<VendorProduct>();
     public DbSet<VendorPrice> VendorPrices => Set<VendorPrice>();
     public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
@@ -131,6 +132,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(item => item.Product).WithMany(product => product.VendorProducts).HasForeignKey(item => item.ProductId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<VendorPackagingVersion>(entity =>
+        {
+            entity.HasIndex(x => new { x.VendorProductId, x.EffectiveDate }).IsUnique();
+            entity.HasOne(x => x.VendorProduct).WithMany(x => x.PackagingVersions).HasForeignKey(x => x.VendorProductId).OnDelete(DeleteBehavior.Restrict);
+        });
         builder.Entity<VendorPrice>(entity =>
         {
             entity.HasIndex(price => new { price.VendorProductId, price.EffectiveDate }).IsUnique();

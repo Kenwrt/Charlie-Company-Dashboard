@@ -271,6 +271,10 @@ public sealed class SupplierInvoiceService(
                     PurchaseUnit = line.PurchaseUnit.Trim(), PackageQuantity = line.PackageQuantity,
                     Product = new Product { Name = Limit(line.Description.Trim(), 160), UnitOfMeasure = line.PurchaseUnit.Trim() }
                 };
+                item.PackagingVersions.Add(new VendorPackagingVersion { EffectiveDate = line.PackagingConfirmed ? date : new DateOnly(1900,1,1),
+                    PurchaseUnit = line.PurchaseUnit.Trim(), PackageQuantity = line.PackagingConfirmed ? line.PackageQuantity : null,
+                    IsConfirmed = line.PackagingConfirmed, Evidence = line.PackagingConfirmed ? line.PackagingEvidence.Trim() : "Invoice packaging not established",
+                    ConfirmedBy = line.PackagingConfirmed ? actor : null });
                 db.VendorProducts.Add(item); items.Add(item);
             }
             var current = item.Prices.Where(x => x.EffectiveDate <= date && (x.ExpirationDate == null || x.ExpirationDate >= date))
@@ -278,7 +282,8 @@ public sealed class SupplierInvoiceService(
             var sameDate = item.Prices.FirstOrDefault(x => x.EffectiveDate == date);
             var previousDecision = import.PriceImportDocument.Rows.FirstOrDefault(x => x.VendorSku.Equals(sku, StringComparison.OrdinalIgnoreCase)
                 && x.EffectiveDate == date && x.ProposedUnitPrice == line.UnitPrice && x.ReviewStatus != "Pending");
-            var canApprove = !conflicts.Contains(sku) && (sameDate is null || sameDate.UnitPrice == line.UnitPrice)
+            var packaging = VendorPackagingService.At(item, date);
+            var canApprove = packaging?.IsConfirmed == true && !conflicts.Contains(sku) && (sameDate is null || sameDate.UnitPrice == line.UnitPrice)
                 && previousDecision?.ReviewStatus != "Rejected"
                 && (approvePrices || current?.UnitPrice == line.UnitPrice || (!isNew && WithinRule(rule, current?.UnitPrice, line.UnitPrice)));
             if (canApprove && sameDate is null)
@@ -286,7 +291,13 @@ public sealed class SupplierInvoiceService(
                 item.Prices.Add(new VendorPrice { UnitPrice = line.UnitPrice, EffectiveDate = date, SourceType = "Invoice", SourceReference = invoice.InvoiceNumber });
                 var ordered = item.Prices.OrderBy(x => x.EffectiveDate).ToList();
                 for (var i = 0; i < ordered.Count; i++)
-                    ordered[i].ExpirationDate = i + 1 < ordered.Count ? ordered[i + 1].EffectiveDate.AddDays(-1) : null;
+                {
+                    var nextPrice = i + 1 < ordered.Count ? ordered[i + 1].EffectiveDate : (DateOnly?)null;
+                    var nextPackage = item.PackagingVersions.Where(x => x.EffectiveDate > ordered[i].EffectiveDate)
+                        .OrderBy(x => x.EffectiveDate).Select(x => (DateOnly?)x.EffectiveDate).FirstOrDefault();
+                    var end = nextPrice is null ? nextPackage : nextPackage is null ? nextPrice : nextPrice < nextPackage ? nextPrice : nextPackage;
+                    ordered[i].ExpirationDate = end?.AddDays(-1);
+                }
             }
             if (previousDecision is null && !import.PriceImportDocument.Rows.Any(x => x.VendorSku.Equals(sku, StringComparison.OrdinalIgnoreCase)
                 && x.EffectiveDate == date && x.ProposedUnitPrice == line.UnitPrice))
@@ -297,6 +308,10 @@ public sealed class SupplierInvoiceService(
                 });
             invoice.Lines.Add(new InvoiceLine
             {
+                SkuSnapshot = sku, DescriptionSnapshot = line.Description.Trim(),
+                PurchaseUnitSnapshot = line.PackagingConfirmed ? line.PurchaseUnit.Trim() : packaging?.PurchaseUnit ?? line.PurchaseUnit.Trim(),
+                PackageQuantitySnapshot = line.PackagingConfirmed ? line.PackageQuantity : packaging?.IsConfirmed == true ? packaging.PackageQuantity : null,
+                PackagingConfirmed = line.PackagingConfirmed || packaging?.IsConfirmed == true,
                 VendorProduct = item, Quantity = line.Quantity, UnitPrice = line.UnitPrice, LineTotal = line.LineTotal,
                 PriceReviewStatus = canApprove ? "Approved" : "Pending"
             });
@@ -351,20 +366,25 @@ public sealed class SupplierInvoiceService(
                 issues.Add("Each line needs a SKU, description, unit and reconciled positive quantity.");
             var item = items.SingleOrDefault(x => x.VendorSku.Equals(line.Sku.Trim(), StringComparison.OrdinalIgnoreCase));
             if (item is null && !allowNewProducts) issues.Add("New supplier SKUs require explicit catalog review.");
-            if (item is not null && (!item.IsActive || item.PackageQuantity != line.PackageQuantity
-                || !item.PurchaseUnit.Equals(line.PurchaseUnit.Trim(), StringComparison.OrdinalIgnoreCase)))
-                issues.Add($"SKU '{line.Sku.Trim()}' conflicts with the catalog. "
-                    + $"Invoice: purchase unit '{line.PurchaseUnit.Trim()}', package quantity {line.PackageQuantity}. "
-                    + $"Catalog: purchase unit '{item.PurchaseUnit}', package quantity {item.PackageQuantity}, "
-                    + $"inactive: {(item.IsActive ? "No" : "Yes")}. Resolve this SKU's catalog mapping before posting.");
+            var packaging = item is not null && p.InvoiceDate is DateOnly day ? VendorPackagingService.At(item, day) : null;
+            var catalogUnit = packaging?.PurchaseUnit ?? item?.PurchaseUnit;
+            var catalogQuantity = packaging?.PackageQuantity ?? item?.PackageQuantity;
+            if (line.PackagingConfirmed && string.IsNullOrWhiteSpace(line.PackagingEvidence))
+                issues.Add($"SKU '{line.Sku.Trim()}': provide invoice or supplier evidence for confirmed packaging.");
+            if (item is not null && (!item.IsActive || !string.Equals(catalogUnit, line.PurchaseUnit.Trim(), StringComparison.OrdinalIgnoreCase)
+                || line.PackagingConfirmed && catalogQuantity != line.PackageQuantity))
+                issues.Add($"SKU '{line.Sku.Trim()}' conflicts with catalog packaging on the invoice date. "
+                    + $"Invoice: unit '{line.PurchaseUnit.Trim()}', package quantity {line.PackageQuantity}. "
+                    + $"Catalog: unit '{catalogUnit}', package quantity {catalogQuantity}, inactive: {(item.IsActive ? "No" : "Yes")}. "
+                    + "Confirm the supplier packaging version in catalog review before posting.");
         }
-        if (p.Lines.GroupBy(x => x.Sku.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Select(x => (x.PurchaseUnit.Trim().ToUpperInvariant(), x.PackageQuantity)).Distinct().Count() > 1))
+        if (p.Lines.Where(x => x.PackagingConfirmed).GroupBy(x => x.Sku.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Select(x => (x.PurchaseUnit.Trim().ToUpperInvariant(), x.PackageQuantity)).Distinct().Count() > 1))
             issues.Add("The same SKU has conflicting units or package quantities.");
         return issues.Distinct().ToList();
     }
 
     private static Task<List<VendorProduct>> LoadProductsAsync(ApplicationDbContext db, int vendorId, CancellationToken ct) =>
-        db.VendorProducts.Include(x => x.Prices).Where(x => x.SupplyVendorId == vendorId).ToListAsync(ct);
+        db.VendorProducts.Include(x => x.Prices).Include(x => x.PackagingVersions).Where(x => x.SupplyVendorId == vendorId).ToListAsync(ct);
 
     private static Task<PayableInvoice?> FindExistingInvoiceAsync(ApplicationDbContext db, int vendorId, string number, CancellationToken ct)
     {
