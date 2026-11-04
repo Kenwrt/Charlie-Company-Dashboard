@@ -45,6 +45,11 @@ public sealed class SupplierInvoicePayload
     public List<string> Warnings { get; set; } = [];
     public List<SupplierInvoiceItem> Lines { get; set; } = [];
 
+    public void RecognizeEachPackaging()
+    {
+        foreach (var line in Lines) line.RecognizeEachPackaging();
+    }
+
     public void ApplyDefaultDueDate()
     {
         if (DueDate is null && InvoiceDate is DateOnly date && date <= DateOnly.MaxValue.AddDays(-30))
@@ -61,6 +66,22 @@ public sealed class SupplierInvoicePayload
 
 public sealed class SupplierInvoiceItem
 {
+    private const string EachEvidence = "Purchase unit Each denotes one item per purchase unit.";
+    public void RecognizeEachPackaging()
+    {
+        var isEach = PurchaseUnit.Trim().Equals("Each", StringComparison.OrdinalIgnoreCase)
+            || PurchaseUnit.Trim().Equals("EA", StringComparison.OrdinalIgnoreCase);
+        if (PackagingEvidence == EachEvidence && (!isEach || PackageQuantity != 1))
+        {
+            PackagingConfirmed = false;
+            PackagingEvidence = "";
+        }
+        if (isEach && PackageQuantity == 1 && !PackagingConfirmed)
+        {
+            PackagingConfirmed = true;
+            PackagingEvidence = EachEvidence;
+        }
+    }
     public bool PackagingConfirmed { get; set; }
     public string PackagingEvidence { get; set; } = "";
     public string Sku { get; set; } = "";

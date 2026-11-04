@@ -414,3 +414,10 @@ Other historical lines remain unverified rather than receiving invented quantiti
 Catalog price review requires a confirmed packaging version for its effective date.
 A schema migration adds history and nullable invoice snapshots without changing
 invoice amounts or replacing original documents.
+
+Each/EA with package quantity 1 is recognized as confirmed single-item packaging
+on intake, opening a pending review, extraction refresh and approval. The automatic
+evidence explains the unit meaning. Box/Pack quantities are not inferred. Changing
+an automatically recognized unit or quantity clears that automatic confirmation;
+explicit supplier-verified quantities above one are not overwritten. Original PDFs,
+original extractions and previously posted invoices are retained.
