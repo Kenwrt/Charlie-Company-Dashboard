@@ -80,13 +80,14 @@
         <div class="col-md-4"><label class="form-label">Due date</label><InputDate class="form-control" @bind-Value="payload.DueDate" /><small class="text-muted">If missing, defaults to 30 days after the invoice date.</small></div>
         <div class="col-md-6"><label class="form-label">Purchasing location</label><InputSelect class="form-select" @bind-Value="payload.LocalOperationId" @bind-Value:after="UpdateAccountingAssignment"><option value="">Select operation</option>@foreach (var operation in operations) { <option value="@operation.Id">@operation.EffectiveDisplayName</option> }</InputSelect></div>
         <div class="col-md-6"><label class="form-label" for="supplier-job">Job number</label>
-            <InputText id="supplier-job" class="form-control" @bind-Value="payload.JobNumber" readonly />
-            <label class="form-label mt-2" for="supplier-job-choice">Choose job (description for reference)</label>
-            <InputSelect id="supplier-job-choice" class="form-select" @bind-Value="payload.JobNumber">
-                <option value="">Select one validated job</option>
-                @foreach (var number in payload.MatchedJobNumbers) { <option value="@number">@number - @payload.JobOptionLabels.GetValueOrDefault(number, "Description unavailable")</option> }
-            </InputSelect>
-            <small class="text-muted">Exactly one job is required. All matching numbers are listed below, separated by commas.</small>
+            <InputText id="supplier-job" class="form-control" @bind-Value="payload.JobNumber" list="supplier-job-options" autocomplete="off" />
+            <datalist id="supplier-job-options">
+                @foreach (var number in payload.MatchedJobNumbers)
+                {
+                    <option value="@number" label="@payload.JobOptionLabels.GetValueOrDefault(number, "Description unavailable")"></option>
+                }
+            </datalist>
+            <small class="text-muted">Choose a suggested job or type one job number. Descriptions appear in suggestions; only the number is entered. The job must belong to this purchasing location.</small>
         </div>
         <div class="col-md-3"><label class="form-label">Tax</label><InputNumber class="form-control" @bind-Value="payload.Tax" />@if (sourcePayload?.ExtractionEvidence.ContainsKey("tax") == true) { <small class="text-muted">Original PDF: @sourcePayload.Tax.ToString("C2")</small> }</div>
         <div class="col-md-3"><label class="form-label">Freight</label><InputNumber class="form-control" @bind-Value="payload.Freight" /></div>
