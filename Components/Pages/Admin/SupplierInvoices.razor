@@ -136,8 +136,8 @@
         </div>
         <div class="line-amounts">
             <div><label class="form-label">Purchase unit</label><InputText class="form-control" aria-label="Purchase unit" @bind-Value="line.PurchaseUnit" /></div>
-            <div><label class="form-label">Package quantity (confirmed only when verified)</label><InputNumber class="form-control" aria-label="Package quantity" @bind-Value="line.PackageQuantity" /></div>
-            <div><label class="form-label">Quantity</label><InputNumber class="form-control" aria-label="Quantity" @bind-Value="line.Quantity" /></div>
+            <div><label class="form-label">Package quantity (confirmed only when verified)</label><QuantityInput class="form-control" aria-label="Package quantity" @bind-Value="line.PackageQuantity" /></div>
+            <div><label class="form-label">Quantity</label><QuantityInput class="form-control" aria-label="Quantity" @bind-Value="line.Quantity" /></div>
             <div><label class="form-label">Unit price</label><InputNumber class="form-control" aria-label="Unit price" @bind-Value="line.UnitPrice" /></div>
             <div class="line-total"><label class="form-label">Line total</label><InputNumber class="form-control" aria-label="Line total" @bind-Value="line.LineTotal" /></div>
         </div>
