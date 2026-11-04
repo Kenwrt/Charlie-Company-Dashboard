@@ -125,14 +125,19 @@
     {
         var line = payload.Lines[lineIndex];
         <fieldset class="invoice-line" @key="line">
-            <div class="form-check"><InputCheckbox class="form-check-input" @bind-Value="line.PackagingConfirmed" /><label>Packaging quantity verified from the invoice or supplier</label></div>
-            @if (line.PackagingConfirmed) { <label>Packaging evidence (required)</label><InputText class="form-control" @bind-Value="line.PackagingEvidence" maxlength="500" /> }
+            <div class="form-check"><InputCheckbox class="form-check-input" style="width:auto;" @bind-Value="line.PackagingConfirmed" /><label>Packaging quantity verified from the invoice or supplier</label></div>
+            @if (line.PackagingConfirmed)
+            {
+                @if (line.PackagingEvidence.StartsWith("Package count from item description:") || line.PackagingEvidence == "Purchase unit Each denotes one item per purchase unit.")
+                { <small class="text-muted d-block">@line.PackagingEvidence</small> }
+                else { <label>Supplier packaging evidence</label><InputText class="form-control" @bind-Value="line.PackagingEvidence" maxlength="500" /> }
+            }
             else { <p class="text-muted">Package quantity is unknown. A confirmed catalog version for the invoice date will be used if available; otherwise packaging stays unknown and catalog price approval remains pending.</p> }
 
         <legend>Item @(lineIndex + 1)</legend>
         <div class="line-identification">
             <div><label class="form-label">Supplier SKU</label><InputText class="form-control" aria-label="Supplier SKU" @bind-Value="line.Sku" /></div>
-            <div class="line-description"><label class="form-label">Description</label><InputTextArea class="form-control" aria-label="Description" rows="3" @bind-Value="line.Description" /></div>
+            <div class="line-description"><label class="form-label">Description</label><InputTextArea class="form-control" aria-label="Description" rows="3" @bind-Value="line.Description" @bind-Value:after="line.RecognizeEachPackaging" /></div>
         </div>
         <div class="line-amounts">
             <div><label class="form-label">Purchase unit</label><InputText class="form-control" aria-label="Purchase unit" @bind-Value="line.PurchaseUnit" @bind-Value:after="line.RecognizeEachPackaging" /></div>

@@ -421,3 +421,14 @@ evidence explains the unit meaning. Box/Pack quantities are not inferred. Changi
 an automatically recognized unit or quantity clears that automatic confirmation;
 explicit supplier-verified quantities above one are not overwritten. Original PDFs,
 original extractions and previously posted invoices are retained.
+
+Explicit count markers in invoice descriptions (50ct, 50 count, 4 Pack, 4-pk,
+Pack of 6) take precedence over generic Each=1. Dimensions, lengths and SKU digits
+are not treated as package counts. Different competing counts remain unconfirmed.
+Ordered quantity, purchase unit, unit price and line total are never multiplied or
+rewritten by count recognition. Legacy unverified catalog counts do not block AP
+posting or silently become confirmed; confirmed catalog conflicts still require
+packaging review. Invoice snapshots retain the recognized count while catalog
+price approval remains pending for unconfirmed catalog mappings.
+The packaging table/identity sequence must share the existing VendorProducts owner;
+the corrective ownership migration handles releases created by the migration admin.

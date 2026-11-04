@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace CharleyCompany.Dashboard.Web.Models;
 
@@ -67,17 +68,34 @@ public sealed class SupplierInvoicePayload
 public sealed class SupplierInvoiceItem
 {
     private const string EachEvidence = "Purchase unit Each denotes one item per purchase unit.";
+    private const string DescriptionEvidence = "Package count from item description: ";
     public void RecognizeEachPackaging()
     {
         var isEach = PurchaseUnit.Trim().Equals("Each", StringComparison.OrdinalIgnoreCase)
             || PurchaseUnit.Trim().Equals("EA", StringComparison.OrdinalIgnoreCase);
-        if (PackagingEvidence == EachEvidence && (!isEach || PackageQuantity != 1))
+        var automatic = PackagingEvidence == EachEvidence || PackagingEvidence.StartsWith(DescriptionEvidence, StringComparison.Ordinal);
+        // Keep explicit reviewer/supplier confirmation; recalculate only automatic evidence.
+        if (PackagingConfirmed && !automatic) return;
+        var counts = Regex.Matches(Description,
+            @"(?<![\p{L}\p{N}.])(?<count>\d{1,6})\s*[-/]?\s*(?:ct\.?|count|pack|pk)\b|\bpack\s+of\s+(?<count>\d{1,6})\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100))
+            .Select(x => int.Parse(x.Groups["count"].Value, System.Globalization.CultureInfo.InvariantCulture))
+            .Where(x => x > 0).Distinct().ToList();
+        if (automatic) { PackagingConfirmed = false; PackagingEvidence = ""; }
+        if (counts.Count == 1)
+        {
+            PackageQuantity = counts[0];
+            PackagingConfirmed = true;
+            PackagingEvidence = DescriptionEvidence + counts[0] + " items per purchase unit.";
+        }
+        else if (counts.Count > 1)
         {
             PackagingConfirmed = false;
-            PackagingEvidence = "";
+            PackagingEvidence = "Multiple different package counts appear in the description; verify supplier packaging.";
         }
-        if (isEach && PackageQuantity == 1 && !PackagingConfirmed)
+        else if (isEach && (PackageQuantity == 1 || automatic))
         {
+            PackageQuantity = 1;
             PackagingConfirmed = true;
             PackagingEvidence = EachEvidence;
         }
