@@ -432,3 +432,10 @@ packaging review. Invoice snapshots retain the recognized count while catalog
 price approval remains pending for unconfirmed catalog mappings.
 The packaging table/identity sequence must share the existing VendorProducts owner;
 the corrective ownership migration handles releases created by the migration admin.
+
+Verified invoice packaging can differ in both unit label and count from an
+unverified legacy catalog mapping (for example invoice Each/50ct versus legacy
+Box/1). Such legacy differences do not block AP: invoice snapshots retain the
+verified packaging, catalog price updates remain pending, and confirmed catalog
+conflicts or inactive SKUs still block. No existing packaging history or prices
+are overwritten merely to clear an invoice validation error.

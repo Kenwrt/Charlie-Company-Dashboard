@@ -375,7 +375,11 @@ public sealed class SupplierInvoiceService(
             var catalogQuantity = packaging?.PackageQuantity ?? item?.PackageQuantity;
             if (line.PackagingConfirmed && string.IsNullOrWhiteSpace(line.PackagingEvidence))
                 issues.Add($"SKU '{line.Sku.Trim()}': provide invoice or supplier evidence for confirmed packaging.");
-            if (item is not null && (!item.IsActive || !string.Equals(catalogUnit, line.PurchaseUnit.Trim(), StringComparison.OrdinalIgnoreCase)
+            // Verified invoice evidence may differ from an unverified legacy mapping.
+            // Preserve the invoice snapshot and leave catalog pricing pending in that case.
+            if (item is not null && (!item.IsActive
+                || (packaging?.IsConfirmed == true || !line.PackagingConfirmed)
+                    && !string.Equals(catalogUnit, line.PurchaseUnit.Trim(), StringComparison.OrdinalIgnoreCase)
                 || line.PackagingConfirmed && packaging?.IsConfirmed == true && catalogQuantity != line.PackageQuantity))
                 issues.Add($"SKU '{line.Sku.Trim()}' conflicts with catalog packaging on the invoice date. "
                     + $"Invoice: unit '{line.PurchaseUnit.Trim()}', package quantity {line.PackageQuantity}. "
