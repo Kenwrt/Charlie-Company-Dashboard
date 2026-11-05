@@ -83,6 +83,7 @@ TrustedProxyAddresses and OperationCompanyIds. This source change does not set o
 expose their values. Company/payer mappings never fall back to an inferred location.
 Read snapshots are audited; the feed is a full snapshot, not a change stream.
 
-The November 5 manual download, archive and local job-account artifact remain
-separate from dashboard activation and accounting. Supplier CSV coverage is not
+The November 5 original is now imported into the API01 manual reviewer with all
+2,772 source rows retained. HCP matches are proposals requiring review. The local
+job-account artifact remains separate from accounting. Supplier CSV coverage is not
 proof of receipt totals, complete returns/cancellations or paid-card reconciliation.

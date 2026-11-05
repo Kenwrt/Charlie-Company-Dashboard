@@ -128,10 +128,12 @@ a purchased/allocated materials report, not an installed-consumption or inventor
 
 ## Activation and data state
 
-The November 5 CSV review is a separate private artifact and archived original. It
-has not been imported into a live dashboard by these changes. Home Depot intake
-remains disabled by default and requires separately authorized configuration and
-deployment. New links use the existing private versioned file store, so no shared
+The November 5 original CSV was imported under owner authorization: 2,772 source
+rows in 593 transactions. Manual review is enabled on API01. Read-only HCP queries
+across active operations produced candidates for 453 transactions; none were
+automatically assigned. Packaging labels quote description text and remain
+unverified until catalog review. Machine intake has no newly activated credentials.
+New links use the existing private versioned file store, so no shared
 database migration is introduced. No actual supplier, SKU, or HCP job mapping is
 claimed to have been applied until an Administrator reviews and saves it on an
 activated instance. Prices, catalog membership and Mercury remain unchanged.

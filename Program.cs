@@ -164,6 +164,16 @@ try
 
     var app = builder.Build();
 
+    // Trusted local maintenance only; this command never starts an HTTP listener or posts AP.
+    if (args.Contains("--import-home-depot-csv"))
+    {
+        var index = Array.IndexOf(args, "--import-home-depot-csv");
+        if (index + 1 >= args.Length) throw new ArgumentException("A private CSV path is required.");
+        using var intakeScope = app.Services.CreateScope();
+        await HomeDepotMaintenance.ImportAsync(intakeScope.ServiceProvider, args[index + 1]);
+        return;
+    }
+
     if (args.Contains("--post-pending-nashville-reporting"))
     {
         using var postingScope = app.Services.CreateScope();

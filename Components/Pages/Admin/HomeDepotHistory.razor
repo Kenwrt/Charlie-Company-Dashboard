@@ -44,9 +44,10 @@ else
             var count = mode == "groups" ? groups.Count : (int)Math.Ceiling(Visible().Count / 100d);
             <div class="d-flex gap-3 my-3"><button class="btn btn-outline-secondary" disabled="@(page <= 0)" @onclick="Previous">Previous @(mode == "groups" ? "group" : "page")</button><span>@(count == 0 ? 0 : page + 1) of @count</span><button class="btn btn-outline-secondary" disabled="@(page + 1 >= count)" @onclick="Next">Next @(mode == "groups" ? "group" : "page")</button></div>
             <h2>@(mode == "groups" && groups.Count > page ? groups[page].Name : "All purchases, oldest first")</h2>
-            <div class="table-responsive"><table class="table table-sm"><thead><tr>@foreach (var h in Columns()) { <th>@HomeDepotHistoryText.ColumnLabel(h)</th> }<th>Review</th></tr></thead>
-                <tbody>@foreach (var item in displayed) { <tr>@foreach (var h in Columns()) { <td class="@(h == "SKU Description" ? "description" : "")">@(h == "Job Name" ? item.Line.Group : Blank(item.Line.Value(h)))</td> }<td><button class="btn btn-sm btn-link" @onclick="() => Open(item.Purchase)">Review transaction</button></td></tr> }</tbody>
-                <tfoot><tr>@foreach (var h in Columns()) { <td>@Footer(h, displayed)</td> }<td></td></tr></tfoot>
+            <p>Quantity is the number of purchased selling units. Packaging below is quoted from the item description; unspecified packaging remains unknown. Proposed HCP matches require confirmation.</p>
+            <div class="table-responsive"><table class="table table-sm"><thead><tr>@foreach (var h in Columns()) { <th>@HomeDepotHistoryText.ColumnLabel(h)</th> }<th>Packaging / selling unit</th><th>HCP job match</th><th>Review</th></tr></thead>
+                <tbody>@foreach (var item in displayed) { <tr>@foreach (var h in Columns()) { <td class="@(h == "SKU Description" ? "description" : "")">@Blank(item.Line.Value(h))</td> }<td>@Packaging(item.Line)</td><td>@JobMatch(item)</td><td><button class="btn btn-sm btn-link" @onclick="() => Open(item.Purchase)">Review transaction</button></td></tr> }</tbody>
+                <tfoot><tr>@foreach (var h in Columns()) { <td>@Footer(h, displayed)</td> }<td colspan="3"></td></tr></tfoot>
             </table></div>
             <p>Group pages follow the earliest purchase date; undated items appear last. Same-day items retain intake/source order. Extended Retail is before discount, includes negatives, and is not a receipt total. Net unit price sum does not multiply quantity and is not an expense total.</p>
         }
@@ -147,10 +148,22 @@ else
     private List<Row> Displayed() => mode == "groups" ? groups.Count > page ? groups[page].Rows : [] : Visible().Skip(page * 100).Take(100).ToList();
     private List<string> Columns()
     {
-        var columns = state?.Documents.Where(d => d.Kind == "Csv").SelectMany(d => d.Headers).Distinct().Where(h => !HomeDepotHistoryText.HiddenColumns.Contains(h) && h != "Net Unit Price").ToList() ?? [];
-        var retail = columns.IndexOf("Extended Retail (before discount)");
-        if (retail >= 0) columns.Insert(retail + 1, "Net Unit Price");
-        return columns;
+        return ["Date", "Job Name", "SKU Number", "SKU Description", "Quantity", "Net Unit Price", "Extended Retail (before discount)"];
+    }
+    private static string Packaging(HomeDepotLine line)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(line.Value("SKU Description"), @"\b(?:\d+(?:\.\d+)?\s*[- ]?\s*(?:pack|pk|count|ct|piece|pc|lb|lbs|oz|gal|gallon)|box of \d+|bag of \d+)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success ? match.Value + " (description; unverified)" : "Not specified — catalog review needed";
+    }
+    private string JobMatch(Row item)
+    {
+        var direct = item.Purchase.Review.MaterialAllocations.Where(a => a.LineId == item.Line.Id).ToList();
+        if (direct.Count > 0) return "Confirmed: " + string.Join(", ", direct.Select(a => $"Job {a.JobNumber} (operation {a.OperationId})"));
+        var reference = HomeDepotHistoryText.Normalize(string.IsNullOrWhiteSpace(item.Line.Value("Job Name")) ? item.Line.Value("Project Name") : item.Line.Value("Job Name"));
+        var links = state!.JobReferenceLinks.Where(l => l.SourceReference == reference && item.Line.Date is DateOnly date && date >= l.FromDate && date <= l.ToDate).ToList();
+        if (links.Count == 1) return $"Confirmed: job {links[0].JobNumber} (operation {links[0].OperationId})";
+        var candidates = item.Purchase.Review.Candidates.Where(c => HomeDepotHistoryText.Normalize(c.MatchedReference) == reference).OrderByDescending(c => c.Rank).Take(3).ToList();
+        return candidates.Count > 0 ? "Proposed — " + string.Join("; ", candidates.Select(c => $"{c.Operation}: job {c.JobNumber}, {c.Customer} ({c.MatchKind})")) : item.Purchase.Review.LookupStatus == "NotRequested" ? "Not searched — open review" : item.Purchase.Review.LookupStatus + " — open review";
     }
     private static string Blank(string value) => string.IsNullOrEmpty(value) ? "—" : value;
     private static string Footer(string field, List<Row> rows) => field switch {
