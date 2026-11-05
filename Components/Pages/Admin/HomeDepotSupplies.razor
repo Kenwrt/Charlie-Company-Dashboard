@@ -1,0 +1,108 @@
+@page "/admin/home-depot-history"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Options
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@inject HomeDepotHistoryService History
+@inject HomeDepotSupplyIntakeService Intake
+@inject IDbContextFactory<ApplicationDbContext> Factory
+@inject AuthenticationStateProvider Authentication
+@inject IOptions<HomeDepotHistoryOptions> Settings
+
+<PageTitle>Home Depot supplies</PageTitle>
+<h1>Home Depot supplies</h1>
+<p>Add missing SKUs from purchase history to the existing Home Depot supply catalog. Repeated purchases reuse the same SKU. Conflicts stay in the report below for later review.</p>
+@if (!Settings.Value.Enabled) { <p>Home Depot intake is not enabled.</p> }
+else
+{
+    @if (message.Length > 0) { <p role="status">@message</p> }
+    <label>Home Depot supplier<select class="form-select" @bind="vendorId" @bind:after="Reload"><option value="0">Select supplier</option>@foreach (var vendor in vendors) { <option value="@vendor.Id">@vendor.Name</option> }</select></label>
+    <div class="my-3"><button class="btn btn-primary" disabled="@(busy || vendorId == 0)" @onclick="Add">Add missing SKUs from saved history</button></div>
+    <label>Or import a new order-history CSV <InputFile OnChange="Import" accept=".csv" disabled="@(busy || vendorId == 0)" /></label>
+    <p>Existing items and prices are preserved. This adds supply items, not on-hand stock or accounts payable. Package sizes remain unconfirmed where the export does not establish them.</p>
+    <h2>SKU intake</h2>
+    <p>@rows.Count unique source SKUs · @rows.Count(r => r.CanAdd) ready to add · @rows.Count(r => r.Status.Contains("review", StringComparison.OrdinalIgnoreCase)) need review.</p>
+    <label><input type="checkbox" @bind="exceptionsOnly" @bind:after="ResetPage" /> Show only duplicate SKUs and other conflicts</label>
+    <div class="my-2"><button disabled="@(page == 0)" @onclick="Previous">Previous</button> Page @(page + 1) <button disabled="@((page + 1) * 50 >= Visible().Count)" @onclick="Next">Next</button></div>
+    <table class="table table-sm"><thead><tr><th>SKU</th><th>Item</th><th>Purchase rows</th><th>Result / later review</th></tr></thead><tbody>
+    @foreach (var row in Visible().Skip(page * 50).Take(50)) { <tr><td>@row.Sku</td><td>@row.Description</td><td>@row.PurchaseRows</td><td>@row.Status</td></tr> }
+    </tbody></table>
+    @if (exceptionsOnly && Visible().Count == 0) { <p>No SKU conflicts in the current report.</p> }
+    <h2>Customer review</h2>
+    <p>One customer may have several jobs. We show distinct HCP customers, not a separate customer for every job. Multiple possibilities and partial names require your review.</p>
+    <button class="btn btn-outline-primary" disabled="@busy" @onclick="Match">Find / refresh customers</button>
+    @if (state is not null)
+    {
+        <label>Job reference<select class="form-select" @bind="reference" @bind:after="ClearChoice"><option value="">Select a reference</option>@foreach (var group in References()) { <option value="@group">@group</option> }</select></label>
+        @if (reference.Length > 0)
+        {
+            var candidates = Customers();
+            var reviewed = state.CustomerReviews.SingleOrDefault(r => r.Reference == reference);
+            var incomplete = state.Purchases.Where(p => p.ReportingLines.Any(l => HomeDepotSupplyIntakeService.Reference(l) == reference)).Any(p => p.Review.LookupStatus is "NotRequested" or "IncompleteOperationCoverage" or "IncompleteOrUnavailable");
+            @if (reviewed is not null) { <p><strong>Confirmed customer: @reviewed.CustomerName</strong> (operation @reviewed.OperationId)</p> }
+            @if (incomplete) { <p>Customer search is incomplete or has not run. Refresh before deciding there is no match.</p> }
+            @if (candidates.Count > 1) { <p><strong>More than one possible customer — please choose after checking the addresses.</strong></p> }
+            else if (candidates.Count == 1) { <p>One possible customer. Check the name and address before confirming.</p> }
+            else { <p>No identifiable customer candidate. References such as SHOP may not belong to a customer.</p> }
+            <label>Customer<select class="form-select" @bind="choice"><option value="">Choose a customer</option>@foreach (var candidate in candidates) { <option value="@CustomerKey(candidate)">@candidate.Operation · @candidate.Customer · @candidate.Address · @candidate.MatchKind</option> }</select></label>
+            <button class="btn btn-outline-primary my-2" disabled="@(busy || choice.Length == 0)" @onclick="Confirm">Confirm customer for this reference</button>
+            <p>This records your customer choice for this reference only; it does not guess a job or change HCP.</p>
+        }
+    }
+    <details class="mt-4"><summary>Original purchases and advanced review</summary><a href="/admin/home-depot-history/advanced">Open original purchase rows and previous review tools</a></details>
+}
+
+@code {
+    private HomeDepotHistoryState? state;
+    private List<SupplyVendor> vendors = [];
+    private List<HomeDepotSkuReview> rows = [];
+    private int vendorId, page;
+    private bool busy, exceptionsOnly = true;
+    private string message = "", reference = "", choice = "";
+    private async Task<System.Security.Claims.ClaimsPrincipal> User() => (await Authentication.GetAuthenticationStateAsync()).User;
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Settings.Value.Enabled) return;
+        await using var db = await Factory.CreateDbContextAsync();
+        vendors = (await db.SupplyVendors.AsNoTracking().Where(v => v.IsActive).ToListAsync()).Where(v => HomeDepotHistoryText.IsHomeDepotSupplier(v.Name) || HomeDepotHistoryText.IsHomeDepotSupplier(v.LegalName)).ToList();
+        state = await History.ReadAsync(await User(), CancellationToken.None);
+        vendorId = state.SupplyVendorId ?? (vendors.Count == 1 ? vendors[0].Id : 0);
+        await Reload();
+    }
+    private async Task Reload()
+    {
+        state = await History.ReadAsync(await User(), CancellationToken.None);
+        rows = vendorId == 0 ? [] : await Intake.PreviewAsync(state, vendorId, await User(), CancellationToken.None);
+        page = 0;
+    }
+    private async Task Run(Func<Task> action)
+    {
+        busy = true; message = "";
+        try { await action(); }
+        catch (ArgumentException ex) { message = ex.Message; }
+        catch { message = "The operation did not finish. Refresh to see committed results; saved source history is retained."; }
+        finally { busy = false; }
+    }
+    private Task Add() => Run(async () => { var count = await Intake.AddAsync(vendorId, await User(), CancellationToken.None); await Reload(); message = $"Added {count} missing supply SKUs. Existing SKUs were skipped; conflicts remain below."; });
+    private Task Import(InputFileChangeEventArgs args) => Run(async () => {
+        using var memory = new MemoryStream(); await args.File.OpenReadStream(HomeDepotHistoryStore.MaxBytes).CopyToAsync(memory);
+        await History.ImportCsvAsync(memory.ToArray(), HomeDepotHistoryService.Administrator(await User()), CancellationToken.None);
+        var count = await Intake.AddAsync(vendorId, await User(), CancellationToken.None);
+        await Intake.MatchCustomersAsync(await User(), CancellationToken.None); await Reload();
+        message = $"History saved; {count} missing SKUs added. Review SKU conflicts and customer choices below.";
+    });
+    private Task Match() => Run(async () => { await Intake.MatchCustomersAsync(await User(), CancellationToken.None); await Reload(); message = "Customer proposals refreshed. Multiple possibilities remain for your review."; });
+    private Task Confirm() => Run(async () => { var candidate = Customers().Single(c => CustomerKey(c) == choice); await Intake.ConfirmCustomerAsync(reference, candidate.OperationId, candidate.CustomerId, await User(), CancellationToken.None); await Reload(); message = "Customer choice saved."; });
+    private List<HomeDepotSkuReview> Visible() => rows.Where(r => !exceptionsOnly || r.Status.Contains("review", StringComparison.OrdinalIgnoreCase)).ToList();
+    private IEnumerable<string> References() => state!.Purchases.SelectMany(p => p.ReportingLines).Select(HomeDepotSupplyIntakeService.Reference).Where(r => r.Length > 0).Distinct().OrderBy(r => r);
+    private List<HomeDepotCandidate> Customers() => state!.Purchases.SelectMany(p => p.Review.Candidates).Where(c => c.CustomerId.Length > 0 && HomeDepotHistoryText.Normalize(c.MatchedReference) == reference).OrderByDescending(c => c.Rank).DistinctBy(c => (c.OperationId, c.CustomerId)).ToList();
+    private static string CustomerKey(HomeDepotCandidate candidate) => $"{candidate.OperationId}:{candidate.CustomerId}";
+    private void ClearChoice() => choice = "";
+    private void ResetPage() => page = 0;
+    private void Previous() => page = Math.Max(0, page - 1);
+    private void Next() => page++;
+}
