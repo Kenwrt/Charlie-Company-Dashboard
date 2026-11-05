@@ -26,6 +26,7 @@ else
     <label class="form-label">Intake unlinked receipt PDF <InputFile OnChange="IntakeReceipt" accept=".pdf" disabled="@busy" /></label>
     <p class="text-muted">Home Depot purchases are prepaid credit-card materials, never accounts payable. Original rows are retained; card-payment reconciliation is deferred. CSV amounts do not establish settled card totals or complete returns/cancellation coverage.</p>
     <p><a href="admin/job-materials">Search purchased materials across suppliers by operation and job number</a></p>
+    <div class="alert alert-info"><strong>How to review:</strong> Choose a job-reference group and check its items. Open <strong>Review transaction</strong> to compare proposed HCP jobs. Choose the purchasing operation, then use <strong>Find HCP candidates</strong> if needed. Confirm the homeowner, address and job number before opening <strong>Assign purchased material lines</strong>. References such as SHOP may have no customer job.</div>
     @if (!string.IsNullOrEmpty(message)) { <p role="status">@message</p> }
     @if (state is not null)
     {
@@ -38,7 +39,7 @@ else
             <p>Job names are uppercase. Lighthouse Place/Pl display as QUINN; this display alias establishes no HCP identity. No purchase times are supplied. Blank project/job rows are excluded from this default report.</p>
             @if (mode == "groups" && groups.Count > 0)
             {
-                <label>PO job <select class="form-select" @bind="page">@for (var i = 0; i < groups.Count; i++) { <option value="@i">@groups[i].Name</option> }</select></label>
+                <label>Job reference <select class="form-select" @bind="page" @bind:after="Close">@for (var i = 0; i < groups.Count; i++) { <option value="@i">@groups[i].Name</option> }</select></label>
             }
             var displayed = Displayed();
             var count = mode == "groups" ? groups.Count : (int)Math.Ceiling(Visible().Count / 100d);
@@ -46,9 +47,10 @@ else
             <h2>@(mode == "groups" && groups.Count > page ? groups[page].Name : "All purchases, oldest first")</h2>
             <p>Quantity is the number of purchased selling units. Packaging below is quoted from the item description; unspecified packaging remains unknown. Proposed HCP matches require confirmation.</p>
             <div class="table-responsive"><table class="table table-sm"><thead><tr>@foreach (var h in Columns()) { <th>@HomeDepotHistoryText.ColumnLabel(h)</th> }<th>Packaging / selling unit</th><th>HCP job match</th><th>Review</th></tr></thead>
-                <tbody>@foreach (var item in displayed) { <tr>@foreach (var h in Columns()) { <td class="@(h == "SKU Description" ? "description" : "")">@Blank(item.Line.Value(h))</td> }<td>@Packaging(item.Line)</td><td>@JobMatch(item)</td><td><button class="btn btn-sm btn-link" @onclick="() => Open(item.Purchase)">Review transaction</button></td></tr> }</tbody>
+                <tbody>@foreach (var item in displayed) { <tr>@foreach (var h in Columns()) { <td class="@(h == "SKU Description" ? "description" : "")">@Blank(h == "Job Name" ? item.Line.Value(h).ToUpperInvariant() : item.Line.Value(h))</td> }<td>@Packaging(item.Line)</td><td>@JobMatch(item)</td><td><button class="btn btn-sm btn-link" @onclick="() => Open(item.Purchase)">Review transaction</button></td></tr> }</tbody>
                 <tfoot><tr>@foreach (var h in Columns()) { <td>@Footer(h, displayed)</td> }<td colspan="3"></td></tr></tfoot>
             </table></div>
+            <div class="d-flex gap-3 my-3" aria-label="Purchase list navigation"><button class="btn btn-outline-secondary" disabled="@(page <= 0)" @onclick="Previous">Previous @(mode == "groups" ? "group" : "page")</button><span>@(count == 0 ? 0 : page + 1) of @count</span><button class="btn btn-outline-primary" disabled="@(page + 1 >= count)" @onclick="Next">Next @(mode == "groups" ? "group" : "page")</button></div>
             <p>Group pages follow the earliest purchase date; undated items appear last. Same-day items retain intake/source order. Total price sums the displayed prices; quantity is not multiplied into this total.</p>
         }
         else
@@ -70,7 +72,8 @@ else
                 <label>Job number, homeowner name or address from the source reference <input class="form-control" @bind="draft.Reference" maxlength="2000" /></label>
                 <label>Address for job search <input class="form-control" @bind="draft.Address" /></label>
                 <button class="btn btn-outline-primary my-2" disabled="@busy" @onclick="Lookup">Find HCP candidates</button>
-                <p>Lookup: @draft.LookupStatus · @draft.LookupAt</p>
+                <p>Job search: @LookupLabel(draft.LookupStatus) · @draft.LookupAt</p>
+                <p>Names are compared without regard to capitalization or punctuation. Address matching compares the house number and street, recognizes common street abbreviations, and checks supplied units. A name alone may identify several jobs; review the full address.</p>
                 <p>@draft.LookupMessage</p>
                 @if (draft.SuggestedJobNumber.Length > 0) { <p><strong>Suggested job: @draft.SuggestedJobNumber</strong> — confirm before assigning materials.</p> }
                 @foreach (var candidate in draft.Candidates)
@@ -87,12 +90,15 @@ else
                     <label>Link reason <input class="form-control" @bind="linkReason" /></label>
                     @foreach (var d in Documents(selected).Where(d => d.Kind != "Csv")) { <button class="btn btn-outline-secondary" @onclick="() => Link(d.Id)">Link @d.Kind to transaction</button> }
                 }
+                <details><summary>Advanced evidence and accounting fields (optional)</summary>
                 <h3>Reviewed fields and allocations</h3>
                 <p>Edit the review JSON below. Allocation entries use jobId, jobNumber and amount. Their sum must equal receiptTotal. If overlapping exports disagree, reportingCsvDocumentId selects one original snapshot; the first snapshot remains the default and all alternatives are retained. Payer, purchasing operation, HCP company and customer IDs remain distinct. Keep unavailable amounts null and paymentState Unknown. Saved corrections apply only to this transaction; they do not train global aliases.</p>
                 <button class="btn btn-outline-secondary" @onclick="UpdateJson">Copy search fields into editor</button>
                 <textarea class="form-control font-monospace my-2" rows="22" aria-label="Reviewed transaction JSON" @bind="reviewJson"></textarea>
                 <button class="btn btn-primary" disabled="@busy" @onclick="Save">Save review / assignment</button>
+                </details>
                 <button class="btn btn-link" @onclick="Close">Close review</button>
+                @if (mode == "groups") { <button class="btn btn-outline-primary" disabled="@(page + 1 >= groups.Count)" @onclick="Next">Next job-reference group</button> }
             </section>
         }
         <details><summary>Collection coverage and audit</summary>
@@ -163,7 +169,7 @@ else
         var links = state!.JobReferenceLinks.Where(l => l.SourceReference == reference && item.Line.Date is DateOnly date && date >= l.FromDate && date <= l.ToDate).ToList();
         if (links.Count == 1) return $"Confirmed: job {links[0].JobNumber} (operation {links[0].OperationId})";
         var candidates = item.Purchase.Review.Candidates.Where(c => HomeDepotHistoryText.Normalize(c.MatchedReference) == reference).OrderByDescending(c => c.Rank).Take(3).ToList();
-        return candidates.Count > 0 ? "Proposed — " + string.Join("; ", candidates.Select(c => $"{c.Operation}: job {c.JobNumber}, {c.Customer} ({c.MatchKind})")) : item.Purchase.Review.LookupStatus == "NotRequested" ? "Not searched — open review" : item.Purchase.Review.LookupStatus + " — open review";
+        return candidates.Count > 0 ? "Proposed — " + string.Join("; ", candidates.Select(c => $"{c.Operation}: job {c.JobNumber}, {c.Customer} ({c.MatchKind})")) : LookupLabel(item.Purchase.Review.LookupStatus);
     }
     private static string Blank(string value) => string.IsNullOrEmpty(value) ? "—" : value;
     private static string Footer(string field, List<Row> rows) => field switch {
@@ -171,14 +177,24 @@ else
         "Quantity" => rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("N0"),
         "Net Unit Price" => "Total price: " + rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("C2"), _ => "" };
     private IEnumerable<HomeDepotDocument> Documents(HomeDepotPurchase p) => state!.Documents.Where(d => d.PurchaseId == p.Id || p.Lines.Any(l => l.Sources.Any(s => s.DocumentId == d.Id)));
-    private void ResetPage() => page = 0;
-    private void Previous() => page = Math.Max(0, page - 1);
-    private void Next() => page++;
+    private static string LookupLabel(string status) => status switch {
+        "NotRequested" => "Not searched yet",
+        "CompleteNoCandidate" => "No matching HCP job found — check the reference or try an address",
+        "ReferenceRequired" => "Enter a homeowner name, job number or address",
+        "IncompleteOperationCoverage" or "IncompleteOrUnavailable" => "Search incomplete — retry before treating this as no match",
+        "CandidatesRequireReview" or "MultipleCandidatesRequireReview" => "Possible jobs found — confirm the correct one",
+        "UniqueStrongCandidateRequiresReview" => "Strong match found — confirmation required",
+        "WeakCandidateRequiresReview" => "Partial match found — check the homeowner and address",
+        _ => "Review search details below" };
+    private void ResetPage() { page = 0; Close(); }
+    private void Previous() { page = Math.Max(0, page - 1); Close(); }
+    private void Next() { page++; Close(); }
     private void Open(HomeDepotPurchase p)
     {
         selected = p; draft = JsonSerializer.Deserialize<HomeDepotReview>(JsonSerializer.Serialize(p.Review, HomeDepotHistoryText.Json), HomeDepotHistoryText.Json)!;
         draft.OperationId ??= draft.LookupOperationId;
         if (draft.Reference.Length == 0) draft.Reference = draft.LookupReference;
+        if (draft.Reference.Length == 0) draft.Reference = string.Join("; ", p.ReportingLines.Select(l => l.Value("Job Name")).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase)).ToUpperInvariant();
         if (draft.Address.Length == 0) draft.Address = draft.LookupAddress;
         UpdateJson();
     }
