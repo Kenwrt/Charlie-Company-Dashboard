@@ -129,6 +129,7 @@ public sealed class HomeDepotSupplyIntakeService(IDbContextFactory<ApplicationDb
         var customer = jobs.FirstOrDefault(j => j.CustomerId == customerId && customerId.Length > 0) ?? throw new ArgumentException("Customer could not be confirmed in HCP. Refresh matching first.");
         var key = HomeDepotHistoryText.Normalize(reference);
         await store.ChangeAsync(state => {
+            if (state.DeletedCustomerReferences.Any(r => r.Reference == key)) throw new ArgumentException("This reference was deleted from customer review. Restore it before assigning a customer.");
             var purchases = state.Purchases.Where(p => p.ReportingLines.Any(l => Reference(l) == key)).ToList();
             if (!purchases.SelectMany(p => p.Review.Candidates).Any(c => c.OperationId == operationId && c.CustomerId == customerId)) throw new ArgumentException("Select a proposed customer from this group.");
             var before = state.CustomerReviews.Where(r => r.Reference == key).ToList();
@@ -161,6 +162,21 @@ public sealed class HomeDepotSupplyIntakeService(IDbContextFactory<ApplicationDb
                 purchase.Version++;
             }
             state.Audit.Add(new(DateTimeOffset.UtcNow, actor, "CustomerSearch", null, "", "", incomplete ? "Some operation searches unavailable; results incomplete." : "Read-only customer proposals refreshed; no assignments."));
+            return Task.FromResult(true);
+        }, ct);
+    }
+    public async Task DeleteCustomerReferenceAsync(string reference, bool restore, ClaimsPrincipal user, CancellationToken ct)
+    {
+        var actor = HomeDepotHistoryService.Administrator(user);
+        var key = HomeDepotHistoryText.Normalize(reference);
+        if (key.Length == 0) throw new ArgumentException("Select a reference first.");
+        await store.ChangeAsync(state => {
+            if (!state.Purchases.SelectMany(p => p.ReportingLines).Any(l => Reference(l) == key)) throw new ArgumentException("Reference not found.");
+            if (!restore && state.CustomerReviews.Any(r => r.Reference == key)) throw new ArgumentException("This reference already has a confirmed customer and cannot be deleted as an invalid reference.");
+            var before = state.DeletedCustomerReferences.Where(r => r.Reference == key).ToList();
+            state.DeletedCustomerReferences.RemoveAll(r => r.Reference == key);
+            if (!restore) state.DeletedCustomerReferences.Add(new(key, actor, DateTimeOffset.UtcNow));
+            state.Audit.Add(new(DateTimeOffset.UtcNow, actor, restore ? "CustomerReferenceRestored" : "CustomerReferenceDeleted", null, JsonSerializer.Serialize(before), JsonSerializer.Serialize(state.DeletedCustomerReferences.Where(r => r.Reference == key)), "Removed from customer matching only; purchase history and supplies retained."));
             return Task.FromResult(true);
         }, ct);
     }

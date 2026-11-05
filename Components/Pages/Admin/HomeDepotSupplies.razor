@@ -61,6 +61,17 @@ else
             <table class="table table-sm"><thead><tr><th>Customer</th><th>Operation</th><th>Address</th><th>Match basis</th></tr></thead><tbody>@foreach (var candidate in candidates) { <tr><td>@candidate.Customer</td><td>@candidate.Operation</td><td>@candidate.Address</td><td>@candidate.MatchKind<br />@candidate.Explanation</td></tr> }</tbody></table>
             <button class="btn btn-outline-primary my-2" disabled="@(busy || choice.Length == 0)" @onclick="Confirm">Confirm customer for this reference</button>
             <p>This records your customer choice for this reference only; it does not guess a job or change HCP.</p>
+            @if (reviewed is null)
+            {
+                <button class="btn btn-outline-danger my-2" disabled="@busy" @onclick="DeleteReference">Delete this reference from customer review</button>
+                <p>Use for invalid references such as 0 or sample labels. Removes this reference from customer review, including after future imports. Purchase records and supply items are kept.</p>
+            }
+        }
+        @if (state.DeletedCustomerReferences.Count > 0)
+        {
+            <details class="my-3"><summary>Deleted customer references (@state.DeletedCustomerReferences.Count)</summary>
+            @foreach (var deleted in state.DeletedCustomerReferences) { <p>@deleted.Reference <button class="btn btn-link" disabled="@busy" @onclick="() => RestoreReference(deleted.Reference)">Restore to review</button></p> }
+            </details>
         }
     }
     <details class="mt-4"><summary>Original purchases and advanced review</summary><a href="/admin/home-depot-history/advanced">Open original purchase rows and previous review tools</a></details>
@@ -109,9 +120,11 @@ else
     });
     private Task Match() => Run(async () => { await Intake.MatchCustomersAsync(await User(), CancellationToken.None); await Reload(); message = "Customer proposals refreshed. Multiple possibilities remain for your review."; });
     private Task Confirm() => Run(async () => { var candidate = Customers().Single(c => CustomerKey(c) == choice); await Intake.ConfirmCustomerAsync(reference, candidate.OperationId, candidate.CustomerId, await User(), CancellationToken.None); await Reload(); message = "Customer choice saved."; });
+    private Task DeleteReference() => Run(async () => { await Intake.DeleteCustomerReferenceAsync(reference, false, await User(), CancellationToken.None); reference = ""; ClearChoice(); customerPage = 0; await Reload(); message = "Reference deleted from customer review. Purchases and supplies retained."; });
+    private Task RestoreReference(string source) => Run(async () => { await Intake.DeleteCustomerReferenceAsync(source, true, await User(), CancellationToken.None); await Reload(); message = "Reference restored to customer review."; });
     private Task Refresh() => Run(Reload);
     private List<HomeDepotSkuReview> Visible() => rows.Where(r => !exceptionsOnly || r.NeedsReview).ToList();
-    private IEnumerable<string> References() => state!.Purchases.SelectMany(p => p.ReportingLines).Select(HomeDepotSupplyIntakeService.Reference).Where(r => r.Length > 0).Distinct().OrderBy(r => r);
+    private IEnumerable<string> References() => state!.Purchases.SelectMany(p => p.ReportingLines).Select(HomeDepotSupplyIntakeService.Reference).Where(r => r.Length > 0 && !state.DeletedCustomerReferences.Any(d => d.Reference == r)).Distinct().OrderBy(r => r);
     private List<HomeDepotCandidate> Candidates(string source) => state!.Purchases.SelectMany(p => p.Review.Candidates).Where(c => c.CustomerId.Length > 0 && HomeDepotHistoryText.Normalize(c.MatchedReference) == source).OrderByDescending(c => c.Rank).DistinctBy(c => (c.OperationId, c.CustomerId)).ToList();
     private List<HomeDepotCandidate> Customers() => Candidates(reference);
     private bool Confirmed(string source) => state!.CustomerReviews.Any(r => r.Reference == source);
