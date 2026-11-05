@@ -86,6 +86,10 @@ try
     builder.Services.Configure<HousecallProOptions>(builder.Configuration.GetSection(HousecallProOptions.SectionName));
     builder.Services.Configure<SupplierInvoiceOptions>(builder.Configuration.GetSection(SupplierInvoiceOptions.SectionName));
     builder.Services.AddScoped<SupplierInvoiceService>();
+    builder.Services.Configure<HomeDepotHistoryOptions>(builder.Configuration.GetSection(HomeDepotHistoryOptions.SectionName));
+    builder.Services.AddScoped<HomeDepotHistoryStore>();
+    builder.Services.AddScoped<HomeDepotHistoryService>();
+    builder.Services.AddScoped<JobMaterialsService>();
     builder.Services.AddScoped<SupplierReconciliationService>();
     builder.Services.AddScoped<SupplyLibraryExceptionService>();
     builder.Services.AddScoped<VendorPackagingService>();
@@ -211,6 +215,7 @@ try
     app.MapHousecallProWebhookEndpoints();
     app.MapObservabilityEndpoints();
     app.MapSupplierInvoiceEndpoints();
+    app.MapHomeDepotHistoryEndpoints();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
 

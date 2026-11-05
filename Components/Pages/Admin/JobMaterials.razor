@@ -1,0 +1,124 @@
+@page "/admin/job-materials"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject JobMaterialsService Materials
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject AuthenticationStateProvider Authentication
+
+<PageTitle>Purchased Materials by Job</PageTitle>
+<h1>Purchased materials by job</h1>
+<p>Search by operation and job number to review purchases across connected suppliers. These are purchases allocated to the project, not proof of installed consumption.</p>
+<div class="d-flex gap-3 align-items-end flex-wrap mb-3">
+    <label>Operation<select class="form-select" @bind="operationId"><option value="0">Select operation</option>@foreach (var op in operations) { <option value="@op.Id">@op.EffectiveDisplayName</option> }</select></label>
+    <label>Job number<input class="form-control" @bind="jobNumber" maxlength="100" /></label>
+    <button class="btn btn-primary" disabled="@busy" @onclick="Search">Show materials</button>
+</div>
+@if (message.Length > 0) { <p role="status">@message</p> }
+@if (report is not null)
+{
+    <h2>Job @report.JobNumber — @report.Customer</h2>
+    <p>@report.Operation · Job information last synchronized @report.JobLastSyncedAt</p>
+    <p>Home Depot is prepaid credit-card purchasing and never creates accounts payable. Card reconciliation is deferred to a separate future accounting process.</p>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Supplier</th><th>Amount basis</th><th>Currency</th><th>Source lines</th><th>Source amount</th></tr></thead><tbody>
+        @foreach (var total in report.Subtotals) { <tr><td>@total.Supplier</td><td>@total.AmountBasis</td><td>@total.Currency</td><td>@total.Lines</td><td>@total.Amount.ToString("N2")</td></tr> }
+    </tbody></table></div>
+    <p>Different amount bases remain separate: Home Depot reported retail is not treated as a settled card charge, and supplier invoice lines do not silently include document-level tax or freight.</p>
+    <label>Find an item or supplier<input class="form-control" @bind="filter" @bind:after="ResetPage" /></label>
+    <div class="d-flex gap-3 my-3"><button disabled="@(page == 0)" @onclick="Previous">Previous</button><span>Page @(page + 1) · @Filtered().Count source lines</span><button disabled="@((page + 1) * 100 >= Filtered().Count)" @onclick="Next">Next</button></div>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date</th><th>Supplier</th><th>Supplier SKU</th><th>Description</th><th>Quantity</th><th>Purchase unit</th><th>Source amount</th><th>Catalog link</th><th>Assignment / review</th></tr></thead><tbody>
+        @foreach (var line in Filtered().Skip(page * 100).Take(100))
+        {
+            <tr><td>@line.PurchaseDate</td><td>@line.Supplier</td><td>@line.SupplierSku</td><td>@line.Description</td><td>@line.Quantity</td><td>@line.PurchaseUnit</td><td>@line.Amount?.ToString("N2") @line.Currency</td><td>@line.CatalogLinkStatus</td><td>@line.AssignmentBasis @if (line.NeedsReview) { <strong> · Needs review</strong> }<details><summary>Source details</summary><p>@line.Source · record @line.SourceRecordId · line @line.SourceLineId · document @line.DocumentId</p><p>@line.PaymentTreatment</p><p>@line.ReviewNote</p></details></td></tr>
+        }
+    </tbody></table></div>
+    @if (report.Lines.Count == 0) { <p>No attributed purchase lines are available for this job in the connected sources. See coverage and unassigned items below; this does not establish that no materials were purchased.</p> }
+    <h3>Coverage and outstanding review</h3><ul>@foreach (var note in report.Coverage) { <li>@note</li> }</ul>
+    @if (report.HomeDepotRevision is not null)
+    {
+        <details class="card p-3 my-3"><summary>Review Home Depot supplier, item and job links</summary>
+            <p>These links affect material reporting only. Existing supplier items are reused; prices and accounting entries are not changed.</p>
+            <label>Existing Home Depot supplier<select class="form-select" @bind="supplierId"><option value="0">Select existing supplier</option>@foreach (var vendor in vendors) { <option value="@vendor.Id">@vendor.Name</option> }</select></label>
+            <label>Review reason<input class="form-control" @bind="reason" maxlength="2000" /></label>
+            <button class="btn btn-outline-primary my-2" disabled="@busy" @onclick="SaveSupplier">Confirm supplier link</button>
+            <hr />
+            <h4>Connect a source PO/job reference to this project</h4>
+            <p>The selected reference and date range will point to job @report.JobNumber in @report.Operation. Ambiguous names are not auto-assigned. For receipts split between jobs, use purchase-line allocations in Home Depot review.</p>
+            <label>Source reference<select class="form-select" @bind="reference"><option value="">Select source reference</option>@foreach (var source in report.HomeDepotReferences) { <option value="@source.Reference">@source.Reference (@source.Rows rows)</option> }</select></label>
+            <div class="d-flex gap-3"><label>From date<InputDate class="form-control" @bind-Value="from" /></label><label>Through date<InputDate class="form-control" @bind-Value="through" /></label></div>
+            <button class="btn btn-outline-primary my-2" disabled="@busy" @onclick="SaveReference">Confirm reference → this job</button>
+            @if (report.HomeDepotReferenceLinks.Count > 0)
+            {
+                <table class="table table-sm"><thead><tr><th>Reviewed source reference</th><th>Dates</th><th>Job number</th><th></th></tr></thead><tbody>
+                    @foreach (var link in report.HomeDepotReferenceLinks) { <tr><td>@link.SourceReference</td><td>@link.FromDate – @link.ToDate</td><td>@link.JobNumber (operation @link.OperationId)</td><td><button class="btn btn-link" disabled="@busy" @onclick="() => RemoveReference(link)">Remove mapping with review reason</button></td></tr> }
+                </tbody></table>
+            }
+            <hr /><h4>Connect a Home Depot SKU to an existing catalog item</h4>
+            <label>Home Depot source SKU<input class="form-control" @bind="sourceSku" maxlength="100" /></label>
+            <label>Existing supplier catalog SKU<input class="form-control" @bind="catalogSku" maxlength="100" /></label>
+            <button class="btn btn-outline-primary my-2" disabled="@busy" @onclick="SaveCatalog">Save reviewed SKU crosswalk</button>
+            <p>Unique exact supplier SKU matches are shown without changing the catalog. Crosswalks resolve different supplier identifiers; packaging conversions and actual consumption remain separate review questions.</p>
+        </details>
+    }
+}
+
+@code {
+    private List<LocalOperation> operations = [];
+    private List<SupplyVendor> vendors = [];
+    private JobMaterialsReport? report;
+    private int operationId, supplierId, page;
+    private string jobNumber = "", message = "", reason = "", reference = "", sourceSku = "", catalogSku = "", filter = "";
+    private DateOnly? from, through;
+    private bool busy;
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        operations = await db.LocalOperations.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.Name).ToListAsync();
+        var active = await db.SupplyVendors.AsNoTracking().Where(x => x.IsActive).ToListAsync();
+        vendors = active.Where(x => HomeDepotHistoryText.IsHomeDepotSupplier(x.Name) || HomeDepotHistoryText.IsHomeDepotSupplier(x.LegalName)).OrderBy(x => x.Name).ToList();
+    }
+    private async Task Run(Func<Task> action)
+    {
+        busy = true;
+        try { message = ""; await action(); }
+        catch (ArgumentException ex) { message = ex.Message; }
+        catch (Exception) { message = "The source could not be read or the link could not be confirmed. No successful assignment or accounting change is assumed."; }
+        finally { busy = false; }
+    }
+    private async Task Load()
+    {
+        report = await Materials.ReportAsync(operationId, jobNumber, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        supplierId = report.HomeDepotSupplyVendorId ?? 0; page = 0;
+    }
+    private async Task Search() => await Run(async () => { report = null; await Load(); });
+    private async Task SaveSupplier() => await Run(async () => {
+        if (report?.HomeDepotRevision is not long revision) return;
+        await Materials.SelectSupplierAsync(supplierId, revision, reason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        await Load(); message = "Existing supplier linked. No catalog item, price or payable was created.";
+    });
+    private async Task SaveReference() => await Run(async () => {
+        if (report?.HomeDepotRevision is not long revision) return;
+        if (from is null || through is null) throw new ArgumentException("Select both dates; a reference may describe different projects in different periods.");
+        await Materials.LinkReferenceAsync(reference, from.Value, through.Value, report.OperationId, report.JobId, report.JobNumber,
+            revision, reason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        await Load(); message = "Reviewed source reference linked to the validated job for the selected dates.";
+    });
+    private async Task SaveCatalog() => await Run(async () => {
+        if (report?.HomeDepotRevision is not long revision) return;
+        await Materials.LinkCatalogAsync(sourceSku, catalogSku, revision, reason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        await Load(); message = "Supplier SKU crosswalk saved. Historical amounts and catalog prices were not changed.";
+    });
+    private async Task RemoveReference(HomeDepotJobReferenceLink link) => await Run(async () => {
+        if (report?.HomeDepotRevision is not long revision) return;
+        await Materials.UnlinkReferenceAsync(link, revision, reason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        await Load(); message = "Reference link removed with audit history; source evidence remains intact.";
+    });
+    private List<JobMaterialLine> Filtered() => report?.Lines.Where(x => filter.Trim().Length == 0 ||
+        (x.Supplier + " " + x.SupplierSku + " " + x.Description).Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase)).ToList() ?? [];
+    private void ResetPage() => page = 0;
+    private void Previous() => page = Math.Max(0, page - 1);
+    private void Next() => page++;
+}

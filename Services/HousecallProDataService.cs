@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace CharleyCompany.Dashboard.Web.Services;
 
-public sealed record HcpSupplierJob(string ExternalId, string JobNumber, string CustomerName, string Address, string Description, DateTimeOffset LastSyncedAt);
+public sealed record HcpSupplierJob(string ExternalId, string JobNumber, string CustomerName, string Address, string Description, DateTimeOffset LastSyncedAt, string CustomerId = "");
 
 public sealed record HcpImportedCommunication(string Type, string Notes, string EnteredBy, DateTimeOffset? EnteredAt);
 public sealed record HcpJobPayment(
@@ -74,7 +74,8 @@ public sealed class HousecallProDataService(
                     var number = Text(job, "invoice_number") ?? Text(job, "job_number");
                     if (string.IsNullOrWhiteSpace(number)) continue;
                     var description = Text(job, "description") ?? Text(job, "name") ?? Text(job, "summary") ?? "Description unavailable";
-                    result.Add(new(id, number, CustomerName(job) ?? "", Address(job) ?? CustomerAddress(job) ?? "", description, DateTimeOffset.UtcNow));
+                    var customerId = job.TryGetProperty("customer", out var customer) && customer.ValueKind == JsonValueKind.Object ? Text(customer, "id") : null;
+                    result.Add(new(id, number, CustomerName(job) ?? "", Address(job) ?? CustomerAddress(job) ?? "", description, DateTimeOffset.UtcNow, customerId ?? ""));
                 }
                 if (page >= total) return result;
             }

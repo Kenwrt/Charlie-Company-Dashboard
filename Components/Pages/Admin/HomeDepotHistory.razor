@@ -1,0 +1,217 @@
+@page "/admin/home-depot-history"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using System.Text.Json
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Options
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@inject HomeDepotHistoryService History
+@inject IOptions<HomeDepotHistoryOptions> Settings
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject AuthenticationStateProvider Authentication
+
+<PageTitle>Home Depot purchases</PageTitle>
+<h1>Home Depot purchases</h1>
+<p>Prepaid credit-card purchases → operation-scoped job review → purchased-materials reporting. Home Depot purchases never create accounts payable.</p>
+@if (!Settings.Value.Enabled)
+{
+    <p role="status">Home Depot history is disabled. Configure its private storage and account scope before importing. No schedule is activated.</p>
+}
+else
+{
+    <label class="form-label">Import detailed purchase-history CSV <InputFile OnChange="Import" accept=".csv" disabled="@busy" /></label>
+    <label class="form-label">Intake unlinked receipt PDF <InputFile OnChange="IntakeReceipt" accept=".pdf" disabled="@busy" /></label>
+    <p class="text-muted">Home Depot purchases are prepaid credit-card materials, never accounts payable. Original rows are retained; card-payment reconciliation is deferred. CSV amounts do not establish settled card totals or complete returns/cancellation coverage.</p>
+    <p><a href="admin/job-materials">Search purchased materials across suppliers by operation and job number</a></p>
+    @if (!string.IsNullOrEmpty(message)) { <p role="status">@message</p> }
+    @if (state is not null)
+    {
+        <div class="d-flex gap-3 mb-3">
+            <label>View <select class="form-select" @bind="mode" @bind:after="ResetPage"><option value="groups">By PO job</option><option value="dates">All items by purchase date</option><option value="unassigned">Unassigned purchases</option><option value="review">All transaction reviews</option></select></label>
+            <button class="btn btn-outline-secondary" disabled="@busy" @onclick="Reload">Refresh</button>
+        </div>
+        @if (mode is "groups" or "dates")
+        {
+            <p>Job names are uppercase. Lighthouse Place/Pl display as QUINN; this display alias establishes no HCP identity. No purchase times are supplied. Blank project/job rows are excluded from this default report.</p>
+            @if (mode == "groups" && groups.Count > 0)
+            {
+                <label>PO job <select class="form-select" @bind="page">@for (var i = 0; i < groups.Count; i++) { <option value="@i">@groups[i].Name</option> }</select></label>
+            }
+            var displayed = Displayed();
+            var count = mode == "groups" ? groups.Count : (int)Math.Ceiling(Visible().Count / 100d);
+            <div class="d-flex gap-3 my-3"><button class="btn btn-outline-secondary" disabled="@(page <= 0)" @onclick="Previous">Previous @(mode == "groups" ? "group" : "page")</button><span>@(count == 0 ? 0 : page + 1) of @count</span><button class="btn btn-outline-secondary" disabled="@(page + 1 >= count)" @onclick="Next">Next @(mode == "groups" ? "group" : "page")</button></div>
+            <h2>@(mode == "groups" && groups.Count > page ? groups[page].Name : "All purchases, oldest first")</h2>
+            <div class="table-responsive"><table class="table table-sm"><thead><tr>@foreach (var h in Columns()) { <th>@HomeDepotHistoryText.ColumnLabel(h)</th> }<th>Review</th></tr></thead>
+                <tbody>@foreach (var item in displayed) { <tr>@foreach (var h in Columns()) { <td class="@(h == "SKU Description" ? "description" : "")">@(h == "Job Name" ? item.Line.Group : Blank(item.Line.Value(h)))</td> }<td><button class="btn btn-sm btn-link" @onclick="() => Open(item.Purchase)">Review transaction</button></td></tr> }</tbody>
+                <tfoot><tr>@foreach (var h in Columns()) { <td>@Footer(h, displayed)</td> }<td></td></tr></tfoot>
+            </table></div>
+            <p>Group pages follow the earliest purchase date; undated items appear last. Same-day items retain intake/source order. Extended Retail is before discount, includes negatives, and is not a receipt total. Net unit price sum does not multiply quantity and is not an expense total.</p>
+        }
+        else
+        {
+            var queue = state.Purchases.Where(p => p.Review.Status != "Excluded" && (mode == "review" || !HasMaterialLinks(p))).ToList();
+            <p>@queue.Count transaction records. Unassigned records include purchases hidden by the default report. Reporting does not create a vendor payable.</p>
+            <div class="d-flex gap-3"><button disabled="@(page == 0)" @onclick="Previous">Previous page</button><span>Page @(page + 1)</span><button disabled="@((page + 1) * 50 >= queue.Count)" @onclick="Next">Next page</button></div>
+            <table class="table table-sm"><thead><tr><th>Source dates</th><th>PO/job</th><th>Status</th><th>Payment</th><th>Assignment</th><th></th></tr></thead><tbody>
+                @foreach (var p in queue.Skip(page * 50).Take(50)) { <tr><td>@string.Join(", ", p.Lines.Select(l => l.Value("Date")).Distinct())</td><td>@string.Join(", ", p.Lines.Select(l => l.Group).Distinct())</td><td>@p.Review.Status</td><td>Prepaid card; reconciliation deferred</td><td>@(HasMaterialLinks(p) ? "Material links complete" : "Needs material attribution")</td><td><button class="btn btn-link" @onclick="() => Open(p)">Review</button></td></tr> }
+            </tbody></table>
+        }
+        @if (selected is not null)
+        {
+            <section class="card p-3 my-3">
+                <h2>Transaction review</h2><p>Transaction ID @selected.Id · Version @selected.Version · @selected.IdentityQuality · External accounting: @selected.ExternalAccountingStatus</p>
+                <HomeDepotMaterialAssignments Purchase="selected" OperationId="draft.OperationId" Saved="MaterialSaved" />
+                <p>Material attribution uses source quantities and reported line amounts. Optional receipt/payment evidence is separate and never creates AP. Card reconciliation is deferred; known settlement requires evidence. Excluded transactions remain retained and audited.</p>
+                <label>Purchasing operation <select class="form-select" @bind="draft.OperationId"><option value="">Unknown / assign later</option>@foreach (var op in operations) { <option value="@op.Id">@op.EffectiveDisplayName</option> }</select></label>
+                <label>Job number, homeowner name or address from the source reference <input class="form-control" @bind="draft.Reference" maxlength="2000" /></label>
+                <label>Address for job search <input class="form-control" @bind="draft.Address" /></label>
+                <button class="btn btn-outline-primary my-2" disabled="@busy" @onclick="Lookup">Find HCP candidates</button>
+                <p>Lookup: @draft.LookupStatus · @draft.LookupAt</p>
+                <p>@draft.LookupMessage</p>
+                @if (draft.SuggestedJobNumber.Length > 0) { <p><strong>Suggested job: @draft.SuggestedJobNumber</strong> — confirm before assigning materials.</p> }
+                @foreach (var candidate in draft.Candidates)
+                {
+                    <p><strong>@candidate.JobNumber · @candidate.Customer</strong> · @candidate.Address · @candidate.Description · @candidate.Operation<br />@candidate.MatchKind · Source reference: @candidate.MatchedReference<br />@candidate.Explanation<br /><small>Job ID: @candidate.JobId · Customer ID: @candidate.CustomerId</small></p>
+                }
+                <h3>Originals</h3>
+                @foreach (var doc in Documents(selected)) { <p><a href="@($"/api/home-depot-history/documents/{doc.Id}")">Download @doc.Kind original</a> · @doc.Id · @doc.Coverage</p> }
+                <label>Evidence type <select @bind="evidenceKind"><option>Receipt</option><option>Invoice</option><option>Return</option><option>Credit</option><option>Payment</option><option>Order</option></select></label>
+                <label>Attach original PDF <InputFile OnChange="Attach" accept=".pdf" disabled="@busy" /></label>
+                @if (selected.Lines.Count == 0)
+                {
+                    <label>Link evidence to existing transaction ID <input class="form-control" @bind="linkTarget" /></label>
+                    <label>Link reason <input class="form-control" @bind="linkReason" /></label>
+                    @foreach (var d in Documents(selected).Where(d => d.Kind != "Csv")) { <button class="btn btn-outline-secondary" @onclick="() => Link(d.Id)">Link @d.Kind to transaction</button> }
+                }
+                <h3>Reviewed fields and allocations</h3>
+                <p>Edit the review JSON below. Allocation entries use jobId, jobNumber and amount. Their sum must equal receiptTotal. If overlapping exports disagree, reportingCsvDocumentId selects one original snapshot; the first snapshot remains the default and all alternatives are retained. Payer, purchasing operation, HCP company and customer IDs remain distinct. Keep unavailable amounts null and paymentState Unknown. Saved corrections apply only to this transaction; they do not train global aliases.</p>
+                <button class="btn btn-outline-secondary" @onclick="UpdateJson">Copy search fields into editor</button>
+                <textarea class="form-control font-monospace my-2" rows="22" aria-label="Reviewed transaction JSON" @bind="reviewJson"></textarea>
+                <button class="btn btn-primary" disabled="@busy" @onclick="Save">Save review / assignment</button>
+                <button class="btn btn-link" @onclick="Close">Close review</button>
+            </section>
+        }
+        <details><summary>Collection coverage and audit</summary>
+            @foreach (var d in state.Documents) { <p>@d.Kind · @d.ReceivedAt · @d.SourceRows source rows · @d.Coverage</p> }
+            <p>Latest 50 audit events. Complete before/after history is retained in private revisions.</p>
+            @foreach (var a in state.Audit.TakeLast(50).Reverse()) { <p>@a.At · @a.Action · reviewer @a.Actor · @a.Reason</p> }
+        </details>
+    }
+}
+
+@code {
+    private HomeDepotHistoryState? state;
+    private List<LocalOperation> operations = [];
+    private HomeDepotPurchase? selected;
+    private HomeDepotReview draft = new();
+    private string mode = "groups", message = "", reviewJson = "", evidenceKind = "Receipt";
+    private string linkTarget = "", linkReason = "";
+    private bool busy;
+    private int page;
+    private List<(string Name, List<Row> Rows)> groups = [];
+    private sealed record Row(HomeDepotPurchase Purchase, HomeDepotLine Line);
+    protected override async Task OnInitializedAsync() { if (Settings.Value.Enabled) await Reload(); }
+    private async Task Run(Func<Task> action)
+    {
+        busy = true;
+        try { await action(); }
+        catch (ArgumentException ex) { message = ex.Message; }
+        catch (Exception) { message = "The operation could not complete. Prior committed data is retained; no successful lookup, import or accounting posting is assumed."; }
+        finally { busy = false; }
+    }
+    private async Task Reload() => await Run(async () => {
+        state = await History.ReadAsync((await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        operations = await db.LocalOperations.AsNoTracking().Where(o => o.IsActive).OrderBy(o => o.Name).ToListAsync();
+        groups = Visible().GroupBy(x => x.Line.Group).Select(g => (g.Key, g.ToList())).ToList();
+        page = Math.Clamp(page, 0, Math.Max(0, groups.Count - 1));
+    });
+    private List<Row> Visible() => state?.Purchases.Where(p => p.Review.Status != "Excluded").SelectMany(p => p.ReportingLines.Where(l => l.DefaultVisible).Select(l => new Row(p, l))).OrderBy(x => x.Line.Date ?? DateOnly.MaxValue).ToList() ?? [];
+    private bool HasMaterialLinks(HomeDepotPurchase purchase)
+    {
+        var lines = purchase.ReportingLines.ToList();
+        return lines.Count > 0 && lines.All(line => {
+            var allocations = purchase.Review.MaterialAllocations.Where(a => a.LineId == line.Id).ToList();
+            if (allocations.Count > 0) return line.Amount("Quantity") is not null && line.Amount("Extended Retail (before discount)") is not null
+                && allocations.Sum(a => a.Quantity) == line.Amount("Quantity")
+                && allocations.Sum(a => a.ReportedAmount) == line.Amount("Extended Retail (before discount)");
+            if (line.Date is not DateOnly date) return false;
+            var reference = HomeDepotHistoryText.Normalize(string.IsNullOrWhiteSpace(line.Value("Job Name")) ? line.Value("Project Name") : line.Value("Job Name"));
+            return state!.JobReferenceLinks.Count(link => link.SourceReference == reference && date >= link.FromDate && date <= link.ToDate
+                && (purchase.Review.OperationId is null || purchase.Review.OperationId == link.OperationId)) == 1;
+        });
+    }
+    private List<Row> Displayed() => mode == "groups" ? groups.Count > page ? groups[page].Rows : [] : Visible().Skip(page * 100).Take(100).ToList();
+    private List<string> Columns()
+    {
+        var columns = state?.Documents.Where(d => d.Kind == "Csv").SelectMany(d => d.Headers).Distinct().Where(h => !HomeDepotHistoryText.HiddenColumns.Contains(h) && h != "Net Unit Price").ToList() ?? [];
+        var retail = columns.IndexOf("Extended Retail (before discount)");
+        if (retail >= 0) columns.Insert(retail + 1, "Net Unit Price");
+        return columns;
+    }
+    private static string Blank(string value) => string.IsNullOrEmpty(value) ? "—" : value;
+    private static string Footer(string field, List<Row> rows) => field switch {
+        "Date" => "Group / page subtotals",
+        "Quantity" => rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("N2"),
+        "Net Unit Price" => "Unit-price sum (not expense): " + rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("C2"),
+        "Extended Retail (before discount)" => rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("C2"), _ => "" };
+    private IEnumerable<HomeDepotDocument> Documents(HomeDepotPurchase p) => state!.Documents.Where(d => d.PurchaseId == p.Id || p.Lines.Any(l => l.Sources.Any(s => s.DocumentId == d.Id)));
+    private void ResetPage() => page = 0;
+    private void Previous() => page = Math.Max(0, page - 1);
+    private void Next() => page++;
+    private void Open(HomeDepotPurchase p)
+    {
+        selected = p; draft = JsonSerializer.Deserialize<HomeDepotReview>(JsonSerializer.Serialize(p.Review, HomeDepotHistoryText.Json), HomeDepotHistoryText.Json)!;
+        draft.OperationId ??= draft.LookupOperationId;
+        if (draft.Reference.Length == 0) draft.Reference = draft.LookupReference;
+        if (draft.Address.Length == 0) draft.Address = draft.LookupAddress;
+        UpdateJson();
+    }
+    private void Close() => selected = null;
+    private async Task MaterialSaved()
+    {
+        var id = selected?.Id;
+        await Reload();
+        if (id is not null) Open(state!.Purchases.Single(p => p.Id == id));
+    }
+    private void UpdateJson() => reviewJson = JsonSerializer.Serialize(draft, new JsonSerializerOptions(HomeDepotHistoryText.Json) { WriteIndented = true });
+    private async Task Import(InputFileChangeEventArgs e) => await Run(async () => {
+        using var memory = new MemoryStream(); await e.File.OpenReadStream(HomeDepotHistoryStore.MaxBytes).CopyToAsync(memory);
+        var user = (await Authentication.GetAuthenticationStateAsync()).User;
+        await History.ImportCsvAsync(memory.ToArray(), HomeDepotHistoryService.Administrator(user), CancellationToken.None);
+        message = "CSV intake committed. Source coverage remains partial; no payables or catalog changes were created.";
+        await Reload(); var quinn = groups.FindIndex(g => g.Name == "QUINN"); page = Math.Max(0, quinn);
+    });
+    private async Task Attach(InputFileChangeEventArgs e) => await Run(async () => {
+        if (selected is null) return;
+        using var memory = new MemoryStream(); await e.File.OpenReadStream(HomeDepotHistoryStore.MaxBytes).CopyToAsync(memory);
+        var id = selected.Id;
+        await History.AttachPdfAsync(id, memory.ToArray(), evidenceKind, HomeDepotHistoryService.Administrator((await Authentication.GetAuthenticationStateAsync()).User), CancellationToken.None);
+        message = "Original attached. Review financial fields separately."; await Reload(); Open(state!.Purchases.Single(p => p.Id == id));
+    });
+    private async Task IntakeReceipt(InputFileChangeEventArgs e) => await Run(async () => {
+        using var memory = new MemoryStream(); await e.File.OpenReadStream(HomeDepotHistoryStore.MaxBytes).CopyToAsync(memory);
+        await History.AttachPdfAsync("", memory.ToArray(), "Receipt", HomeDepotHistoryService.Administrator((await Authentication.GetAuthenticationStateAsync()).User), CancellationToken.None);
+        message = "Original retained in the unassigned evidence queue. Link it to an existing transaction during review."; mode = "unassigned"; page = 0; await Reload();
+    });
+    private async Task Lookup() => await Run(async () => {
+        if (selected is null) return;
+        var id = selected.Id;
+        await History.LookupAsync(id, draft, selected.Version, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        await Reload(); Open(state!.Purchases.Single(p => p.Id == id));
+        message = draft.LookupStatus == "IncompleteOrUnavailable" ? "HCP lookup incomplete or unavailable. This is not a no-match result." : "Lookup retained; candidates require review.";
+    });
+    private async Task Save() => await Run(async () => {
+        if (selected is null) return;
+        var value = JsonSerializer.Deserialize<HomeDepotReview>(reviewJson, HomeDepotHistoryText.Json) ?? throw new ArgumentException("Review JSON required.");
+        await History.ReviewAsync(selected.Id, value, selected.Version, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        message = "Review saved. No vendor payable, catalog update or external accounting entry was created."; selected = null; await Reload();
+    });
+    private async Task Link(string documentId) => await Run(async () => {
+        await History.LinkEvidenceAsync(documentId, linkTarget.Trim(), linkReason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+        message = "Evidence linked with audit history; source evidence-only record retained."; selected = null; await Reload();
+    });
+}

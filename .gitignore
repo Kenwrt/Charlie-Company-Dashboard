@@ -6,6 +6,12 @@
 # dotenv files
 .env
 
+# Home Depot private collector configuration, sessions and evidence
+Tools/HermesHomeDepotHistory/config.json
+Tools/HermesHomeDepotHistory/state/
+Tools/HermesHomeDepotHistory/inbox/
+Tools/HermesHomeDepotHistory/browser-profile/
+
 # User-specific files
 *.rsuser
 *.suo

@@ -1,0 +1,56 @@
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@inject JobMaterialsService Materials
+@inject AuthenticationStateProvider Authentication
+
+<details class="card p-3 my-3"><summary>Assign purchased material lines</summary>
+    <p>These assignments use source quantities and reported retail, without creating AP or requiring a settled receipt total. Select the operation and find Housecall Pro candidates above first.</p>
+    <label>Purchase line<select class="form-select" @bind="lineId"><option value="">Select item</option>@foreach (var line in Purchase.ReportingLines) { <option value="@line.Id">@line.Value("SKU Number") — @line.Value("SKU Description")</option> }</select></label>
+    <label>Confirmed job candidate<select class="form-select" @bind="jobId"><option value="">Select job</option>@foreach (var job in Purchase.Review.Candidates.Where(x => x.OperationId == OperationId)) { <option value="@job.JobId">@job.JobNumber — @job.Customer — @job.Address</option> }</select></label>
+    <label>Review reason<input class="form-control" @bind="reason" maxlength="2000" /></label>
+    <div class="my-2"><button class="btn btn-outline-primary" disabled="@busy" @onclick="Assign">Assign entire line to job</button><button class="btn btn-link" disabled="@busy" @onclick="Clear">Remove this line's override</button></div>
+    <p>Line overrides take precedence over reference/date mappings. Receipt lines can be assigned to different jobs. Splitting one line across jobs requires explicit quantities and amounts that conserve the source values; no proportional split is guessed.</p>
+    @if (message.Length > 0) { <p role="status">@message</p> }
+</details>
+
+@code {
+    [Parameter, EditorRequired] public HomeDepotPurchase Purchase { get; set; } = null!;
+    [Parameter] public int? OperationId { get; set; }
+    [Parameter] public EventCallback Saved { get; set; }
+    private string lineId = "", jobId = "", reason = "", message = "";
+    private bool busy;
+    private string previousPurchaseId = "";
+    protected override void OnParametersSet()
+    {
+        if (previousPurchaseId != Purchase.Id) { lineId = ""; jobId = ""; previousPurchaseId = Purchase.Id; }
+        if (!Purchase.Review.Candidates.Any(x => x.JobId == jobId && x.OperationId == OperationId))
+            jobId = Purchase.Review.Candidates.Any(x => x.JobId == Purchase.Review.SuggestedJobId && x.OperationId == OperationId)
+                ? Purchase.Review.SuggestedJobId : "";
+    }
+    private async Task Save(bool remove)
+    {
+        busy = true;
+        try
+        {
+            var line = Purchase.ReportingLines.SingleOrDefault(x => x.Id == lineId) ?? throw new ArgumentException("Select a source line.");
+            var allocations = Purchase.Review.MaterialAllocations.Where(x => x.LineId != lineId).ToList();
+            if (!remove)
+            {
+                var job = Purchase.Review.Candidates.SingleOrDefault(x => x.JobId == jobId && x.OperationId == OperationId)
+                    ?? throw new ArgumentException("Select a job candidate in the chosen operation.");
+                var qty = line.Amount("Quantity") ?? throw new ArgumentException("Source quantity unavailable.");
+                var amount = line.Amount("Extended Retail (before discount)") ?? throw new ArgumentException("Source amount unavailable.");
+                allocations.Add(new(line.Id, job.OperationId, job.JobId, job.JobNumber, qty, amount));
+            }
+            await Materials.AllocateLinesAsync(Purchase.Id, allocations, Purchase.Version, reason,
+                (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+            message = "Material attribution saved; no payable or card reconciliation was created.";
+            await Saved.InvokeAsync();
+        }
+        catch (ArgumentException ex) { message = ex.Message; }
+        catch (Exception) { message = "Job confirmation or saving failed. Refresh the transaction; no successful assignment is assumed."; }
+        finally { busy = false; }
+    }
+    private Task Assign() => Save(false);
+    private Task Clear() => Save(true);
+}

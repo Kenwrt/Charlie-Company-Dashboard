@@ -1,0 +1,5 @@
+th { white-space: nowrap; }
+td { min-width: 100px; }
+td.description { min-width: 260px; }
+tfoot { font-weight: 500; }
+textarea { max-width: 100%; }

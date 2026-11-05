@@ -1,0 +1,26 @@
+{
+  "enabled": false,
+  "dashboard_url": "https://YOUR-CHARLIE-COMPANY-HOST",
+  "ingestion_key_file": "/srv/ai/hermes/home-depot-history/ingestion-key",
+  "state_directory": "/srv/ai/hermes/home-depot-history/state",
+  "inbox_directory": "/srv/ai/hermes/home-depot-history/inbox",
+  "portal": {
+    "enabled": false,
+    "headless": true,
+    "url": "https://www.homedepot.com/myaccount/purchase-history",
+    "profile_directory": "/srv/ai/hermes/home-depot-history/browser-profile",
+    "browser_executable_path": "",
+    "max_pages": 100,
+    "details_label": "Details Data",
+    "export_dialog_selector": "",
+    "export_button_selector": "",
+    "receipt_download_selector": "",
+    "date_range": {
+      "start": "",
+      "end": "",
+      "start_selector": "",
+      "end_selector": "",
+      "apply_selector": ""
+    }
+  }
+}

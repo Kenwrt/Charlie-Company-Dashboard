@@ -275,6 +275,9 @@ public sealed class SupplierInvoiceService(
         List<VendorProduct> items, bool allowNewProducts, bool approvePrices, string actor, CancellationToken ct)
     {
         var vendorId = import.PriceImportDocument.SupplyVendorId;
+        var sourceVendor = await db.SupplyVendors.AsNoTracking().SingleAsync(x => x.Id == vendorId, ct);
+        if (HomeDepotHistoryText.IsHomeDepotSupplier(sourceVendor.Name) || HomeDepotHistoryText.IsHomeDepotSupplier(sourceVendor.LegalName))
+            throw new ArgumentException("Home Depot purchases are prepaid card materials and cannot be posted as accounts payable. Use Home Depot purchase history for job-material attribution.");
         var date = payload.InvoiceDate!.Value;
         var rule = await db.PriceApprovalRules.AsNoTracking().Where(x => x.IsActive && (x.SupplyVendorId == vendorId || x.SupplyVendorId == null))
             .OrderByDescending(x => x.SupplyVendorId != null).FirstOrDefaultAsync(ct);
