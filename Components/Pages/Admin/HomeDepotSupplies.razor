@@ -24,23 +24,32 @@ else
     <div class="my-3"><button class="btn btn-primary" disabled="@(busy || vendorId == 0)" @onclick="Add">Add missing SKUs from saved history</button></div>
     <label>Or import a new order-history CSV <InputFile OnChange="Import" accept=".csv" disabled="@(busy || vendorId == 0)" /></label>
     <p>Existing items and prices are preserved. This adds supply items, not on-hand stock or accounts payable. Package sizes remain unconfirmed where the export does not establish them.</p>
-    <h2>SKU intake</h2>
-    <p>@rows.Count unique source SKUs · @rows.Count(r => r.CanAdd) ready to add · @rows.Count(r => r.Status.Contains("review", StringComparison.OrdinalIgnoreCase)) need review.</p>
+    <h2 id="sku-conflicts">SKU conflict report</h2>
+    <p>@rows.Count unique source SKUs · @rows.Count(r => r.CanAdd) ready to add · @rows.Count(r => r.NeedsReview) need review · @rows.Count(r => r.Status.StartsWith("Duplicate")) duplicate catalog SKUs.</p>
+    <button class="btn btn-outline-secondary my-2" disabled="@busy" @onclick="Refresh">Refresh reports</button>
     <label><input type="checkbox" @bind="exceptionsOnly" @bind:after="ResetPage" /> Show only duplicate SKUs and other conflicts</label>
     <div class="my-2"><button disabled="@(page == 0)" @onclick="Previous">Previous</button> Page @(page + 1) <button disabled="@((page + 1) * 50 >= Visible().Count)" @onclick="Next">Next</button></div>
     <table class="table table-sm"><thead><tr><th>SKU</th><th>Item</th><th>Purchase rows</th><th>Result / later review</th></tr></thead><tbody>
-    @foreach (var row in Visible().Skip(page * 50).Take(50)) { <tr><td>@row.Sku</td><td>@row.Description</td><td>@row.PurchaseRows</td><td>@row.Status</td></tr> }
+    @foreach (var row in Visible().Skip(page * 50).Take(50)) { <HomeDepotSkuConflictRow @key="(vendorId, row.Sku, row.EvidenceHash)" Row="row" VendorId="vendorId" Saved="Reload" /> }
     </tbody></table>
     @if (exceptionsOnly && Visible().Count == 0) { <p>No SKU conflicts in the current report.</p> }
-    <h2>Customer review</h2>
+    <h2 id="customer-matches">Customer matches needing review</h2>
     <p>One customer may have several jobs. We show distinct HCP customers, not a separate customer for every job. Multiple possibilities and partial names require your review.</p>
     <button class="btn btn-outline-primary" disabled="@busy" @onclick="Match">Find / refresh customers</button>
     @if (state is not null)
     {
+        var customerGroups = References().ToList();
+        <p>@customerGroups.Count(r => Candidates(r).Count > 1 && !Confirmed(r)) with multiple possible customers · @customerGroups.Count(r => Candidates(r).Count == 1 && !Confirmed(r)) with one candidate · @customerGroups.Count(r => Candidates(r).Count == 0 && !Confirmed(r)) with no match · @state.CustomerReviews.Count confirmed.</p>
+        <label>Show<select class="form-select" @bind="customerFilter" @bind:after="ResetCustomerPage"><option value="pending">All needing review</option><option value="multiple">Multiple customers</option><option value="single">One candidate</option><option value="none">No match</option><option value="confirmed">Confirmed</option><option value="all">All references</option></select></label>
+        <div class="my-2"><button disabled="@(customerPage == 0)" @onclick="() => customerPage--">Previous</button> Page @(customerPage + 1) <button disabled="@((customerPage + 1) * 20 >= CustomerQueue().Count)" @onclick="() => customerPage++">Next</button></div>
+        <table class="table table-sm"><thead><tr><th>Job reference</th><th>Review status</th><th>Possible customers</th><th></th></tr></thead><tbody>
+        @foreach (var group in CustomerQueue().Skip(customerPage * 20).Take(20)) { <tr><td>@group</td><td>@CustomerStatus(group)</td><td>@string.Join("; ", Candidates(group).Select(c => $"{c.Customer} ({c.Operation})"))</td><td><button class="btn btn-link" @onclick="() => SelectReference(group)">Review customers</button></td></tr> }
+        </tbody></table>
         <label>Job reference<select class="form-select" @bind="reference" @bind:after="ClearChoice"><option value="">Select a reference</option>@foreach (var group in References()) { <option value="@group">@group</option> }</select></label>
         @if (reference.Length > 0)
         {
             var candidates = Customers();
+            <h3>Review @reference</h3>
             var reviewed = state.CustomerReviews.SingleOrDefault(r => r.Reference == reference);
             var incomplete = state.Purchases.Where(p => p.ReportingLines.Any(l => HomeDepotSupplyIntakeService.Reference(l) == reference)).Any(p => p.Review.LookupStatus is "NotRequested" or "IncompleteOperationCoverage" or "IncompleteOrUnavailable");
             @if (reviewed is not null) { <p><strong>Confirmed customer: @reviewed.CustomerName</strong> (operation @reviewed.OperationId)</p> }
@@ -49,6 +58,7 @@ else
             else if (candidates.Count == 1) { <p>One possible customer. Check the name and address before confirming.</p> }
             else { <p>No identifiable customer candidate. References such as SHOP may not belong to a customer.</p> }
             <label>Customer<select class="form-select" @bind="choice"><option value="">Choose a customer</option>@foreach (var candidate in candidates) { <option value="@CustomerKey(candidate)">@candidate.Operation · @candidate.Customer · @candidate.Address · @candidate.MatchKind</option> }</select></label>
+            <table class="table table-sm"><thead><tr><th>Customer</th><th>Operation</th><th>Address</th><th>Match basis</th></tr></thead><tbody>@foreach (var candidate in candidates) { <tr><td>@candidate.Customer</td><td>@candidate.Operation</td><td>@candidate.Address</td><td>@candidate.MatchKind<br />@candidate.Explanation</td></tr> }</tbody></table>
             <button class="btn btn-outline-primary my-2" disabled="@(busy || choice.Length == 0)" @onclick="Confirm">Confirm customer for this reference</button>
             <p>This records your customer choice for this reference only; it does not guess a job or change HCP.</p>
         }
@@ -61,6 +71,8 @@ else
     private List<SupplyVendor> vendors = [];
     private List<HomeDepotSkuReview> rows = [];
     private int vendorId, page;
+    private int customerPage;
+    private string customerFilter = "pending";
     private bool busy, exceptionsOnly = true;
     private string message = "", reference = "", choice = "";
     private async Task<System.Security.Claims.ClaimsPrincipal> User() => (await Authentication.GetAuthenticationStateAsync()).User;
@@ -97,9 +109,16 @@ else
     });
     private Task Match() => Run(async () => { await Intake.MatchCustomersAsync(await User(), CancellationToken.None); await Reload(); message = "Customer proposals refreshed. Multiple possibilities remain for your review."; });
     private Task Confirm() => Run(async () => { var candidate = Customers().Single(c => CustomerKey(c) == choice); await Intake.ConfirmCustomerAsync(reference, candidate.OperationId, candidate.CustomerId, await User(), CancellationToken.None); await Reload(); message = "Customer choice saved."; });
-    private List<HomeDepotSkuReview> Visible() => rows.Where(r => !exceptionsOnly || r.Status.Contains("review", StringComparison.OrdinalIgnoreCase)).ToList();
+    private Task Refresh() => Run(Reload);
+    private List<HomeDepotSkuReview> Visible() => rows.Where(r => !exceptionsOnly || r.NeedsReview).ToList();
     private IEnumerable<string> References() => state!.Purchases.SelectMany(p => p.ReportingLines).Select(HomeDepotSupplyIntakeService.Reference).Where(r => r.Length > 0).Distinct().OrderBy(r => r);
-    private List<HomeDepotCandidate> Customers() => state!.Purchases.SelectMany(p => p.Review.Candidates).Where(c => c.CustomerId.Length > 0 && HomeDepotHistoryText.Normalize(c.MatchedReference) == reference).OrderByDescending(c => c.Rank).DistinctBy(c => (c.OperationId, c.CustomerId)).ToList();
+    private List<HomeDepotCandidate> Candidates(string source) => state!.Purchases.SelectMany(p => p.Review.Candidates).Where(c => c.CustomerId.Length > 0 && HomeDepotHistoryText.Normalize(c.MatchedReference) == source).OrderByDescending(c => c.Rank).DistinctBy(c => (c.OperationId, c.CustomerId)).ToList();
+    private List<HomeDepotCandidate> Customers() => Candidates(reference);
+    private bool Confirmed(string source) => state!.CustomerReviews.Any(r => r.Reference == source);
+    private string CustomerStatus(string source) => Confirmed(source) ? "Confirmed" : state!.Purchases.Where(p => p.ReportingLines.Any(l => HomeDepotSupplyIntakeService.Reference(l) == source)).Any(p => p.Review.LookupStatus is "NotRequested" or "IncompleteOperationCoverage" or "IncompleteOrUnavailable") ? "Search incomplete — refresh customers" : Candidates(source).Count switch { 0 => "No match — review reference", 1 => "One candidate — confirm", _ => "Multiple customers — choose" };
+    private List<string> CustomerQueue() => References().Where(r => customerFilter switch { "multiple" => !Confirmed(r) && Candidates(r).Count > 1, "single" => !Confirmed(r) && Candidates(r).Count == 1, "none" => !Confirmed(r) && Candidates(r).Count == 0, "confirmed" => Confirmed(r), "all" => true, _ => !Confirmed(r) }).ToList();
+    private void SelectReference(string source) { reference = source; ClearChoice(); }
+    private void ResetCustomerPage() => customerPage = 0;
     private static string CustomerKey(HomeDepotCandidate candidate) => $"{candidate.OperationId}:{candidate.CustomerId}";
     private void ClearChoice() => choice = "";
     private void ResetPage() => page = 0;

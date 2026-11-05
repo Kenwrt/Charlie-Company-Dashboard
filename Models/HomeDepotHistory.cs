@@ -15,7 +15,10 @@ public sealed class HomeDepotHistoryState
     public List<HomeDepotJobReferenceLink> JobReferenceLinks { get; set; } = [];
     public List<HomeDepotCatalogLink> CatalogLinks { get; set; } = [];
     public List<HomeDepotCustomerReview> CustomerReviews { get; set; } = [];
+    public List<HomeDepotSkuDecision> SkuDecisions { get; set; } = [];
 }
+
+public sealed record HomeDepotSkuDecision(int VendorId, string Sku, string EvidenceHash, int? VendorProductId, string Description, string Reviewer, DateTimeOffset ReviewedAt);
 
 public sealed record HomeDepotCustomerReview(string Reference, int OperationId, string CustomerId, string CustomerName, string Reviewer, DateTimeOffset ReviewedAt);
 

@@ -1,0 +1,39 @@
+@using CharleyCompany.Dashboard.Web.Services
+@inject HomeDepotSupplyIntakeService Intake
+@inject AuthenticationStateProvider Authentication
+<tr><td>@Row.Sku</td><td>@Row.Description</td><td>@Row.PurchaseRows</td><td>@Row.Status
+@if (Row.NeedsReview)
+{
+    <details><summary>Review conflict</summary>
+    <p>Source descriptions:</p><ul>@foreach (var description in Row.Descriptions) { <li>@description</li> }</ul>
+    <label>Choose how to resolve<select class="form-select" @bind="selection"><option value="">Select a decision</option>
+    @foreach (var item in Row.ExistingItems) { <option value="@($"item:{item.Id}")">Keep existing item @item.Id — @item.Description</option> }
+    @if (Row.ExistingItems.Count == 0) { @for (var i = 0; i < Row.Descriptions.Count; i++) { <option value="@($"description:{i}")">Use source description: @Row.Descriptions[i]</option> } }
+    </select></label>
+    <button class="btn btn-outline-primary my-2" disabled="@(busy || selection.Length == 0)" @onclick="Save">Save SKU decision</button>
+    <p>Existing items are preserved. A selected description for a missing SKU makes it ready for the Add missing SKUs button. Inactive or invalid SKUs require catalog correction.</p>
+    @if (message.Length > 0) { <p role="status">@message</p> }
+    </details>
+}
+</td></tr>
+@code {
+    [Parameter, EditorRequired] public HomeDepotSkuReview Row { get; set; } = null!;
+    [Parameter] public int VendorId { get; set; }
+    [Parameter] public EventCallback Saved { get; set; }
+    private string selection = "", message = "";
+    private bool busy;
+    private async Task Save()
+    {
+        busy = true;
+        try {
+            var parts = selection.Split(':'); var value = int.Parse(parts[1]);
+            int? existing = parts[0] == "item" ? value : null;
+            var description = existing is null ? Row.Descriptions[value] : "";
+            await Intake.ResolveSkuAsync(VendorId, Row.Sku, Row.EvidenceHash, existing, description, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
+            await Saved.InvokeAsync();
+        }
+        catch (ArgumentException ex) { message = ex.Message; }
+        catch { message = "Decision could not be saved. Refresh the report before retrying."; }
+        finally { busy = false; }
+    }
+}
