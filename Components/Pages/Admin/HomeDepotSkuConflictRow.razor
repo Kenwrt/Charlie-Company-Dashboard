@@ -8,10 +8,10 @@
     <p>Source descriptions:</p><ul>@foreach (var description in Row.Descriptions) { <li>@description</li> }</ul>
     <label>Choose how to resolve<select class="form-select" @bind="selection"><option value="">Select a decision</option>
     @foreach (var item in Row.ExistingItems) { <option value="@($"item:{item.Id}")">Keep existing item @item.Id — @item.Description</option> }
-    @if (Row.ExistingItems.Count == 0) { @for (var i = 0; i < Row.Descriptions.Count; i++) { <option value="@($"description:{i}")">Use source description: @Row.Descriptions[i]</option> } }
+    @if (Row.ExistingItems.Count <= 1) { @for (var i = 0; i < Row.Descriptions.Count; i++) { <option value="@($"description:{i}")">Use source description: @Row.Descriptions[i]</option> } }
     </select></label>
     <button class="btn btn-outline-primary my-2" disabled="@(busy || selection.Length == 0)" @onclick="Save">Save SKU decision</button>
-    <p>Existing items are preserved. A selected description for a missing SKU makes it ready for the Add missing SKUs button. Inactive or invalid SKUs require catalog correction.</p>
+    <p>Choosing a source description updates the existing Home Depot item's supplier description when there is one active matching SKU. For a missing SKU, it makes the item ready for Add missing SKUs. Prices, package sizes and original purchase rows stay unchanged. Multiple catalog items or inactive SKUs require a separate catalog correction.</p>
     @if (message.Length > 0) { <p role="status">@message</p> }
     </details>
 }

@@ -102,7 +102,9 @@ public sealed class HomeDepotSupplyIntakeService(IDbContextFactory<ApplicationDb
         var actor = HomeDepotHistoryService.Administrator(user);
         await store.ChangeAsync(async state => {
             await using var db = await factory.CreateDbContextAsync(ct); await Vendor(db, vendorId, ct);
-            var catalog = await db.VendorProducts.AsNoTracking().Include(v => v.Product).Where(v => v.SupplyVendorId == vendorId).ToListAsync(ct);
+            await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({720000000000L + vendorId})", ct);
+            var catalog = await db.VendorProducts.Include(v => v.Product).Where(v => v.SupplyVendorId == vendorId).ToListAsync(ct);
             var row = Review(state, catalog, vendorId).SingleOrDefault(r => r.Sku == sku) ?? throw new ArgumentException("Source SKU no longer found.");
             if (row.EvidenceHash != evidenceHash) throw new ArgumentException("SKU evidence changed. Refresh before deciding.");
             if (existingId is int id)
@@ -110,13 +112,32 @@ public sealed class HomeDepotSupplyIntakeService(IDbContextFactory<ApplicationDb
                 var item = row.ExistingItems.SingleOrDefault(i => i.Id == id) ?? throw new ArgumentException("Choose an active existing item for this SKU.");
                 description = item.Description;
             }
-            else if (row.Sku.Length is 0 or > 100 || catalog.Any(v => Sku(v.VendorSku) == sku) || !row.Descriptions.Contains(description) || description.Length is 0 or > 300)
-                throw new ArgumentException("Choose a source description for a missing SKU, or resolve the existing catalog item first.");
+            else
+            {
+                if (row.Sku.Length is 0 or > 100 || !row.Descriptions.Contains(description) || description.Length is 0 or > 300)
+                    throw new ArgumentException("Choose a valid source description of up to 300 characters.");
+                var matching = catalog.Where(v => Sku(v.VendorSku) == sku).ToList();
+                if (matching.Count > 1 || matching.Any(v => !v.IsActive))
+                    throw new ArgumentException("Resolve duplicate or inactive catalog items before replacing their description.");
+                if (matching.Count == 1)
+                {
+                    var item = matching[0]; var previousDescription = item.VendorDescription;
+                    item.VendorDescription = description; existingId = item.Id;
+                    db.OperationalEvents.Add(new OperationalEvent {
+                        Environment = environment.EnvironmentName, Machine = System.Environment.MachineName, Service = "CharlieCompanyDashboard", Module = "HomeDepotSupplies",
+                        CorrelationId = Guid.NewGuid().ToString("N"), Step = "SupplierDescriptionReviewed", Status = "Completed", Message = "Owner selected a purchase-history description for an existing supplier SKU.",
+                        MetadataJson = JsonSerializer.Serialize(new { actor, vendorId, vendorProductId = item.Id, previousDescription, description })
+                    });
+                    await db.SaveChangesAsync(ct);
+                    evidenceHash = Review(state, catalog, vendorId).Single(r => r.Sku == sku).EvidenceHash;
+                }
+            }
+            await transaction.CommitAsync(ct);
             var before = state.SkuDecisions.Where(d => d.VendorId == vendorId && d.Sku == sku).ToList();
             state.SkuDecisions.RemoveAll(d => d.VendorId == vendorId && d.Sku == sku);
             var decision = new HomeDepotSkuDecision(vendorId, sku, evidenceHash, existingId, description, actor, DateTimeOffset.UtcNow);
             state.SkuDecisions.Add(decision);
-            state.Audit.Add(new(DateTimeOffset.UtcNow, actor, "SkuConflictReviewed", null, JsonSerializer.Serialize(before), JsonSerializer.Serialize(decision), "Reviewed existing supply identity or source description; original purchases and existing catalog retained."));
+            state.Audit.Add(new(DateTimeOffset.UtcNow, actor, "SkuConflictReviewed", null, JsonSerializer.Serialize(before), JsonSerializer.Serialize(decision), "Reviewed supplier identity or description; original purchases, SKU identity, prices and packaging retained."));
             return true;
         }, ct);
     }
