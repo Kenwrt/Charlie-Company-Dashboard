@@ -49,7 +49,7 @@ else
                 <tbody>@foreach (var item in displayed) { <tr>@foreach (var h in Columns()) { <td class="@(h == "SKU Description" ? "description" : "")">@Blank(item.Line.Value(h))</td> }<td>@Packaging(item.Line)</td><td>@JobMatch(item)</td><td><button class="btn btn-sm btn-link" @onclick="() => Open(item.Purchase)">Review transaction</button></td></tr> }</tbody>
                 <tfoot><tr>@foreach (var h in Columns()) { <td>@Footer(h, displayed)</td> }<td colspan="3"></td></tr></tfoot>
             </table></div>
-            <p>Group pages follow the earliest purchase date; undated items appear last. Same-day items retain intake/source order. Extended Retail is before discount, includes negatives, and is not a receipt total. Net unit price sum does not multiply quantity and is not an expense total.</p>
+            <p>Group pages follow the earliest purchase date; undated items appear last. Same-day items retain intake/source order. Total price sums the displayed prices; quantity is not multiplied into this total.</p>
         }
         else
         {
@@ -148,7 +148,7 @@ else
     private List<Row> Displayed() => mode == "groups" ? groups.Count > page ? groups[page].Rows : [] : Visible().Skip(page * 100).Take(100).ToList();
     private List<string> Columns()
     {
-        return ["Date", "Job Name", "SKU Number", "SKU Description", "Quantity", "Net Unit Price", "Extended Retail (before discount)"];
+        return ["Date", "Job Name", "SKU Number", "SKU Description", "Quantity", "Net Unit Price"];
     }
     private static string Packaging(HomeDepotLine line)
     {
@@ -168,9 +168,8 @@ else
     private static string Blank(string value) => string.IsNullOrEmpty(value) ? "—" : value;
     private static string Footer(string field, List<Row> rows) => field switch {
         "Date" => "Group / page subtotals",
-        "Quantity" => rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("N2"),
-        "Net Unit Price" => "Unit-price sum (not expense): " + rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("C2"),
-        "Extended Retail (before discount)" => rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("C2"), _ => "" };
+        "Quantity" => rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("N0"),
+        "Net Unit Price" => "Total price: " + rows.Sum(r => r.Line.Amount(field) ?? 0).ToString("C2"), _ => "" };
     private IEnumerable<HomeDepotDocument> Documents(HomeDepotPurchase p) => state!.Documents.Where(d => d.PurchaseId == p.Id || p.Lines.Any(l => l.Sources.Any(s => s.DocumentId == d.Id)));
     private void ResetPage() => page = 0;
     private void Previous() => page = Math.Max(0, page - 1);

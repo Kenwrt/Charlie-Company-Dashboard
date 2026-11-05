@@ -121,9 +121,9 @@ public static class HomeDepotHistoryText
     public static bool IsHomeDepotSupplier(string? name) => Normalize(name ?? "").Replace(" ", "", StringComparison.Ordinal).Contains("HOMEDEPOT", StringComparison.Ordinal);
     public static string ColumnLabel(string field) => field switch
     {
-        "Date" => "Purchase date", "Job Name" => "Source PO/job reference", "SKU Number" => "Supplier SKU",
-        "SKU Description" => "Item description", "Quantity" => "Purchased quantity", "Internet SKU" => "Home Depot internet SKU",
-        "Net Unit Price" => "Reported unit amount", "Extended Retail (before discount)" => "Reported line amount (before discount)", _ => field
+        "Date" => "Date", "Job Name" => "Job reference", "SKU Number" => "SKU",
+        "SKU Description" => "Item description", "Quantity" => "Quantity", "Internet SKU" => "Home Depot internet SKU",
+        "Net Unit Price" => "Price", "Extended Retail (before discount)" => "Reported line amount (before discount)", _ => field
     };
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = false };
     public static string Normalize(string value) => string.Join(" ", new string(value.Normalize().Select(c => char.IsLetterOrDigit(c) ? char.ToUpperInvariant(c) : ' ').ToArray()).Split(' ', StringSplitOptions.RemoveEmptyEntries));
