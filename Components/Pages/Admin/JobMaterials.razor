@@ -12,6 +12,7 @@
 <PageTitle>Job Materials and Estimate Comparison</PageTitle>
 <h1>Job materials and estimate comparison</h1>
 <p>Search by operation and job number to review purchases across connected suppliers. These are purchases allocated to the project, not proof of installed consumption.</p>
+<p><a href="/admin/home-depot-history#job-matches">Review Home Depot purchase groups and job matches</a></p>
 <div class="d-flex gap-3 align-items-end flex-wrap mb-3">
     <label>Operation<select class="form-select" @bind="operationId"><option value="0">Select operation</option>@foreach (var op in operations) { <option value="@op.Id">@op.EffectiveDisplayName</option> }</select></label>
     <label>Job number<input class="form-control" @bind="jobNumber" maxlength="100" /></label>

@@ -1,0 +1,103 @@
+@using CharleyCompany.Dashboard.Web.Models
+@using CharleyCompany.Dashboard.Web.Services
+@inject HomeDepotJobGroupsService JobGroups
+@inject HomeDepotHistoryService History
+@inject AuthenticationStateProvider Authentication
+
+<section class="card p-3 my-3" id="job-matches">
+    <h2>Purchase groups and job matches</h2>
+    <p>Unique name, address and job-number matches are assigned automatically. Only multiple possible jobs, missing jobs or source conflicts need review. A customer with several jobs still needs a job choice.</p>
+    <button class="btn btn-outline-primary" disabled="@busy" @onclick="Refresh">Refresh jobs and assign unique matches</button>
+    @if (message.Length > 0) { <p role="status">@message</p> }
+    @if (state is not null)
+    {
+        <p>@groups.Count(g => g.Pending == 0) groups assigned · @groups.Count(g => g.Pending > 0) groups need review · @groups.Sum(g => g.Pending) unassigned lines</p>
+        <div class="d-flex gap-3 flex-wrap my-2">
+            <label>Find a reference<input class="form-control" @bind="filter" @bind:after="ResetPage" /></label>
+            <label>Show<select class="form-select" @bind="show" @bind:after="ResetPage"><option value="pending">Needs review</option><option value="none">No candidate jobs</option><option value="assigned">Assigned groups</option><option value="all">All groups</option></select></label>
+        </div>
+        <div class="my-2"><button disabled="@(busy || page == 0)" @onclick="() => page--">Previous</button> Page @(page + 1) <button disabled="@(busy || (page + 1) * 20 >= Visible().Count)" @onclick="() => page++">Next</button></div>
+        <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Job reference</th><th>Purchases / lines</th><th>Unassigned</th><th>Status</th><th>Candidate jobs</th><th></th></tr></thead><tbody>
+        @foreach (var group in Visible().Skip(page * 20).Take(20))
+        {
+            <tr><td>@Label(group.Reference)</td><td>@group.Purchases / @group.Lines</td><td>@group.Pending</td><td>@group.Status</td><td>
+                @foreach (var candidate in group.Candidates.Take(3)) { <div>@candidate.Operation · Job @candidate.JobNumber · @candidate.Customer · @candidate.Address</div> }
+                @if (group.Candidates.Count > 3) { <div>@(group.Candidates.Count - 3) more candidates — open group</div> }
+            </td><td><button class="btn btn-link" disabled="@busy" @onclick="() => Open(group)">Review group</button></td></tr>
+        }
+        </tbody></table></div>
+        @if (Visible().Count == 0) { <p>No groups in this view.</p> }
+        @if (selected is not null)
+        {
+            <div class="border rounded p-3">
+                <h3>@Label(selected.Reference)</h3>
+                <p>@selected.Pending unassigned lines across @selected.Purchases purchases. Assigning this group links every currently unassigned line with this reference to the chosen job. Existing assignments and split allocations are preserved. If the reference covers several jobs, use <a href="/admin/home-depot-history/advanced">transaction review</a> to assign individual purchases or lines.</p>
+                <label>Find a different job by number, name or address<input class="form-control" @bind="query" maxlength="2000" /></label>
+                <button class="btn btn-outline-secondary my-2" disabled="@busy" @onclick="Find">Find jobs</button>
+                <label>Job<select class="form-select" @bind="choice"><option value="">Choose a job</option>
+                    @foreach (var candidate in candidates) { <option value="@Key(candidate)">@candidate.Operation · Job @candidate.JobNumber · @candidate.Customer · @candidate.Address · @candidate.Description</option> }
+                </select></label>
+                @foreach (var candidate in candidates) { <p><strong>Job @candidate.JobNumber · @candidate.Customer</strong> · @candidate.Operation · @candidate.Address<br />@candidate.Description<br />@candidate.MatchKind · @candidate.Explanation</p> }
+                <label>Reason for choosing this job<input class="form-control" @bind="reason" maxlength="2000" /></label>
+                <button class="btn btn-primary my-2" disabled="@(busy || choice.Length == 0 || selected.Pending == 0 || selected.Reference.Length == 0)" @onclick="Assign">Assign whole group to selected job</button>
+                @if (selected.Reference.Length == 0) { <p>Purchases without a reference may be unrelated; use transaction review to assign them separately.</p> }
+                <details><summary>Purchases and supplies in this group</summary>
+                    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date</th><th>SKU</th><th>Material</th><th>Quantity</th><th>Reported amount</th><th>Assigned jobs</th></tr></thead><tbody>
+                    @foreach (var purchase in state.Purchases.Where(p => p.Review.Status != "Excluded"))
+                    {
+                        @foreach (var line in purchase.ReportingLines.Where(l => HomeDepotSupplyIntakeService.Reference(l) == selected.Reference))
+                        {
+                            <tr><td>@line.Date</td><td>@line.Value("SKU Number")</td><td>@line.Value("SKU Description")</td><td>@line.Value("Quantity")</td><td>@line.Value("Extended Retail (before discount)")</td><td>@string.Join(", ", purchase.Review.MaterialAllocations.Where(a => a.LineId == line.Id).Select(a => $"Operation {a.OperationId} / job {a.JobNumber}"))</td></tr>
+                        }
+                    }
+                    </tbody></table></div>
+                </details>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private HomeDepotHistoryState? state;
+    private List<HomeDepotJobGroup> groups = [];
+    private HomeDepotJobGroup? selected;
+    private List<HomeDepotCandidate> candidates = [];
+    private string message = "", filter = "", show = "pending", choice = "", reason = "", query = "";
+    private int page;
+    private bool busy;
+    private async Task<System.Security.Claims.ClaimsPrincipal> User() => (await Authentication.GetAuthenticationStateAsync()).User;
+    protected override Task OnInitializedAsync() => Refresh();
+    private async Task Reload()
+    {
+        state = await History.ReadAsync(await User(), CancellationToken.None);
+        groups = HomeDepotJobGroupsService.Groups(state);
+        selected = selected is null ? null : groups.SingleOrDefault(g => g.Reference == selected.Reference);
+        page = Math.Min(page, Math.Max(0, (Visible().Count - 1) / 20));
+    }
+    private async Task Run(Func<Task> action)
+    {
+        busy = true;
+        try { message = ""; await action(); }
+        catch (ArgumentException ex) { message = ex.Message; await Reload(); }
+        catch { message = "Job search or assignment could not complete. Refresh to retry; an incomplete search never causes automatic assignment."; await Reload(); }
+        finally { busy = false; }
+    }
+    private Task Refresh() => Run(async () => {
+        var count = await JobGroups.RefreshAndAssignAsync(await User(), CancellationToken.None);
+        await Reload(); choice = "";
+        message = $"{count} additional purchase lines assigned to unique jobs. Remaining groups need a job choice, a job lookup or source correction.";
+    });
+    private void Open(HomeDepotJobGroup group) { selected = group; candidates = group.Candidates; choice = ""; reason = ""; query = group.Reference; }
+    private Task Find() => Run(async () => { candidates = await JobGroups.FindAsync(query, await User(), CancellationToken.None); choice = ""; message = candidates.Count == 0 ? "No matching job. Try the exact job number or a different address/name." : "Choose the job for this group."; await Reload(); });
+    private Task Assign() => Run(async () => {
+        if (selected is null || state is null) return;
+        var candidate = candidates.Single(c => Key(c) == choice);
+        var count = await JobGroups.AssignAsync(selected.Reference, candidate.OperationId, candidate.JobId,
+            state.Revision, reason, await User(), CancellationToken.None);
+        await Reload(); choice = ""; message = $"{count} purchase lines assigned. They are now available to the job materials report.";
+    });
+    private List<HomeDepotJobGroup> Visible() => groups.Where(g => (show switch { "assigned" => g.Pending == 0, "none" => g.Pending > 0 && g.Candidates.Count == 0, "all" => true, _ => g.Pending > 0 }) && g.Reference.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+    private static string Key(HomeDepotCandidate candidate) => $"{candidate.OperationId}:{candidate.JobId}";
+    private static string Label(string reference) => reference.Length == 0 ? "No job reference" : reference;
+    private void ResetPage() => page = 0;
+}

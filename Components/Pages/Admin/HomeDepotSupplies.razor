@@ -20,6 +20,7 @@
 else
 {
     @if (message.Length > 0) { <p role="status">@message</p> }
+    <HomeDepotJobGroups />
     <label>Home Depot supplier<select class="form-select" @bind="vendorId" @bind:after="Reload"><option value="0">Select supplier</option>@foreach (var vendor in vendors) { <option value="@vendor.Id">@vendor.Name</option> }</select></label>
     <div class="my-3"><button class="btn btn-primary" disabled="@(busy || vendorId == 0)" @onclick="Add">Add missing SKUs from saved history</button></div>
     <label>Or import a new order-history CSV <InputFile OnChange="Import" accept=".csv" disabled="@(busy || vendorId == 0)" /></label>
@@ -33,7 +34,8 @@ else
     @foreach (var row in Visible().Skip(page * 50).Take(50)) { <HomeDepotSkuConflictRow @key="(vendorId, row.Sku, row.EvidenceHash)" Row="row" VendorId="vendorId" Saved="Reload" /> }
     </tbody></table>
     @if (exceptionsOnly && Visible().Count == 0) { <p>No SKU conflicts in the current report.</p> }
-    <h2 id="customer-matches">Customer matches needing review</h2>
+    <details class="my-3"><summary>Optional customer-reference review</summary>
+    <h2 id="customer-matches">Customer reference choices</h2>
     <p>One customer may have several jobs. We show distinct HCP customers, not a separate customer for every job. Multiple possibilities and partial names require your review.</p>
     <button class="btn btn-outline-primary" disabled="@busy" @onclick="Match">Find / refresh customers</button>
     @if (state is not null)
@@ -74,6 +76,7 @@ else
             </details>
         }
     }
+    </details>
     <details class="mt-4"><summary>Original purchases and advanced review</summary><a href="/admin/home-depot-history/advanced">Open original purchase rows and previous review tools</a></details>
 }
 

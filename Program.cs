@@ -90,6 +90,7 @@ try
     builder.Services.AddScoped<HomeDepotHistoryStore>();
     builder.Services.AddScoped<HomeDepotHistoryService>();
     builder.Services.AddScoped<JobMaterialsService>();
+    builder.Services.AddScoped<HomeDepotJobGroupsService>();
     builder.Services.AddScoped<HomeDepotSupplyIntakeService>();
     builder.Services.AddScoped<SupplierReconciliationService>();
     builder.Services.AddScoped<SupplyLibraryExceptionService>();
