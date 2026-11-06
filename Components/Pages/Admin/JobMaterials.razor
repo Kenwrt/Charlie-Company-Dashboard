@@ -9,8 +9,8 @@
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
 @inject AuthenticationStateProvider Authentication
 
-<PageTitle>Purchased Materials by Job</PageTitle>
-<h1>Purchased materials by job</h1>
+<PageTitle>Job Materials and Estimate Comparison</PageTitle>
+<h1>Job materials and estimate comparison</h1>
 <p>Search by operation and job number to review purchases across connected suppliers. These are purchases allocated to the project, not proof of installed consumption.</p>
 <div class="d-flex gap-3 align-items-end flex-wrap mb-3">
     <label>Operation<select class="form-select" @bind="operationId"><option value="0">Select operation</option>@foreach (var op in operations) { <option value="@op.Id">@op.EffectiveDisplayName</option> }</select></label>
@@ -22,19 +22,93 @@
 {
     <h2>Job @report.JobNumber — @report.Customer</h2>
     <p>@report.Operation · Job information last synchronized @report.JobLastSyncedAt</p>
+    <section class="card p-3 mb-3" aria-label="Estimator comparison">
+        <h3>Compare with the estimator</h3>
+        @if (report.Estimates.Count == 0)
+        {
+            <p>No saved estimate is linked to this exact job in this operation. Historical purchases are shown below. An estimate must be linked to the job before it can be compared; customer names are not used to guess a match.</p>
+        }
+        else
+        {
+            <label>Saved estimate version
+                <select class="form-select" @bind="estimateVersionId">
+                    <option value="0">Select a baseline to compare</option>
+                    @foreach (var estimate in report.Estimates)
+                    {
+                        <option value="@estimate.VersionId">Estimate @estimate.QuoteCaseId · Version @estimate.VersionNumber · @estimate.Status · Created @estimate.CreatedAt.ToString("u")</option>
+                    }
+                </select>
+            </label>
+            @if (SelectedEstimate is { } baseline)
+            {
+                <p class="mt-2"><a href="@($"/estimates/{baseline.QuoteCaseId}")">Open estimate</a> · Approval recorded: @(baseline.ApprovedAt?.ToString("u") ?? "No approval timestamp")</p>
+                <p>@baseline.Note</p>
+                <p>Saved estimated material cost: <strong>@baseline.Materials.Sum(x => x.Cost).ToString("N2")</strong> (estimate currency). Purchase amounts remain separated by supplier, currency and amount basis below.</p>
+                <p>Quantity variance = net purchased quantity − estimated quantity including waste. Positive means more purchased than planned. Missing matches are unknown, not zero. Returns retain their source signs. These comparisons measure purchasing against the saved plan; they do not establish installed usage or an overall estimator accuracy score.</p>
+                @if (baseline.Materials.Count == 0)
+                {
+                    <p>No itemized selected materials are available in this baseline.</p>
+                }
+                <div class="table-responsive"><table class="table table-sm">
+                    <thead><tr><th>Supplier</th><th>SKU</th><th>Material</th><th>Unit</th><th>Planned with waste</th><th>Comparable purchased</th><th>Quantity variance</th><th>Variance %</th><th>Comparison status</th></tr></thead>
+                    <tbody>@foreach (var item in Comparison)
+                    {
+                        <tr><td>@item.Supplier</td><td>@item.Sku</td><td>@item.Description</td><td>@item.Unit</td><td>@item.EstimatedQuantity.ToString("N2")</td><td>@(item.PurchasedQuantity?.ToString("N2") ?? "—")</td><td>@(item.QuantityVariance?.ToString("+0.##;-0.##;0") ?? "—")</td><td>@(item.QuantityVariancePercent?.ToString("N1") ?? "—")</td><td>@item.Status</td></tr>
+                    }</tbody>
+                </table></div>
+                <p>Automatic quantity comparison requires an exact supplier, SKU and unit with no outstanding source review. Substitutions across suppliers and pack conversions require manual review; catalog links alone do not confirm historical packaging.</p>
+            }
+        }
+    </section>
     <p>Home Depot is prepaid credit-card purchasing and never creates accounts payable. Card reconciliation is deferred to a separate future accounting process.</p>
     <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Supplier</th><th>Amount basis</th><th>Currency</th><th>Source lines</th><th>Source amount</th></tr></thead><tbody>
         @foreach (var total in report.Subtotals) { <tr><td>@total.Supplier</td><td>@total.AmountBasis</td><td>@total.Currency</td><td>@total.Lines</td><td>@total.Amount.ToString("N2")</td></tr> }
     </tbody></table></div>
     <p>Different amount bases remain separate: Home Depot reported retail is not treated as a settled card charge, and supplier invoice lines do not silently include document-level tax or freight.</p>
-    <label>Find an item or supplier<input class="form-control" @bind="filter" @bind:after="ResetPage" /></label>
-    <div class="d-flex gap-3 my-3"><button disabled="@(page == 0)" @onclick="Previous">Previous</button><span>Page @(page + 1) · @Filtered().Count source lines</span><button disabled="@((page + 1) * 100 >= Filtered().Count)" @onclick="Next">Next</button></div>
-    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date</th><th>Supplier</th><th>Supplier SKU</th><th>Description</th><th>Quantity</th><th>Purchase unit</th><th>Source amount</th><th>Catalog link</th><th>Assignment / review</th></tr></thead><tbody>
-        @foreach (var line in Filtered().Skip(page * 100).Take(100))
+    <label>Find an item or supplier<input class="form-control" @bind="filter"  /></label>
+    <p>Vendor lists follow the item filter. Vendor totals and grand totals always cover the entire job report.</p>
+    @foreach (var vendor in report.Lines.GroupBy(x => new { x.SupplyVendorId, x.Supplier }).OrderBy(x => x.Key.Supplier))
+    {
+        <section class="card p-3 my-3">
+            <h3>@vendor.Key.Supplier</h3>
+            <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Date</th><th>Supplier SKU</th><th>Description</th><th>Quantity</th><th>Purchase unit</th><th>Source amount</th><th>Catalog link</th><th>Assignment / review</th></tr></thead><tbody>
+            @foreach (var line in vendor.Where(MatchesFilter))
+            {
+                <tr><td>@line.PurchaseDate</td><td>@line.SupplierSku</td><td>@line.Description</td><td>@line.Quantity.ToString("N2")</td><td>@line.PurchaseUnit</td><td>@(line.Amount?.ToString("N2") ?? "Missing") @line.Currency</td><td>@line.CatalogLinkStatus</td><td>@line.AssignmentBasis @if (line.NeedsReview) { <strong> · Needs review</strong> }<details><summary>Source details</summary><p>@line.Source · record @line.SourceRecordId · line @line.SourceLineId · document @line.DocumentId</p><p>@line.AmountBasis</p><p>@line.PaymentTreatment</p><p>@line.ReviewNote</p></details></td></tr>
+            }
+            </tbody></table></div>
+            <h4>Vendor totals — @vendor.Count() source lines</h4>
+            @foreach (var total in vendor.GroupBy(x => new { x.Currency, x.AmountBasis }))
+            {
+                <p><strong>@total.Where(x => x.Amount.HasValue).Sum(x => x.Amount!.Value).ToString("N2") @total.Key.Currency</strong> · @total.Key.AmountBasis · @total.Count(x => !x.Amount.HasValue) missing amounts</p>
+            }
+            <details><summary>Supply quantities by SKU and purchase unit</summary>
+                <table class="table table-sm"><thead><tr><th>SKU / material</th><th>Purchase unit</th><th>Net quantity</th></tr></thead><tbody>
+                @foreach (var item in vendor.GroupBy(x => new { x.SupplierSku, x.Description, x.PurchaseUnit }))
+                {
+                    <tr><td>@item.Key.SupplierSku · @item.Key.Description</td><td>@item.Key.PurchaseUnit</td><td>@item.Sum(x => x.Quantity).ToString("N2")</td></tr>
+                }
+                </tbody></table>
+            </details>
+        </section>
+    }
+    <section class="card p-3 my-3" aria-label="Grand totals">
+        <h3>Grand totals — all vendors</h3>
+        <p><strong>@report.Lines.Select(x => new { x.SupplyVendorId, x.Supplier }).Distinct().Count() vendors · @report.Lines.Count supply purchase lines</strong></p>
+        @foreach (var total in report.Lines.GroupBy(x => x.Currency))
         {
-            <tr><td>@line.PurchaseDate</td><td>@line.Supplier</td><td>@line.SupplierSku</td><td>@line.Description</td><td>@line.Quantity</td><td>@line.PurchaseUnit</td><td>@line.Amount?.ToString("N2") @line.Currency</td><td>@line.CatalogLinkStatus</td><td>@line.AssignmentBasis @if (line.NeedsReview) { <strong> · Needs review</strong> }<details><summary>Source details</summary><p>@line.Source · record @line.SourceRecordId · line @line.SourceLineId · document @line.DocumentId</p><p>@line.PaymentTreatment</p><p>@line.ReviewNote</p></details></td></tr>
+            <p><strong>Combined reported expenditure: @total.Where(x => x.Amount.HasValue).Sum(x => x.Amount!.Value).ToString("N2") @total.Key</strong> · @total.Count(x => !x.Amount.HasValue) missing amounts</p>
         }
-    </tbody></table></div>
+        <p>This adds the available source amounts across vendors. It mixes Home Depot retail before discount with supplier invoice line amounts, excludes unallocated tax/freight and missing amounts, and is not a settled payment total. Currencies are never combined. Returns and credits retain their source signs.</p>
+        <h4>All supplies by vendor, SKU and unit</h4>
+        <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Vendor</th><th>SKU / material</th><th>Purchase unit</th><th>Net quantity</th></tr></thead><tbody>
+        @foreach (var item in report.Lines.GroupBy(x => new { x.SupplyVendorId, x.Supplier, x.SupplierSku, x.Description, x.PurchaseUnit }).OrderBy(x => x.Key.Supplier).ThenBy(x => x.Key.Description))
+        {
+            <tr><td>@item.Key.Supplier</td><td>@item.Key.SupplierSku · @item.Key.Description</td><td>@item.Key.PurchaseUnit</td><td>@item.Sum(x => x.Quantity).ToString("N2")</td></tr>
+        }
+        </tbody></table></div>
+        <p>Quantities remain separated by material and purchase unit; boards, boxes and other unlike supplies are not added into one misleading quantity.</p>
+    </section>
     @if (report.Lines.Count == 0) { <p>No attributed purchase lines are available for this job in the connected sources. See coverage and unassigned items below; this does not establish that no materials were purchased.</p> }
     <h3>Coverage and outstanding review</h3><ul>@foreach (var note in report.Coverage) { <li>@note</li> }</ul>
     @if (report.HomeDepotRevision is not null)
@@ -69,7 +143,10 @@
     private List<LocalOperation> operations = [];
     private List<SupplyVendor> vendors = [];
     private JobMaterialsReport? report;
-    private int operationId, supplierId, page;
+    private int operationId, supplierId, estimateVersionId;
+    private JobMaterialEstimate? SelectedEstimate => report?.Estimates.SingleOrDefault(x => x.VersionId == estimateVersionId);
+    private List<JobMaterialComparison> Comparison => report is not null && SelectedEstimate is { } estimate
+        ? JobMaterialsService.Compare(report, estimate) : [];
     private string jobNumber = "", message = "", reason = "", reference = "", sourceSku = "", catalogSku = "", filter = "";
     private DateOnly? from, through;
     private bool busy;
@@ -91,9 +168,10 @@
     private async Task Load()
     {
         report = await Materials.ReportAsync(operationId, jobNumber, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
-        supplierId = report.HomeDepotSupplyVendorId ?? 0; page = 0;
+        supplierId = report.HomeDepotSupplyVendorId ?? 0;
+        if (!report.Estimates.Any(x => x.VersionId == estimateVersionId)) estimateVersionId = 0;
     }
-    private async Task Search() => await Run(async () => { report = null; await Load(); });
+    private async Task Search() => await Run(async () => { report = null; estimateVersionId = 0; filter = ""; await Load(); });
     private async Task SaveSupplier() => await Run(async () => {
         if (report?.HomeDepotRevision is not long revision) return;
         await Materials.SelectSupplierAsync(supplierId, revision, reason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
@@ -116,9 +194,6 @@
         await Materials.UnlinkReferenceAsync(link, revision, reason, (await Authentication.GetAuthenticationStateAsync()).User, CancellationToken.None);
         await Load(); message = "Reference link removed with audit history; source evidence remains intact.";
     });
-    private List<JobMaterialLine> Filtered() => report?.Lines.Where(x => filter.Trim().Length == 0 ||
-        (x.Supplier + " " + x.SupplierSku + " " + x.Description).Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase)).ToList() ?? [];
-    private void ResetPage() => page = 0;
-    private void Previous() => page = Math.Max(0, page - 1);
-    private void Next() => page++;
+    private bool MatchesFilter(JobMaterialLine line) => filter.Trim().Length == 0 ||
+        (line.Supplier + " " + line.SupplierSku + " " + line.Description).Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase);
 }

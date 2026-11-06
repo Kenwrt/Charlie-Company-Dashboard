@@ -23,4 +23,17 @@ public sealed class JobMaterialsReport
     public int? HomeDepotSupplyVendorId { get; set; }
     public List<HomeDepotSourceReference> HomeDepotReferences { get; set; } = [];
     public List<HomeDepotJobReferenceLink> HomeDepotReferenceLinks { get; set; } = [];
+    public List<JobMaterialEstimate> Estimates { get; set; } = [];
+}
+
+public sealed record JobMaterialEstimate(int VersionId, int QuoteCaseId, int VersionNumber,
+    string Status, DateTimeOffset CreatedAt, DateTimeOffset? ApprovedAt,
+    List<JobEstimatedMaterial> Materials, string Note);
+public sealed record JobEstimatedMaterial(string Supplier, string Sku, string Description,
+    string Unit, decimal Quantity, decimal PlannedQuantity, decimal Cost);
+public sealed record JobMaterialComparison(string Supplier, string Sku, string Description, string Unit,
+    decimal EstimatedQuantity, decimal? PurchasedQuantity, decimal EstimatedCost, string Status)
+{
+    public decimal? QuantityVariance => PurchasedQuantity - EstimatedQuantity;
+    public decimal? QuantityVariancePercent => EstimatedQuantity == 0 ? null : QuantityVariance / EstimatedQuantity * 100m;
 }

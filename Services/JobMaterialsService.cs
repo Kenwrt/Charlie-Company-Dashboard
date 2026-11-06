@@ -143,7 +143,65 @@ public sealed class JobMaterialsService(IDbContextFactory<ApplicationDbContext> 
         report.Lines = report.Lines.OrderBy(x => x.PurchaseDate ?? DateOnly.MaxValue).ThenBy(x => x.Supplier).ThenBy(x => x.SourceLineId).ToList();
         report.Subtotals = report.Lines.GroupBy(x => new { x.Supplier, x.Currency, x.AmountBasis }).Select(g =>
             new JobMaterialSubtotal(g.Key.Supplier, g.Key.Currency, g.Key.AmountBasis, g.Sum(x => x.Amount ?? 0), g.Count())).ToList();
+        var versions = await db.QuoteVersions.AsNoTracking().Include(x => x.Lines)
+            .Where(x => x.QuoteCase.LocalOperationId == operationId && x.QuoteCase.HousecallProJobId == job.ExternalId)
+            .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).ToListAsync(ct);
+        foreach (var version in versions)
+        {
+            var materials = new List<JobEstimatedMaterial>();
+            var note = "Saved selected options; planned quantity includes the saved waste allowance. This is the saved version, not a reconstructed estimate at purchase time.";
+            try
+            {
+                if (version.OptionsJson is not null)
+                {
+                    var options = EstimateOptions.Read(version.OptionsJson);
+                    foreach (var material in options.Selected.SelectMany(x => x.Materials))
+                        materials.Add(new(material.VendorName, material.VendorSku ?? "", material.Description,
+                            material.Unit, material.Quantity, material.Quantity * (1 + material.WastePercent / 100m), material.ExtendedCost));
+                    if (!options.HasCalculatedCosts) note += " Selected options are incomplete or their calculations are not current.";
+                }
+                else
+                {
+                    materials.AddRange(version.Lines.OrderBy(x => x.SortOrder).Select(x => new JobEstimatedMaterial(
+                        "Unspecified supplier", "", x.Description, x.Unit, x.Quantity,
+                        x.Quantity * (1 + x.WastePercent / 100m), decimal.Round(x.Quantity * x.MaterialUnitCost * (1 + x.WastePercent / 100m), 2))));
+                    note = "Legacy saved estimate lines have no supplier SKU identity; they require manual comparison and may contain task-level material allowances.";
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or NotSupportedException)
+            {
+                materials.Clear(); note = "The saved material list could not be read. This is missing estimate evidence, not a zero estimate.";
+            }
+            report.Estimates.Add(new(version.Id, version.QuoteCaseId, version.VersionNumber, version.Status,
+                version.CreatedAt, version.ApprovedAt, materials, note));
+        }
         return report;
+    }
+
+    public static List<JobMaterialComparison> Compare(JobMaterialsReport report, JobMaterialEstimate estimate)
+    {
+        // Keep supplier SKU and purchase-unit semantics intact. Catalog identity alone
+        // does not prove that historical packs and estimator units are interchangeable.
+        var result = new List<JobMaterialComparison>();
+        var matched = new HashSet<JobMaterialLine>();
+        foreach (var group in estimate.Materials.GroupBy(x => new { Supplier = Key(x.Supplier), Sku = Key(x.Sku), Unit = Key(x.Unit) }))
+        {
+            var first = group.First();
+            var candidates = group.Key.Sku.Length == 0 ? [] : report.Lines.Where(x =>
+                Key(x.Supplier) == group.Key.Supplier && Key(x.SupplierSku) == group.Key.Sku).ToList();
+            var comparable = candidates.Count > 0 && candidates.All(x => Key(x.PurchaseUnit) == group.Key.Unit && !x.NeedsReview);
+            if (comparable) foreach (var line in candidates) matched.Add(line);
+            result.Add(new(first.Supplier, first.Sku, string.Join("; ", group.Select(x => x.Description).Distinct()), first.Unit,
+                group.Sum(x => x.PlannedQuantity), comparable ? candidates.Sum(x => x.Quantity) : null,
+                group.Sum(x => x.Cost), comparable ? "Exact supplier / SKU / unit; net purchased quantity"
+                    : group.Key.Sku.Length == 0 ? "No saved supplier SKU; manual comparison required"
+                    : candidates.Count > 0 ? "Purchase found; units, packaging or source review prevents quantity comparison"
+                    : "No attributed purchase match; check coverage, substitutions and other suppliers"));
+        }
+        foreach (var group in report.Lines.Where(x => !matched.Contains(x)).GroupBy(x => new { x.Supplier, x.SupplierSku, x.PurchaseUnit }))
+            result.Add(new(group.Key.Supplier, group.Key.SupplierSku, string.Join("; ", group.Select(x => x.Description).Distinct()),
+                group.Key.PurchaseUnit, 0, null, 0, "Purchase requires comparison — absent from estimate or not safely matched; see source lines"));
+        return result;
     }
 
     private async Task ValidateJobAsync(int operationId, string jobId, string jobNumber, CancellationToken ct)
