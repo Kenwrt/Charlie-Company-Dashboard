@@ -360,7 +360,7 @@ public sealed class ScheduledReportService(
             .ToList();
         return reportType switch
         {
-            "estimate-follow-up" => BuildEstimateFollowUpReport(reportDate, estimates),
+            "estimate-follow-up" => BuildEstimateFollowUpReport(reportDate, localDate, estimates),
             "expired-estimates" => BuildExpiredEstimatesReport("Expired estimates", reportDate,
                 $"Housecall Pro estimates marked expired from {expiredWindowStart:MMMM d, yyyy} through {expiredWindowEnd:MMMM d, yyyy}.", expiredEstimates),
             "expired-estimates-current-month" => BuildExpiredEstimatesReport("Expired Estimates for the Current Month", reportDate,
@@ -401,17 +401,19 @@ public sealed class ScheduledReportService(
             [new("Category"), new("Records", true), new("Financial value", true), new("Description")], rows);
     }
 
-    private static ScheduledReportDocument BuildEstimateFollowUpReport(string reportDate, IReadOnlyCollection<HousecallProEstimate> estimates)
+    private static ScheduledReportDocument BuildEstimateFollowUpReport(string reportDate, DateOnly localDate, IReadOnlyCollection<HousecallProEstimate> estimates)
     {
         var items = estimates.Where(estimate => estimate.InternalStatus is HousecallProEstimateStatuses.FollowUp or HousecallProEstimateStatuses.FollowUpPending)
             .OrderBy(estimate => estimate.EstimateDate).ToList();
         var rows = items.Select(estimate => new ScheduledReportRow([
             Value(estimate.EstimateNumber, "Not provided"), Value(estimate.CustomerName, "Not recorded"),
             estimate.EstimateDate?.ToString("MM/dd/yyyy") ?? "Not provided", Value(estimate.InternalStatus, "Follow up"),
-            estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+            estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])
+            { EstimateDate = estimate.EstimateDate }).ToList();
         rows.Add(new(["Total", $"{items.Count:N0} estimates", "", "", items.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new("Estimate follow-up", reportDate, "Estimates that require an additional customer follow-up.",
-            [new("Estimate"), new("Customer"), new("Estimate date"), new("Status"), new("Amount", true)], rows);
+        return new("Estimate follow-up", reportDate, $"Estimates that require an additional customer follow-up. {EstimateAge.Legend}",
+            [new("Estimate"), new("Customer"), new("Estimate date"), new("Status"), new("Amount", true)], rows)
+            { EstimateAgeAsOf = localDate };
     }
 
     private static ScheduledReportDocument BuildExpiredEstimatesReport(

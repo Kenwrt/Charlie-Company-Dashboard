@@ -5,13 +5,19 @@ using System.Text.Json;
 namespace CharleyCompany.Dashboard.Web.Services;
 
 public sealed record ScheduledReportColumn(string Heading, bool AlignRight = false);
-public sealed record ScheduledReportRow(IReadOnlyList<string> Cells, bool IsTotal = false);
+public sealed record ScheduledReportRow(IReadOnlyList<string> Cells, bool IsTotal = false)
+{
+    public DateTimeOffset? EstimateDate { get; init; }
+}
 public sealed record ScheduledReportDocument(
     string ReportName,
     string ReportDate,
     string Description,
     IReadOnlyList<ScheduledReportColumn> Columns,
-    IReadOnlyList<ScheduledReportRow> Rows);
+    IReadOnlyList<ScheduledReportRow> Rows)
+{
+    public DateOnly? EstimateAgeAsOf { get; init; }
+}
 
 public static class ScheduledReportFormatter
 {
@@ -66,11 +72,13 @@ public static class ScheduledReportFormatter
         html.Append("</tr></thead><tbody>");
         foreach (var row in document.Rows)
         {
+            var background = document.EstimateAgeAsOf is { } asOf ? EstimateAge.Background(row.EstimateDate, asOf) : null;
+            var cellColor = background is null ? "" : $";background-color:{background};color:#142033";
             html.Append(row.IsTotal ? "<tr style=\"background:#eef7f1;font-weight:700\">" : "<tr>");
             for (var index = 0; index < document.Columns.Count; index++)
             {
                 var cell = index < row.Cells.Count ? row.Cells[index] : string.Empty;
-                html.Append($"<td style=\"padding:11px 12px;border-bottom:1px solid #dfe6ef;vertical-align:top;text-align:{(document.Columns[index].AlignRight ? "right" : "left")}\">{Encode(cell)}</td>");
+                html.Append($"<td style=\"padding:11px 12px;border-bottom:1px solid #dfe6ef;vertical-align:top;text-align:{(document.Columns[index].AlignRight ? "right" : "left")}{cellColor}\">{Encode(cell)}</td>");
             }
             html.Append("</tr>");
         }
