@@ -1,0 +1,116 @@
+@page "/admin/ccvg-connection"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = ApplicationRoles.Administrator)]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Options
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@inject IDbContextFactory<ApplicationDbContext> Databases
+@inject CcvgConnectionService Connection
+@inject CcvgWebhookTestStore Receipts
+@inject IOptions<HousecallProOptions> HcpOptions
+@inject IOptions<CcvgWebhookTestOptions> WebhookOptions
+@inject AuthenticationStateProvider Authentication
+@inject ILogger<CcvgConnection> Logger
+
+<PageTitle>CCVG connection</PageTitle>
+<h1>CCVG connection</h1>
+<p>Discover Housecall Pro companies, associate them with existing local operations, and inspect isolated webhook receipts.</p>
+<p>API: @(HcpOptions.Value.Ccvg.Enabled ? "Enabled" : "Disabled") · Test webhook: @(WebhookOptions.Value.Enabled ? "Enabled" : "Disabled")</p>
+<p>The existing Nashville connection remains selected unless its slug is explicitly configured to use CCVG. Mapping a location does not enable CCVG synchronization.</p>
+@if (message is not null) { <div class="alert alert-info" role="status">@message</div> }
+<section class="mb-4">
+    <h2>Company mapping</h2>
+    <button class="btn btn-outline-primary mb-3" disabled="@busy" @onclick="DiscoverAsync">Discover CCVG locations</button>
+    <div class="row g-3">
+        <div class="col-md-5">
+            <label for="ccvg-operation">Existing operation</label>
+            <select id="ccvg-operation" class="form-select" @bind="operationId" @bind:after="ClearSamples" disabled="@busy">
+                <option value="0">Select operation</option>
+                @foreach (var op in operations) { <option value="@op.Id">@op.EffectiveDisplayName</option> }
+            </select>
+        </div>
+        <div class="col-md-5">
+            <label for="ccvg-location">Discovered HCP company</label>
+            <select id="ccvg-location" class="form-select" @bind="companyId" disabled="@busy">
+                <option value="">Select company</option>
+                @foreach (var location in locations) { <option value="@location.Id">@location.Name (@location.Id)</option> }
+            </select>
+        </div>
+        <div class="col-12">
+            <button class="btn btn-primary" disabled="@(busy || operationId == 0 || string.IsNullOrWhiteSpace(companyId))" @onclick="MapAsync">Save location mapping</button>
+            <button class="btn btn-outline-primary" disabled="@(busy || operationId == 0)" @onclick="SampleAsync">Read CCVG sample without importing</button>
+        </div>
+    </div>
+    <table class="table mt-3"><thead><tr><th>Operation</th><th>HCP company ID</th><th>Selected API connection</th></tr></thead><tbody>
+        @foreach (var op in operations)
+        {
+            <tr><td>@op.EffectiveDisplayName</td><td>@(op.HousecallProLocationId ?? "Unmapped")</td><td>@(HcpOptions.Value.Ccvg.UsesOperation(op.Slug) ? "CCVG (requires enabled connection)" : "Existing local configuration")</td></tr>
+        }
+    </tbody></table>
+    @foreach (var sample in samples) { <p>@sample.Collection: @sample.TotalItems total reported by HCP; @sample.SampleCount record(s) inspected. No import performed.</p> }
+</section>
+<section>
+    <h2>Isolated webhook receipts</h2>
+    <p>Endpoint: <code>/webhooks/housecallpro/ccvg</code>. Only signature-verified event metadata is retained. Events do not trigger dashboard imports or notifications. Unmapped companies remain unassigned.</p>
+    <label for="ccvg-event-filter">Event type</label>
+    <input id="ccvg-event-filter" class="form-control" @bind="eventFilter" maxlength="120" />
+    <label for="ccvg-from">Received since (UTC)</label>
+    <input id="ccvg-from" type="datetime-local" class="form-control" @bind="fromUtc" />
+    <button class="btn btn-outline-primary mt-2" disabled="@busy" @onclick="RefreshReceiptsAsync">Refresh metadata</button>
+    <p class="mt-2">@filtered.Count retained matching receipts. Page @(page).</p>
+    <table class="table"><thead><tr><th>Received UTC</th><th>Event</th><th>Operation</th><th>Bytes</th><th>Known root fields</th></tr></thead><tbody>
+        @foreach (var receipt in filtered.Skip((page - 1) * 50).Take(50))
+        {
+            <tr><td>@receipt.ReceivedAtUtc.ToString("u")</td><td>@receipt.EventType</td><td>@(operations.FirstOrDefault(x => x.Id == receipt.OperationId)?.EffectiveDisplayName ?? "Unmapped")</td><td>@receipt.Bytes</td><td>@string.Join(", ", receipt.RootFields)</td></tr>
+        }
+    </tbody></table>
+    <button class="btn btn-outline-secondary" disabled="@(page <= 1)" @onclick="() => page--">Previous</button>
+    <button class="btn btn-outline-secondary" disabled="@(page * 50 >= filtered.Count)" @onclick="() => page++">Next</button>
+</section>
+
+@code {
+    private List<LocalOperation> operations = [];
+    private IReadOnlyList<CcvgLocation> locations = [];
+    private IReadOnlyList<CcvgReadSample> samples = [];
+    private List<CcvgWebhookReceipt> filtered = [];
+    private int operationId, page = 1;
+    private string companyId = "", eventFilter = "";
+    private DateTime? fromUtc;
+    private bool busy;
+    private string? message;
+    protected override async Task OnInitializedAsync() => await ReloadOperationsAsync();
+    private async Task ReloadOperationsAsync()
+    {
+        await using var db = await Databases.CreateDbContextAsync();
+        operations = await db.LocalOperations.AsNoTracking().OrderBy(x => x.Name).ToListAsync();
+    }
+    private void ClearSamples() { samples = []; }
+    private async Task RunAsync(Func<Task> action)
+    {
+        busy = true; message = null;
+        try { await action(); }
+        catch (Exception ex)
+        {
+            Logger.LogWarning("CCVG administrator action stopped with {ErrorType}", ex.GetType().Name);
+            message = "The action could not complete. Check CCVG enablement, protected credentials, and location mappings. No fallback connection was used.";
+        }
+        finally { busy = false; }
+    }
+    private Task DiscoverAsync() => RunAsync(async () => { locations = await Connection.DiscoverAsync(); message = "Locations discovered; no operations were created or enabled."; });
+    private Task MapAsync() => RunAsync(async () => { await Connection.MapAsync(operationId, companyId); samples = []; await ReloadOperationsAsync(); message = "Location mapping saved. API connection selection is unchanged."; });
+    private Task SampleAsync() => RunAsync(async () => { samples = []; samples = await Connection.ReadSampleAsync(operationId); });
+    private Task RefreshReceiptsAsync() => RunAsync(async () =>
+    {
+        var user = (await Authentication.GetAuthenticationStateAsync()).User;
+        if (!user.IsInRole(ApplicationRoles.Administrator)) throw new UnauthorizedAccessException();
+        var rows = await Receipts.ReadAsync(default);
+        filtered = rows.Where(x => (string.IsNullOrWhiteSpace(eventFilter) || x.EventType == eventFilter.Trim())
+            && (fromUtc is null || x.ReceivedAtUtc.UtcDateTime >= DateTime.SpecifyKind(fromUtc.Value, DateTimeKind.Utc))).ToList();
+        page = 1;
+        Logger.LogInformation("CCVG receipt metadata viewed by {ActorId} at {UtcTime}", user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, DateTimeOffset.UtcNow);
+    });
+}

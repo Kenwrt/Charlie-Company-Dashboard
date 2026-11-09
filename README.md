@@ -1,5 +1,85 @@
 # Charley Company Dashboard
 
+## CCVG connection and isolated webhook evaluation
+
+Both CCVG capabilities default to disabled. Existing Nashville credential fallback,
+local-operation credentials, and `/api/housecallpro/webhooks` are retained.
+No database migration is required: mappings reuse `LocalOperation.HousecallProLocationId`.
+
+Administrator tools are at `/admin/ccvg-connection`, also linked from Operations Admin.
+Discovery explicitly reads HCP `/company`; it does not create operations. Administrators
+can map discovered companies to existing operations and request one jobs/estimates
+sample page (page size 1). Samples expose totals, not customer records, and do not import.
+Mapping changes are logged with actor, operation, old/new company IDs and UTC time.
+The existing integration secret-reference editor remains metadata only; it is not a
+general-purpose secret-manager resolver.
+
+Protected configuration names (configure through the deployment's approved secret mechanism):
+
+| Setting | Purpose/default |
+|---|---|
+| `HousecallPro__Ccvg__Enabled` | Enables CCVG API use/discovery; false by default |
+| `HousecallPro__Ccvg__ApiKey` | CCVG API credential; never enter in source or the administration page |
+| `HousecallPro__Ccvg__OperationSlugs__0` (and subsequent indices) | Explicit operations that use CCVG for ordinary reads/imports; empty by default |
+| `CcvgWebhookTest__Enabled` | Enables the isolated receiver; false by default |
+| `CcvgWebhookTest__SigningSecret` | Dedicated CCVG HCP signing secret |
+| `CcvgWebhookTest__AllowRegistrationChallenge` | Temporary acceptance of the exact unsigned `{"foo":"bar"}` registration request; false by default |
+| `CcvgWebhookTest__Directory` | Separate private metadata directory, outside source and the web root |
+| `CcvgWebhookTest__RetentionHours` | 24 by default, bounded to 1–168; pruning every 15 minutes while enabled |
+| `CcvgWebhookTest__MaxEvents` | 1000 by default, bounded to 1–1000 |
+| `CcvgWebhookTest__MaxBodyBytes` | 262144 by default, bounded to 1024–1048576 |
+| `CcvgWebhookTest__TimestampToleranceSeconds` | 300 by default, bounded to 30–900 |
+
+CCVG-selected operations require an active existing operation and a company mapping.
+They use the umbrella credential plus `X-Company-Id`; a disabled/missing CCVG credential
+does not fall back to Nashville. CCVG responses must carry matching record company IDs;
+unrecognized or mismatched scoped responses fail closed. Invoice REST responses omit
+company IDs: CCVG invoice lookup uses HCP's documented `X-Company-Id` scope on the
+official invoice-list endpoint and checks any company identity supplied in a record.
+It does not require invoice parent jobs to remain readable (historical invoices can
+reference jobs returning 404). Payment-history lookup verifies the parent job first;
+the job-specific URL provides context when history entries omit job/company IDs.
+Any supplied job or company identity must agree with that context.
+The CCVG transport uses only
+the official HTTPS API host and does not follow redirects. Leave Nashville out of
+`OperationSlugs` to keep its current connection. Establish mappings and use the sample
+action before selecting operations for live synchronization. Retain the same company
+identity when switching an existing operation; caches/imported records belong to that
+operation and are not purged automatically by mapping edits.
+
+The new anonymous ingress is **POST `/webhooks/housecallpro/ccvg`**. It returns 404 while
+disabled. It never invokes the legacy webhook handler, imports, or notification services.
+It authenticates `Api-Timestamp` and `Api-Signature` using HMAC-SHA256 over the timestamp,
+a period, and the original body bytes; hexadecimal and Base64 encodings of the digest
+are accepted with constant-time comparison. Timestamp tolerance, a 10-second read
+deadline, bounded bodies, and a separate global 120-requests/minute limiter apply.
+Missing signing configuration returns 503; invalid signatures return 401. Duplicates
+are acknowledged without adding another receipt, using a payload hash within the
+bounded retention window. The registration exception never becomes a trusted receipt;
+disable it immediately after saving the HCP URL and configuring the signing secret.
+
+Only verified event metadata is stored: receipt time, event type, company hash, mapped
+operation ID (or unassigned), byte count, known root field names, and payload hash.
+Raw bodies, signatures, API keys, customer values and financial values are not stored.
+Metadata appears on the Administrator page with event/time filters and pagination;
+the Administrator-only GET `/api/admin/ccvg/webhook-receipts` also supports `page`,
+`eventType`, `operationId`, and `fromUtc`. Metadata reads are audit logged.
+
+Provision the metadata directory with access restricted to the service identity and
+administrators. Use one writer process per directory, with separate directories for
+separate application instances. Pruning pauses while the feature/service is stopped;
+account for that in operational retention procedures. Acknowledgement means receipt
+metadata was persisted, not that records were imported or any downstream action ran.
+
+This source change does not create DNS, tunnels, certificates, public URLs or HCP
+subscriptions. Deployment, protected settings and external registration are separate
+steps. In particular `ccvgapi.healthcareautomation.services` is not made live by adding
+this endpoint. No production activation or verification is implied.
+
+Official protocol references:
+[multi-location APIs](https://docs.housecallpro.com/docs/housecall-public-api/4c64fe617d191-multi-location-enabled-ap-is)
+and [webhook signing](https://docs.housecallpro.com/docs/housecall-public-api/46e9e1be07621-webhooks).
+
 Blazor Server dashboard for Charley Company operations metrics.
 
 ## Included

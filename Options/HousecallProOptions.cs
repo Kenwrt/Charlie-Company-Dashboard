@@ -10,6 +10,8 @@ public sealed class HousecallProOptions
 
     public Dictionary<string, string> OperationApiKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public CcvgConnectionOptions Ccvg { get; set; } = new();
+
     public bool UseMockDataWhenApiKeyIsPlaceholder { get; set; } = true;
 
     public int SyncIntervalSeconds { get; set; } = 300;
@@ -38,6 +40,10 @@ public sealed class HousecallProOptions
 
     public string? GetApiKey(string operationSlug)
     {
+        // Explicit opt-in only. Never fall back to a local key if CCVG is misconfigured.
+        if (Ccvg.UsesOperation(operationSlug))
+            return Ccvg.Enabled && IsUsable(Ccvg.ApiKey) ? Ccvg.ApiKey : null;
+
         if (OperationApiKeys.TryGetValue(operationSlug, out var operationKey) && IsUsable(operationKey))
         {
             return operationKey;
@@ -52,4 +58,12 @@ public sealed class HousecallProOptions
     private static bool IsUsable(string? value) =>
         !string.IsNullOrWhiteSpace(value)
         && !value.Contains("PLACEHOLDER", StringComparison.OrdinalIgnoreCase);
+}
+
+public sealed class CcvgConnectionOptions
+{
+    public bool Enabled { get; set; }
+    public string ApiKey { get; set; } = "";
+    public string[] OperationSlugs { get; set; } = [];
+    public bool UsesOperation(string slug) => OperationSlugs.Contains(slug, StringComparer.OrdinalIgnoreCase);
 }

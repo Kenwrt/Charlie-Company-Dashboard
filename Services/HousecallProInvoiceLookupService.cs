@@ -13,6 +13,7 @@ public sealed class HcpInvoiceLookupException(string message) : Exception(messag
 
 // A user-triggered diagnostic read. No shared cache writes, invoice writes, or raw payload exports.
 public sealed class HousecallProInvoiceLookupService(HttpClient client, IOptions<HousecallProOptions> options,
+    HousecallProConnectionResolver connections,
     OperationAccessService operationAccess, ILogger<HousecallProInvoiceLookupService> logger)
 {
     public async Task<HcpInvoiceLookupResult> FindAsync(string operationSlug, string input,
@@ -25,7 +26,7 @@ public sealed class HousecallProInvoiceLookupService(HttpClient client, IOptions
             .Distinct(StringComparer.Ordinal).ToArray();
         if (numbers.Length is < 1 or > 10 || numbers.Any(x => x.Length > 80 || x.Any(char.IsControl)))
             throw new HcpInvoiceLookupException("Enter between one and ten invoice numbers, separated by commas.");
-        var apiKey = options.Value.GetApiKey(operationSlug);
+        var apiKey = await connections.ResolveAsync(operationSlug, cancellationToken);
         if (apiKey is null) throw new HcpInvoiceLookupException("This operation has no configured HCP credential. No sample data was substituted.");
         if (!Uri.TryCreate(options.Value.BaseUrl, UriKind.Absolute, out var configuredBase) ||
             configuredBase.Scheme != "https" || configuredBase.Host != "api.housecallpro.com" ||
@@ -48,7 +49,7 @@ public sealed class HousecallProInvoiceLookupService(HttpClient client, IOptions
                     $"https://api.housecallpro.com/invoices?page={page}&page_size=100&sort_by=created_at&sort_direction=asc");
                 // Intentionally reuse the deployed dashboard's existing Bearer convention.
                 // Do not change other HCP services or try alternative authentication automatically.
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                apiKey.Apply(request);
                 request.Headers.Accept.Add(new("application/json"));
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
                 if (!response.IsSuccessStatusCode)
@@ -56,6 +57,9 @@ public sealed class HousecallProInvoiceLookupService(HttpClient client, IOptions
                 await response.Content.LoadIntoBufferAsync(8 * 1024 * 1024, deadline.Token);
                 using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(deadline.Token));
                 var root = document.RootElement;
+                // The official scoped list also includes historical invoices for jobs
+                // that may no longer be readable. Do not infer scope from their numbers.
+                apiKey.ValidateScopedInvoiceList(root);
                 var pages = root.GetProperty("total_pages").GetInt64();
                 var count = root.GetProperty("total_items").GetInt64();
                 if (root.GetProperty("page").GetInt32() != page || pages < 0 || pages > maxPages || count < 0 ||

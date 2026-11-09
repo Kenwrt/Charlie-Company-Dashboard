@@ -40,6 +40,8 @@ public sealed record HcpCloseRateSummary(int Estimates, int ClosedJobs, int Reve
 
 public sealed class HousecallProDataService(
     HttpClient httpClient,
+    IHttpClientFactory clients,
+    HousecallProConnectionResolver connections,
     IServiceScopeFactory scopeFactory,
     IOptions<HousecallProOptions> options,
     IMemoryCache cache,
@@ -50,7 +52,7 @@ public sealed class HousecallProDataService(
 
     public async Task<List<HcpSupplierJob>> GetSupplierJobsAsync(string operationSlug, CancellationToken ct)
     {
-        var key = settings.GetApiKey(operationSlug);
+        var key = await connections.ResolveAsync(operationSlug, ct);
         if (key is null) throw new ArgumentException("Housecall Pro job lookup is unavailable for this location; no empty search was assumed.");
         return (await cache.GetOrCreateAsync("supplier-job-lookup:" + operationSlug, async entry =>
         {
@@ -105,7 +107,7 @@ public sealed class HousecallProDataService(
 
     public async Task RefreshCloseRateAsync(LocalOperation operation, CancellationToken cancellationToken)
     {
-        var apiKey = settings.GetApiKey(operation.Slug);
+        var apiKey = await connections.ResolveAsync(operation.Slug, cancellationToken);
         if (apiKey is null) return;
         var gate = closeRateCache.Gate(operation.Slug);
         await gate.WaitAsync(cancellationToken);
@@ -138,7 +140,7 @@ public sealed class HousecallProDataService(
     }
 
     private async Task<List<JsonElement>> GetCloseRateChangesAsync(string endpoint, string collection,
-        string apiKey, DateTimeOffset? since, CancellationToken cancellationToken)
+        HcpConnection apiKey, DateTimeOffset? since, CancellationToken cancellationToken)
     {
         var result = new List<JsonElement>();
         var page = 1;
@@ -183,6 +185,10 @@ public sealed class HousecallProDataService(
 
     public async Task SyncOperationAsync(LocalOperation operation, string apiKey, CancellationToken cancellationToken = default)
     {
+        var connection = settings.Ccvg.UsesOperation(operation.Slug)
+            ? await connections.ResolveAsync(operation.Slug, cancellationToken)
+                ?? throw new InvalidOperationException("CCVG connection is disabled or missing its credential.")
+            : new HcpConnection(apiKey, null);
         await using var dataScope = scopeFactory.CreateAsyncScope();
         var dbContext = dataScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         // The Jobs page is the operational system of record, so its synchronized cache must
@@ -190,13 +196,13 @@ public sealed class HousecallProDataService(
         var jobs = await GetPagesAsync(
             settings.JobsEndpoint,
             "jobs",
-            apiKey,
+            connection,
             cancellationToken,
             maxPages: int.MaxValue);
         var estimates = await GetPagesAsync(
             settings.EstimatesEndpoint,
             "estimates",
-            apiKey,
+            connection,
             cancellationToken,
             maxPages: int.MaxValue);
         var syncedAt = DateTimeOffset.UtcNow;
@@ -280,7 +286,7 @@ public sealed class HousecallProDataService(
         return await cache.GetOrCreateAsync(key, async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-            var apiKey = settings.GetApiKey(operationSlug);
+            var apiKey = await connections.ResolveAsync(operationSlug, cancellationToken);
             if (apiKey is null) return null;
             var baseEndpoint = kind.Equals("job", StringComparison.OrdinalIgnoreCase) ? settings.JobsEndpoint : settings.EstimatesEndpoint;
             using var document = await GetDocumentAsync($"{baseEndpoint.TrimEnd('/')}/{Uri.EscapeDataString(externalId)}", apiKey, cancellationToken);
@@ -308,7 +314,7 @@ public sealed class HousecallProDataService(
         if (string.IsNullOrWhiteSpace(estimateNumber)) return null;
         var parentEstimateNumber = ParentEstimateNumber(estimateNumber);
 
-        var apiKey = settings.GetApiKey(operationSlug);
+        var apiKey = await connections.ResolveAsync(operationSlug, cancellationToken);
         if (apiKey is null) return null;
 
         string? externalId;
@@ -425,13 +431,20 @@ public sealed class HousecallProDataService(
         return await cache.GetOrCreateAsync(key, async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-            var apiKey = settings.GetApiKey(operationSlug);
+            var apiKey = await connections.ResolveAsync(operationSlug, cancellationToken);
             if (apiKey is null) return null;
 
+            if (apiKey.CompanyId is not null)
+            {
+                using var owningJob = await GetDocumentAsync(
+                    $"{settings.JobsEndpoint.TrimEnd('/')}/{Uri.EscapeDataString(externalId)}", apiKey, cancellationToken);
+                if (Text(owningJob.RootElement, "id") != externalId)
+                    throw new InvalidDataException("HCP returned a different owning job.");
+            }
             using var document = await GetDocumentAsync(
                 $"{settings.JobsEndpoint.TrimEnd('/')}/{Uri.EscapeDataString(externalId)}/invoices",
                 apiKey,
-                cancellationToken);
+                cancellationToken, verifiedInvoiceJobId: externalId);
             var transactions = new List<HcpJobPayment>();
             if (!document.RootElement.TryGetProperty("invoices", out var invoices) ||
                 invoices.ValueKind != JsonValueKind.Array)
@@ -508,7 +521,7 @@ public sealed class HousecallProDataService(
     private async Task<List<JsonElement>> GetPagesAsync(
         string endpoint,
         string collection,
-        string apiKey,
+        HcpConnection apiKey,
         CancellationToken cancellationToken,
         int? maxPages = null)
     {
@@ -526,14 +539,24 @@ public sealed class HousecallProDataService(
         return result;
     }
 
-    private async Task<JsonDocument> GetDocumentAsync(string endpoint, string apiKey, CancellationToken cancellationToken)
+    private async Task<JsonDocument> GetDocumentAsync(string endpoint, HcpConnection apiKey, CancellationToken cancellationToken, string? verifiedInvoiceJobId = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(new Uri(settings.BaseUrl), endpoint));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (apiKey.CompanyId is not null && (request.RequestUri!.Scheme != "https" || request.RequestUri.Host != "api.housecallpro.com" || !request.RequestUri.IsDefaultPort))
+            throw new InvalidOperationException("CCVG requests require the official HCP API host.");
+        apiKey.Apply(request);
+        var client = apiKey.CompanyId is null ? httpClient : clients.CreateClient("HcpCcvg");
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        try
+        {
+            if (verifiedInvoiceJobId is null) apiKey.ValidateCompany(document.RootElement);
+            else apiKey.ValidateInvoicesForVerifiedJob(document.RootElement, verifiedInvoiceJobId);
+            return document;
+        }
+        catch { document.Dispose(); throw; }
     }
 
     private static string? Text(JsonElement item, string name)

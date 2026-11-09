@@ -144,6 +144,16 @@ try
     builder.Services.AddScoped<IOutboundNotificationSender, MobileNotificationSender>();
     builder.Services.AddScoped<WebhookNotificationDispatcher>();
     builder.Services.AddScoped<HousecallProDashboardDataSource>();
+    builder.Services.AddScoped<HousecallProConnectionResolver>();
+    builder.Services.AddHttpClient("HcpCcvg", client => client.Timeout = TimeSpan.FromSeconds(30))
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    builder.Services.AddScoped<CcvgConnectionService>();
+    builder.Services.Configure<CcvgWebhookTestOptions>(builder.Configuration.GetSection("CcvgWebhookTest"));
+    builder.Services.AddSingleton<CcvgWebhookTestStore>();
+    builder.Services.AddHostedService<CcvgWebhookRetentionWorker>();
+    builder.Services.AddRateLimiter(options => options.AddPolicy("ccvg-webhook-test", context =>
+        RateLimitPartition.GetFixedWindowLimiter("ccvg-test", partitionKey => new FixedWindowRateLimiterOptions
+        { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true })));
     builder.Services.AddHttpClient<HousecallProDataService>();
     builder.Services.AddSingleton<HousecallProCloseRateCache>();
     builder.Services.AddHostedService<HousecallProCloseRateWorker>();
@@ -225,6 +235,7 @@ try
     app.MapStaticAssets();
     app.MapHealthEndpoints();
     app.MapHousecallProWebhookEndpoints();
+    app.MapCcvgWebhookTestEndpoints();
     app.MapObservabilityEndpoints();
     app.MapSupplierInvoiceEndpoints();
     app.MapHomeDepotHistoryEndpoints();
