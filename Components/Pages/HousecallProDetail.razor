@@ -32,19 +32,41 @@ else{
 
     @if(localEstimate is not null)
     {
+        var communications = localEstimate.Communications
+            .Select(item => (Label: $"{item.CommunicationType} · {item.Direction}", item.Notes,
+                EnteredBy: item.EnteredByName, EnteredAt: (DateTimeOffset?)item.EnteredAt))
+            .Concat(detail.Communications.Select(item => (Label: $"{item.Type} · Housecall Pro",
+                item.Notes, item.EnteredBy, item.EnteredAt)))
+            .OrderByDescending(item => item.EnteredAt)
+            .ToList();
+        var latestEntryAt = communications.FirstOrDefault().EnteredAt;
+
         <section class="activity-panel mb-4">
             <h2>Customer communications and notes</h2>
-            <p>Housecall Pro estimate notes are shown when supplied by its API.</p>
+            <p>Timestamps show when entries were recorded. Housecall Pro notes appear when supplied by its API.</p>
+            @if (latestEntryAt is { } latest)
+            {
+                <p><strong>Latest dated entry:</strong> <time datetime="@latest.ToString("O")">@FormatCommunicationTime(latest)</time></p>
+            }
             <div class="activity-list">
-                @foreach(var item in localEstimate.Communications.OrderByDescending(x=>x.EnteredAt))
+                @foreach (var item in communications)
                 {
-                    <div class="activity-item"><div><strong>@item.CommunicationType · @item.Direction</strong><span>@item.Notes</span><small>Entered by @item.EnteredByName</small></div><time>@item.EnteredAt.ToLocalTime().ToString("MM/dd/yyyy")</time></div>
+                    <div class="activity-item">
+                        <div><strong>@item.Label</strong><span>@item.Notes</span><small>Entered by @item.EnteredBy</small></div>
+                        @if (item.EnteredAt is { } enteredAt)
+                        {
+                            <time datetime="@enteredAt.ToString("O")">@FormatCommunicationTime(enteredAt)</time>
+                        }
+                        else
+                        {
+                            <small>Date and time not provided</small>
+                        }
+                    </div>
                 }
-                @foreach(var item in detail.Communications)
+                @if (communications.Count == 0)
                 {
-                    <div class="activity-item"><div><strong>@item.Type · Housecall Pro</strong><span>@item.Notes</span><small>Entered by @item.EnteredBy</small></div>@if(item.EnteredAt is not null){<time>@item.EnteredAt.Value.ToLocalTime().ToString("MM/dd/yyyy")</time>}</div>
+                    <div class="empty-state">No communications or notes are available for this estimate.</div>
                 }
-                @if(localEstimate.Communications.Count==0 && detail.Communications.Count==0){<div class="empty-state">No communications or notes are available for this estimate.</div>}
             </div>
         </section>
 
@@ -378,6 +400,9 @@ else{
     private static string FormatStatusUpdate(HousecallProJob job)=>job.InternalStatusUpdatedAt is null?"No Follow Up as of yet.":$"{job.InternalStatusUpdatedBy} · {job.InternalStatusUpdatedAt.Value.ToLocalTime():MM/dd/yyyy h:mm tt}";
     private string DetailSubtitle()=>localEstimate is not null?$"HCP estimate {localEstimate.EstimateNumber??localEstimate.ExternalId} · Live technical detail cached for five minutes.":localJob is not null?$"HCP job {localJob.JobNumber??localJob.ExternalId} · Live technical detail cached for five minutes.":$"Housecall Pro {detail?.Kind} {ExternalId}";
     private static string FormatDateTime(DateTimeOffset? value)=>value?.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")??"Not provided";
+    private static readonly TimeZoneInfo CommunicationTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
+    private static string FormatCommunicationTime(DateTimeOffset timestamp) =>
+        $"{TimeZoneInfo.ConvertTime(timestamp, CommunicationTimeZone):MM/dd/yyyy h:mm tt} CT";
     private static string FormatPhone(string? value){if(string.IsNullOrWhiteSpace(value))return "Not provided";var digits=new string(value.Where(char.IsDigit).ToArray());if(digits.Length==11&&digits[0]=='1')digits=digits[1..];return digits.Length==10?$"({digits[..3]}) {digits.Substring(3,3)}-{digits[6..]}":value;}
     private decimal NetPayments=>paymentHistory?.Transactions.Sum(x=>x.Amount)??0;
     private List<HousecallProJobBlocker> ActiveBlockers=>localJob?.Blockers.Where(x=>x.ResolvedOn is null).ToList()??[];

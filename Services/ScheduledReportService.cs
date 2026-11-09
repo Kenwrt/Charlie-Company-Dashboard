@@ -361,9 +361,9 @@ public sealed class ScheduledReportService(
         return reportType switch
         {
             "estimate-follow-up" => BuildEstimateFollowUpReport(reportDate, localDate, estimates),
-            "expired-estimates" => BuildExpiredEstimatesReport("Expired estimates", reportDate,
+            "expired-estimates" => BuildExpiredEstimatesReport("Expired estimates", reportDate, localDate,
                 $"Housecall Pro estimates marked expired from {expiredWindowStart:MMMM d, yyyy} through {expiredWindowEnd:MMMM d, yyyy}.", expiredEstimates),
-            "expired-estimates-current-month" => BuildExpiredEstimatesReport("Expired Estimates for the Current Month", reportDate,
+            "expired-estimates-current-month" => BuildExpiredEstimatesReport("Expired Estimates for the Current Month", reportDate, localDate,
                 $"Housecall Pro estimates marked expired from {currentMonthStart:MMMM d, yyyy} through {currentMonthEnd:MMMM d, yyyy}.", currentMonthExpiredEstimates),
             "estimates-expiring-next-ten-days" => BuildEstimatesExpiringReport(reportDate, localDate, expiringWindowEnd, estimatesExpiringSoon),
             "job-blockers" => BuildJobBlockersReport(reportDate, localDate, jobs),
@@ -419,15 +419,18 @@ public sealed class ScheduledReportService(
     private static ScheduledReportDocument BuildExpiredEstimatesReport(
         string reportName,
         string reportDate,
+        DateOnly localDate,
         string description,
         IReadOnlyCollection<HousecallProEstimate> estimates)
     {
         var rows = estimates.Select(estimate => new ScheduledReportRow([
             EffectiveExpiredEstimateDate(estimate)!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
-            Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+            Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])
+            { EstimateDate = estimate.EstimateDate }).ToList();
         rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
-        return new(reportName, reportDate, description,
-            [new("Expired estimate date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
+        return new(reportName, reportDate, $"{description} {EstimateAge.Legend}",
+            [new("Expired estimate date"), new("Estimate"), new("Customer"), new("Amount", true)], rows)
+            { EstimateAgeAsOf = localDate };
     }
 
     private static ScheduledReportDocument BuildEstimatesExpiringReport(
@@ -438,11 +441,13 @@ public sealed class ScheduledReportService(
     {
         var rows = estimates.Select(estimate => new ScheduledReportRow([
             EffectiveEstimateExpirationDate(estimate)!.Value.ToString("MM/dd/yyyy"), Value(estimate.EstimateNumber, "Not provided"),
-            Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])).ToList();
+            Value(estimate.CustomerName, "Not recorded"), estimate.TotalAmount.ToString("C0", CultureInfo.CurrentCulture)])
+            { EstimateDate = estimate.EstimateDate }).ToList();
         rows.Add(new(["Total", $"{estimates.Count:N0} estimates", "", estimates.Sum(estimate => estimate.TotalAmount).ToString("C0", CultureInfo.CurrentCulture)], true));
         return new("Estimates Expiring in the Next Ten Days", reportDate,
-            $"Unapproved Housecall Pro estimates expiring from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}.",
-            [new("Expiration date"), new("Estimate"), new("Customer"), new("Amount", true)], rows);
+            $"Unapproved Housecall Pro estimates expiring from {windowStart:MMMM d, yyyy} through {windowEnd:MMMM d, yyyy}. {EstimateAge.Legend}",
+            [new("Expiration date"), new("Estimate"), new("Customer"), new("Amount", true)], rows)
+            { EstimateAgeAsOf = windowStart };
     }
 
     private static DateTimeOffset? EffectiveExpiredEstimateDate(HousecallProEstimate estimate)

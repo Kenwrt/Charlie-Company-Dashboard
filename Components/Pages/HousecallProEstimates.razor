@@ -18,20 +18,16 @@
         <div class="col-md-2"><label class="form-label">Through date</label><InputDate class="form-control" @bind-Value="throughDate" /></div>
     </div>
     <p class="text-muted">Showing @estimates.Count of @totalCount synchronized estimates.</p>
-    @if (status == OutstandingFilter)
-    {
-        <p class="small text-muted">@EstimateAge.Legend</p>
-    }
+    <p class="small text-muted">@EstimateAge.Legend</p>
     <div class="table-responsive"><table class="table"><thead><tr><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("estimate")'>Estimate @SortIndicator("estimate")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("operation")'>Operation @SortIndicator("operation")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("customer")'>Customer @SortIndicator("customer")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("address")'>Home address @SortIndicator("address")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("status")'>Status @SortIndicator("status")</button></th><th><button class="btn btn-link p-0 fw-bold" @onclick='() => SortAsync("date")'>Date @SortIndicator("date")</button></th><th></th></tr></thead><tbody>
     @{
-        var showAge = status == OutstandingFilter;
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, BusinessTimeZone).Date);
     }
     @foreach (var estimate in SortedEstimates)
     {
-        var textColor = showAge ? EstimateAge.TextColor(estimate.EstimateDate, today) : null;
-        var rowStyle = showAge ? $"--bs-table-bg:#fff;--bs-table-color:{textColor ?? "#142033"}" : null;
-        var estimateDate = showAge ? estimate.EstimateDate : estimate.EstimateDate?.ToLocalTime();
+        var textColor = EstimateAge.TextColor(estimate.EstimateDate, today);
+        var rowStyle = $"--bs-table-bg:#fff;--bs-table-color:{textColor ?? "#142033"}";
+        var estimateDate = estimate.EstimateDate;
         <tr style="@rowStyle">
             <td>@(estimate.EstimateNumber ?? estimate.ExternalId)</td>
             <td>@estimate.LocalOperation.EffectiveDisplayName</td>

@@ -2,7 +2,7 @@ namespace CharleyCompany.Dashboard.Web.Services;
 
 internal static class EstimateAge
 {
-    public const string Legend = "Green = 0–15 days, yellow = 16–30 days, red = 31 days or older.";
+    public const string Legend = "Age from estimate date: green = 0–15 days, yellow = 16–30 days, red = 31 days or older.";
 
     public static string? TextColor(DateTimeOffset? estimateDate, DateOnly asOf)
     {
