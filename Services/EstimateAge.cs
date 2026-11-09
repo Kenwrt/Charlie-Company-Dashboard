@@ -4,7 +4,7 @@ internal static class EstimateAge
 {
     public const string Legend = "Green = 0–15 days, yellow = 16–30 days, red = 31 days or older.";
 
-    public static string? Background(DateTimeOffset? estimateDate, DateOnly asOf)
+    public static string? TextColor(DateTimeOffset? estimateDate, DateOnly asOf)
     {
         if (estimateDate is not { } date)
             return null;
@@ -13,9 +13,9 @@ internal static class EstimateAge
         return days switch
         {
             < 0 => null,
-            <= 15 => "#d1e7dd",
-            <= 30 => "#fff3cd",
-            _ => "#f8d7da"
+            <= 15 => "#146c43",
+            <= 30 => "#8a6500",
+            _ => "#b02a37"
         };
     }
 }

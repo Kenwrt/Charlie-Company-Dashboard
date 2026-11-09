@@ -29,13 +29,13 @@
     }
     @foreach (var estimate in SortedEstimates)
     {
-        var background = showAge ? EstimateAge.Background(estimate.EstimateDate, today) : null;
-        var rowStyle = background is null ? null : $"--bs-table-bg:{background};--bs-table-color:#142033";
+        var textColor = showAge ? EstimateAge.TextColor(estimate.EstimateDate, today) : null;
+        var rowStyle = showAge ? $"--bs-table-bg:#fff;--bs-table-color:{textColor ?? "#142033"}" : null;
         var estimateDate = showAge ? estimate.EstimateDate : estimate.EstimateDate?.ToLocalTime();
         <tr style="@rowStyle">
             <td>@(estimate.EstimateNumber ?? estimate.ExternalId)</td>
             <td>@estimate.LocalOperation.EffectiveDisplayName</td>
-            <td>@estimate.CustomerName<small class="d-block text-muted">@estimate.CustomerEmail<br/>@FormatPhone(estimate.CustomerPhone)</small></td>
+            <td>@estimate.CustomerName<small class="d-block @(textColor is null ? "text-muted" : null)">@estimate.CustomerEmail<br/>@FormatPhone(estimate.CustomerPhone)</small></td>
             <td>@estimate.CustomerAddress</td>
             <td>@EffectiveStatus(estimate)</td>
             <td>@(estimateDate?.ToString("MM/dd/yyyy") ?? "Not provided")</td>

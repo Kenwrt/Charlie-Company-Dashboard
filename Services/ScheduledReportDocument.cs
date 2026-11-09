@@ -72,8 +72,9 @@ public static class ScheduledReportFormatter
         html.Append("</tr></thead><tbody>");
         foreach (var row in document.Rows)
         {
-            var background = document.EstimateAgeAsOf is { } asOf ? EstimateAge.Background(row.EstimateDate, asOf) : null;
-            var cellColor = background is null ? "" : $";background-color:{background};color:#142033";
+            var cellColor = document.EstimateAgeAsOf is { } asOf
+                ? $";background-color:#fff;color:{EstimateAge.TextColor(row.EstimateDate, asOf) ?? "#142033"}"
+                : "";
             html.Append(row.IsTotal ? "<tr style=\"background:#eef7f1;font-weight:700\">" : "<tr>");
             for (var index = 0; index < document.Columns.Count; index++)
             {
