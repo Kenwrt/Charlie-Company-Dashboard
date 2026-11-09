@@ -16,6 +16,7 @@ public sealed class DeckPreviewService(
     IConfiguration configuration,
     IWebHostEnvironment environment)
 {
+    public const int MaxCommentLength = 1200;
     private const int MaxPhotoBytes = 8 * 1024 * 1024;
     private readonly IDataProtector protector = protection.CreateProtector("CharlieCompany.DeckPreviews.v1");
 
@@ -64,7 +65,8 @@ public sealed class DeckPreviewService(
     }
 
     public async Task<Preview> GenerateAsync(ClaimsPrincipal user, Context key, int photoId,
-        string revision, string inputSignature, bool authorized, string consentReference)
+        string revision, string inputSignature, bool authorized, string consentReference,
+        Guid? previousId = null, string? comment = null)
     {
         if (!authorized || string.IsNullOrWhiteSpace(consentReference) || consentReference.Trim().Length > 512)
             throw new PreviewException("Confirm Google upload and enter a customer approval reference of up to 512 characters.");
@@ -77,29 +79,71 @@ public sealed class DeckPreviewService(
         var saved = await LoadAsync(user, key);
         if (!saved.Editable || saved.Revision != revision || Signature(saved.Design) != inputSignature)
             throw new PreviewException("The saved estimate changed. Reload it before authorizing a preview.");
-        if (saved.Design.Length > 4000)
-            throw new PreviewException("The saved design exceeds the gateway's 4,000-character limit. Shorten the option details or scope.");
         if (ReadAll(directory).Any(item => item.State is "Queued" or "Running" || item.CanReconcile))
             throw new PreviewException("Resolve the outstanding submission for this option before starting another preview.");
 
+        comment = comment?.Trim();
+        string design;
+        string? asset = null;
+        if (previousId is Guid parentId)
+        {
+            if (string.IsNullOrWhiteSpace(comment) || comment.Length > MaxCommentLength)
+                throw new PreviewException($"Enter a design comment of up to {MaxCommentLength} characters.");
+            var parent = Read(directory, parentId) ?? throw Unavailable();
+            if (parent.InputSignature != inputSignature || parent.State != "Succeeded"
+                || !File.Exists(OutputPath(directory, parentId))
+                || !Guid.TryParseExact(parent.OutputObjectId, "N", out _))
+                throw new PreviewException("Select a current completed preview to revise, or return to the original photo.");
+            photoId = parent.PhotoId;
+            asset = parent.OutputObjectId!;
+            design = $"""
+                Edit the supplied previous design image. Interpret the customer's question or comment as a request to show the proposed change.
+                Apply the design comment below even if it differs from the saved build scope. Preserve all other visible details,
+                including previous design changes, camera view, board direction, railings and steps where the comment does not request changes.
+
+                Customer design comment: {comment}
+
+                Saved build scope for context:
+                {saved.Design}
+                """;
+        }
+        else
+        {
+            design = $"""
+                Show every replacement explicitly specified in the saved build scope or option, including replacement railings.
+                When the scope calls for a railing replacement, show the specified new material and finish on those sections.
+
+                {saved.Design}
+                """;
+            if (design.Length > 4000) design = saved.Design;
+        }
+        if (design.Length > 4000)
+            throw new PreviewException("The design exceeds the gateway's 4,000-character limit. Shorten the option details, scope, or design comment.");
+
         var photo = FindPhoto(saved.Task, photoId);
+        var body = new DeckPreviewGateway.Submission(asset ?? await UploadOriginalAsync(photo), design, true, consentReference.Trim());
+        var record = new Record(Guid.NewGuid(), photoId, saved.Revision, inputSignature, actor,
+            DateTimeOffset.UtcNow, JsonSerializer.Serialize(body, JsonSerializerOptions.Web))
+        {
+            PreviousId = previousId,
+            Comment = previousId.HasValue ? comment : null
+        };
+        Save(directory, record);
+        return await SubmitAsync(directory, record);
+    }
+
+    private async Task<string> UploadOriginalAsync(QuoteProjectTaskPhoto photo)
+    {
         await using var source = OpenPhoto(photo);
         if (source.Length > MaxPhotoBytes)
             throw new PreviewException("Choose an original photo within the gateway's 8 MiB upload limit.");
         var contentType = PhotoType(source);
-        string asset;
-        try { asset = await gateway.UploadAsync(source, contentType); }
+        try { return await gateway.UploadAsync(source, contentType); }
         catch (DeckPreviewGateway.Rejection ex) { throw new PreviewException(ex.Message); }
         catch (Exception ex) when (IsTransportFailure(ex))
         {
             throw new PreviewException("The photo upload did not complete. No generation request was sent.");
         }
-
-        var body = new DeckPreviewGateway.Submission(asset, saved.Design, true, consentReference.Trim());
-        var record = new Record(Guid.NewGuid(), photoId, saved.Revision, inputSignature, actor,
-            DateTimeOffset.UtcNow, JsonSerializer.Serialize(body, JsonSerializerOptions.Web));
-        Save(directory, record);
-        return await SubmitAsync(directory, record);
     }
 
     public async Task<Preview> UpdateAsync(ClaimsPrincipal user, Context key, Guid id, Action action)
@@ -327,7 +371,8 @@ public sealed class DeckPreviewService(
     private static Preview Project(string directory, Record record) =>
         new(record.Id, record.PhotoId, record.InputSignature, record.State, record.Message, record.CanReconcile,
             record.GatewayJobId is not null, record.ConsentedAt, record.ReviewedAt,
-            record.State == "Succeeded" && File.Exists(OutputPath(directory, record.Id)));
+            record.State == "Succeeded" && File.Exists(OutputPath(directory, record.Id)),
+            record.PreviousId, record.Comment);
     private static bool IsTransportFailure(Exception ex) =>
         ex is HttpRequestException or OperationCanceledException or JsonException or InvalidDataException;
     private static PreviewException Unavailable() => new("This estimate, photo, or preview is unavailable.");
@@ -336,6 +381,8 @@ public sealed class DeckPreviewService(
     private sealed record Record(Guid Id, int PhotoId, string Revision, string InputSignature,
         string ConsentedBy, DateTimeOffset ConsentedAt, string Body)
     {
+        public Guid? PreviousId { get; set; }
+        public string? Comment { get; set; }
         public string State { get; set; } = "NeedsReview";
         public string? Message { get; set; }
         public bool CanReconcile { get; set; } = true;
@@ -347,7 +394,8 @@ public sealed class DeckPreviewService(
 
     public sealed record Context(int QuoteId, int VersionId, int TaskId, Guid OptionId);
     public sealed record Preview(Guid Id, int PhotoId, string InputSignature, string State, string? Message,
-        bool CanReconcile, bool HasGatewayJob, DateTimeOffset ConsentedAt, DateTimeOffset? ReviewedAt, bool HasImage);
+        bool CanReconcile, bool HasGatewayJob, DateTimeOffset ConsentedAt, DateTimeOffset? ReviewedAt, bool HasImage,
+        Guid? PreviousId, string? Comment);
     public enum Action { Refresh, Cancel, Reconcile, Review }
     public sealed class PreviewException(string message) : Exception(message) { }
 }

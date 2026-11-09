@@ -15,31 +15,46 @@
     }
     else
     {
-        @if (Editable)
+        @if (Editable && (Selected is null || CanRedesign))
         {
             <fieldset disabled="@busy" class="mb-3">
-                <label class="form-label d-block">Primary overview
-                    <select class="form-select" @bind="photoId" @bind:after="ClearConsent">
-                        <option value="0">Choose a photo from Suggested pictures</option>
-                        @foreach (var photo in TaskItem.Photos.Where(item => item.FileSize <= 8 * 1024 * 1024)
-                            .OrderByDescending(item => item.RequirementKey == "overall").ThenByDescending(item => item.CapturedAt))
-                        {
-                            <option value="@photo.Id">@photo.RequirementLabel · @photo.OriginalFileName</option>
-                        }
-                    </select>
-                </label>
-                <p class="small">Choose a JPEG, PNG, or WebP up to 8 MiB that shows the whole deck, house connection, stairs, landings, and nearby patio or yard. Use supporting views for review or submit them as separate previews.</p>
+                @if (CanRedesign)
+                {
+                    <label class="form-label d-block">Customer design comment
+                        <textarea class="form-control" rows="3" maxlength="@DeckPreviewService.MaxCommentLength"
+                                  placeholder="Example: Show the brick step finished in gray composite."
+                                  @bind="designComment" @bind:event="oninput" @bind:after="ClearConsent"></textarea>
+                    </label>
+                    <p class="small">The selected preview becomes the starting image. The comment applies only to the new preview.</p>
+                }
+                else
+                {
+                    <label class="form-label d-block">Primary overview
+                        <select class="form-select" @bind="photoId" @bind:after="ClearConsent">
+                            <option value="0">Choose a photo from Suggested pictures</option>
+                            @foreach (var photo in TaskItem.Photos.Where(item => item.FileSize <= 8 * 1024 * 1024)
+                                .OrderByDescending(item => item.RequirementKey == "overall").ThenByDescending(item => item.CapturedAt))
+                            {
+                                <option value="@photo.Id">@photo.RequirementLabel · @photo.OriginalFileName</option>
+                            }
+                        </select>
+                    </label>
+                    <p class="small">Choose a JPEG, PNG, or WebP up to 8 MiB that shows the whole deck, house connection, stairs, landings, and nearby patio or yard. Use supporting views for review or submit them as separate previews.</p>
+                }
                 <label class="form-label d-block">Customer approval reference
                     <input class="form-control" maxlength="512" @bind="consentReference" />
                 </label>
                 <label class="form-check mb-2">
                     <input class="form-check-input" type="checkbox" @bind="authorized" />
-                    I have explicit customer authorization to send this photo and the saved design to Google for a preview.
+                    @(CanRedesign
+                        ? "I have explicit customer authorization to send this preview, the design comment, and the saved design to Google."
+                        : "I have explicit customer authorization to send this photo and the saved design to Google for a preview.")
                 </label>
                 <button type="button" class="btn btn-primary"
-                        disabled="@(photoId == 0 || !authorized || string.IsNullOrWhiteSpace(consentReference)
+                        disabled="@((CanRedesign ? string.IsNullOrWhiteSpace(designComment) : photoId == 0)
+                            || !authorized || string.IsNullOrWhiteSpace(consentReference)
                             || items.Any(item => item.State is "Queued" or "Running" || item.CanReconcile))"
-                        @onclick="GenerateAsync">Generate preview</button>
+                        @onclick="GenerateAsync">@(CanRedesign ? "Regenerate with comment" : "Generate preview")</button>
             </fieldset>
         }
 
@@ -47,18 +62,29 @@
         {
             <p class="small text-muted">Use Refresh status to check Google progress. Each preview uses one photo and one pilot reservation if accepted.</p>
             <label class="form-label d-block">Preview history
-                <select class="form-select" disabled="@busy" @bind="selectedId" @bind:after="ClearReview">
+                <select class="form-select" disabled="@busy" @bind="selectedId" @bind:after="SelectionChanged">
+                    <option value="@Guid.Empty">Original photo</option>
                     @foreach (var item in items)
                     {
-                        <option value="@item.Id">@item.ConsentedAt.ToLocalTime().ToString("g") · @item.State</option>
+                        <option value="@item.Id">@($"{item.ConsentedAt.ToLocalTime():g} · {item.State}{(item.PreviousId.HasValue ? " · Redesign" : "")}")</option>
                     }
                 </select>
             </label>
         }
-        @if (items.FirstOrDefault(item => item.Id == selectedId) is { } preview)
+        @if (Selected is { } preview)
         {
             var outdated = preview.InputSignature != Signature;
-            var url = $"/deck-previews/{QuoteId}/{VersionId}/{TaskItem.Id}/{Option.Id:D}/{preview.Id:D}";
+            var url = PreviewUrl(preview.Id);
+            <button type="button" class="btn btn-outline-secondary mb-2" disabled="@busy"
+                    @onclick="() => Select(preview.PreviousId ?? Guid.Empty)">
+                @(preview.PreviousId.HasValue ? "Undo to previous preview" : "Undo to original photo")
+            </button>
+            @if (preview.PreviousId.HasValue)
+            {
+                <button type="button" class="btn btn-outline-secondary mb-2" disabled="@busy"
+                        @onclick="() => Select(Guid.Empty)">Return to original photo</button>
+                <p><strong>Customer design comment</strong> @preview.Comment</p>
+            }
             <p><strong>@preview.State</strong> @preview.Message</p>
             @if (outdated)
             {
@@ -98,7 +124,7 @@
                 {
                     <label class="form-check mb-2">
                         <input type="checkbox" class="form-check-input" disabled="@busy" @bind="reviewed" />
-                        I compared the stairs, railing, footprint, and board pattern against the original and saved design.
+                        I compared the stairs, railing, footprint, and board pattern against the original and confirmed that this preview matches the saved build scope.
                     </label>
                     <button type="button" class="btn btn-outline-primary" disabled="@(busy || !reviewed)"
                             @onclick="() => UpdateAsync(preview, PreviewAction.Review)">Approve for proposal</button>
@@ -108,6 +134,13 @@
                     <a class="btn btn-outline-primary" href="@($"{url}/download")">Download for proposal</a>
                 }
             }
+        }
+        else if (items.FirstOrDefault(item => item.PhotoId == photoId) is { } original)
+        {
+            <figure class="my-2">
+                <figcaption>Original photo</figcaption>
+                <img class="img-fluid" src="@($"{PreviewUrl(original.Id)}/original")" alt="Original deck photo" loading="lazy" />
+            </figure>
         }
     }
     @if (message is not null)
@@ -132,10 +165,28 @@
     private bool reviewed;
     private bool confirmReplay;
     private string consentReference = "";
+    private string designComment = "";
     private string? message;
     private IReadOnlyList<DeckPreviewService.Preview> items = [];
     private DeckPreviewService.Context Key => new(QuoteId, VersionId, TaskItem.Id, Option.Id);
     private string Signature => DeckPreviewService.Signature(DeckPreviewService.Design(TaskItem, Option));
+    private DeckPreviewService.Preview? Selected => items.FirstOrDefault(item => item.Id == selectedId);
+    private bool CanRedesign => Selected is { HasImage: true } preview && preview.InputSignature == Signature;
+    private string PreviewUrl(Guid id) => $"/deck-previews/{QuoteId}/{VersionId}/{TaskItem.Id}/{Option.Id:D}/{id:D}";
+
+    private void Select(Guid id)
+    {
+        selectedId = id;
+        SelectionChanged();
+    }
+
+    private void SelectionChanged()
+    {
+        if (Selected is { } preview) photoId = preview.PhotoId;
+        designComment = "";
+        ClearConsent();
+        ClearReview();
+    }
 
     private void ClearConsent()
     {
@@ -155,16 +206,17 @@
         selectedId = items.FirstOrDefault()?.Id ?? Guid.Empty;
         photoId = TaskItem.Photos.Where(item => item.RequirementKey == "overall" && item.FileSize <= 8 * 1024 * 1024)
             .OrderByDescending(item => item.CapturedAt).FirstOrDefault()?.Id ?? 0;
+        SelectionChanged();
         loaded = true;
     });
 
     private Task GenerateAsync() => RunAsync(async user =>
     {
-        var preview = await Previews.GenerateAsync(user, Key, photoId, Revision, Signature, authorized, consentReference);
+        if (Selected is not null && !CanRedesign) return;
+        var preview = await Previews.GenerateAsync(user, Key, photoId, Revision, Signature, authorized, consentReference,
+            Selected?.Id, designComment);
         items = new[] { preview }.Concat(items).ToArray();
-        selectedId = preview.Id;
-        ClearConsent();
-        ClearReview();
+        Select(preview.Id);
     });
 
     private Task UpdateAsync(DeckPreviewService.Preview preview, PreviewAction action) => RunAsync(async user =>
