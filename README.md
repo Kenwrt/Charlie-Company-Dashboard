@@ -23,7 +23,7 @@ Protected configuration names (configure through the deployment's approved secre
 | `HousecallPro__Ccvg__OperationSlugs__0` (and subsequent indices) | Explicit operations that use CCVG for ordinary reads/imports; empty by default |
 | `CcvgWebhookTest__Enabled` | Enables the isolated receiver; false by default |
 | `CcvgWebhookTest__SigningSecret` | Dedicated CCVG HCP signing secret |
-| `CcvgWebhookTest__AllowRegistrationChallenge` | Temporary acceptance of the exact unsigned `{"foo":"bar"}` registration request; false by default |
+| `CcvgWebhookTest__AllowRegistrationChallenge` | Temporary acceptance of the exact `{"foo":"bar"}` registration request before a signing secret is configured; false by default |
 | `CcvgWebhookTest__Directory` | Separate private metadata directory, outside source and the web root |
 | `CcvgWebhookTest__RetentionHours` | 24 by default, bounded to 1–168; pruning every 15 minutes while enabled |
 | `CcvgWebhookTest__MaxEvents` | 1000 by default, bounded to 1–1000 |

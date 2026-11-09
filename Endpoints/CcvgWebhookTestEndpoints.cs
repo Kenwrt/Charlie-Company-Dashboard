@@ -62,7 +62,7 @@ public static class CcvgWebhookTestEndpoints
             if (properties.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count() != properties.Length) return Results.BadRequest();
             var timestamp = request.Headers["Api-Timestamp"];
             var signature = request.Headers["Api-Signature"];
-            if (settings.AllowRegistrationChallenge && timestamp.Count == 0 && signature.Count == 0
+            if (settings.AllowRegistrationChallenge && string.IsNullOrWhiteSpace(settings.SigningSecret)
                 && properties.Length == 1 && root.TryGetProperty("foo", out var foo)
                 && foo.ValueKind == JsonValueKind.String && foo.GetString() == "bar")
             {
