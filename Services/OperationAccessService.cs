@@ -18,6 +18,11 @@ public sealed class OperationAccessService(
     public async Task<IReadOnlyList<LocalOperation>> GetAccessibleOperationsAsync(CancellationToken cancellationToken = default)
     {
         var principal = (await authenticationStateProvider.GetAuthenticationStateAsync()).User;
+        return await GetAccessibleOperationsAsync(principal, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LocalOperation>> GetAccessibleOperationsAsync(ClaimsPrincipal principal, CancellationToken cancellationToken = default)
+    {
         await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var query = dbContext.LocalOperations.AsNoTracking().Where(operation => operation.IsActive);
 

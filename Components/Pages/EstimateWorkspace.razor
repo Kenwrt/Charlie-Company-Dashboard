@@ -17,6 +17,7 @@
 @inject EstimateOptionsService OptionsService
 @inject EstimateMaterialEmailService EstimateMaterialEmails
 @inject EstimateAdminAuditEmailService EstimateAdminAuditEmails
+@inject DeckPreviewService DeckPreviews
 @inject IWebHostEnvironment Environment
 @inject IConfiguration Configuration
 @inject IJSRuntime JS
@@ -247,7 +248,7 @@ else
                                 </div>
                                 <details class="deck-pattern-panel border rounded p-3 my-3">
                                     <summary><strong>Deck patterns</strong> · @(DeckPatterns.All.Where(pattern => pattern.Id == taskOption.DeckPatternId).Select(pattern => pattern.Name).FirstOrDefault() ?? "Choose a pattern")</summary>
-                                    <p class="text-muted mt-2">Illustrative placeholders. AI Media Gateway previews will replace these samples. Choose one pattern for this option; quantities and cutting waste require analysis.</p>
+                                    <p class="text-muted mt-2">Choose one pattern for this option. The samples illustrate the layout. Quantities and cutting waste require analysis.</p>
                                     <div class="deck-pattern-grid" role="group" aria-label="Deck pattern choices">
                                         @foreach (var pattern in DeckPatterns.All)
                                         {
@@ -259,6 +260,14 @@ else
                                         }
                                     </div>
                                 </details>
+                                @if (DeckPreviews.Enabled && DeckPreviewService.IsDeck(task.TaskType) && version?.OptionsJson is not null)
+                                {
+                                    var revision = DeckPreviewService.Signature(version.OptionsJson);
+                                    var previewKey = (version.Id, revision, DeckPreviewService.Signature(DeckPreviewService.Design(task, taskOption)));
+                                    <DeckDesignPreviews @key="previewKey" QuoteId="QuoteId" VersionId="version.Id"
+                                        Revision="@revision" TaskItem="task" Option="taskOption"
+                                        Editable="@(version.Status == "Draft" && version.ApprovedAt is null)" />
+                                }
                                 <div class="row g-3 my-2">
                                     <label class="col-md-6">Number of crews
                                         <InputNumber class="form-control" min="1" step="1" @bind-Value="taskOption.CrewCount"
@@ -3138,14 +3147,18 @@ else
         analysisMonitorCancellation?.Cancel();
         try
         {
-            await JS.InvokeVoidAsync("ccvDictation.stop");
+            if (dictationReference is not null)
+                await JS.InvokeVoidAsync("ccvDictation.stop");
         }
         catch (JSDisconnectedException)
         {
             // The browser circuit has already disconnected.
         }
-        dictationReference?.Dispose();
-        analysisMonitorCancellation?.Dispose();
+        finally
+        {
+            dictationReference?.Dispose();
+            analysisMonitorCancellation?.Dispose();
+        }
     }
 
     private sealed record DictationToggleResult(bool Supported, bool Active);

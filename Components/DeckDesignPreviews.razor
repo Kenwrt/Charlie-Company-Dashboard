@@ -1,0 +1,193 @@
+@using System.Security.Claims
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using PreviewAction = CharleyCompany.Dashboard.Web.Services.DeckPreviewService.Action
+@inject DeckPreviewService Previews
+@inject AuthenticationStateProvider Authentication
+@inject ILogger<DeckDesignPreviews> Logger
+
+<details class="border rounded p-3 my-3">
+    <summary class="fw-semibold">Design Previews</summary>
+    <p class="text-muted mt-2">Illustrative only. Use the estimate for dimensions, quantities, costs, and pricing.</p>
+    @if (!loaded)
+    {
+        <button type="button" class="btn btn-outline-secondary" disabled="@busy" @onclick="LoadAsync">Open preview controls</button>
+    }
+    else
+    {
+        @if (Editable)
+        {
+            <fieldset disabled="@busy" class="mb-3">
+                <label class="form-label d-block">Primary overview
+                    <select class="form-select" @bind="photoId" @bind:after="ClearConsent">
+                        <option value="0">Choose a photo from Suggested pictures</option>
+                        @foreach (var photo in TaskItem.Photos.Where(item => item.FileSize <= 8 * 1024 * 1024)
+                            .OrderByDescending(item => item.RequirementKey == "overall").ThenByDescending(item => item.CapturedAt))
+                        {
+                            <option value="@photo.Id">@photo.RequirementLabel · @photo.OriginalFileName</option>
+                        }
+                    </select>
+                </label>
+                <p class="small">Choose a JPEG, PNG, or WebP up to 8 MiB that shows the whole deck, house connection, stairs, landings, and nearby patio or yard. Use supporting views for review or submit them as separate previews.</p>
+                <label class="form-label d-block">Customer approval reference
+                    <input class="form-control" maxlength="512" @bind="consentReference" />
+                </label>
+                <label class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" @bind="authorized" />
+                    I have explicit customer authorization to send this photo and the saved design to Google for a preview.
+                </label>
+                <button type="button" class="btn btn-primary"
+                        disabled="@(photoId == 0 || !authorized || string.IsNullOrWhiteSpace(consentReference)
+                            || items.Any(item => item.State is "Queued" or "Running" || item.CanReconcile))"
+                        @onclick="GenerateAsync">Generate preview</button>
+            </fieldset>
+        }
+
+        @if (items.Count > 0)
+        {
+            <p class="small text-muted">Use Refresh status to check Google progress. Each preview uses one photo and one pilot reservation if accepted.</p>
+            <label class="form-label d-block">Preview history
+                <select class="form-select" disabled="@busy" @bind="selectedId" @bind:after="ClearReview">
+                    @foreach (var item in items)
+                    {
+                        <option value="@item.Id">@item.ConsentedAt.ToLocalTime().ToString("g") · @item.State</option>
+                    }
+                </select>
+            </label>
+        }
+        @if (items.FirstOrDefault(item => item.Id == selectedId) is { } preview)
+        {
+            var outdated = preview.InputSignature != Signature;
+            var url = $"/deck-previews/{QuoteId}/{VersionId}/{TaskItem.Id}/{Option.Id:D}/{preview.Id:D}";
+            <p><strong>@preview.State</strong> @preview.Message</p>
+            @if (outdated)
+            {
+                <p class="text-warning">Outdated. The saved design inputs changed.</p>
+            }
+            @if (preview.HasGatewayJob && (preview.State is "Queued" or "Running" || preview.State == "Succeeded" && !preview.HasImage))
+            {
+                <button type="button" class="btn btn-outline-secondary" disabled="@busy" @onclick="() => UpdateAsync(preview, PreviewAction.Refresh)">Refresh status</button>
+            }
+            @if (preview.State is "Queued" or "Running")
+            {
+                <button type="button" class="btn btn-outline-danger" disabled="@busy" @onclick="() => UpdateAsync(preview, PreviewAction.Cancel)">Cancel preview</button>
+            }
+            @if (preview.CanReconcile && Editable && !outdated)
+            {
+                <label class="form-check my-2">
+                    <input type="checkbox" class="form-check-input" disabled="@busy" @bind="confirmReplay" />
+                    Resend the same authorized submission. Google can charge if the gateway never received the first request.
+                </label>
+                <button type="button" class="btn btn-outline-warning" disabled="@(busy || !confirmReplay)"
+                        @onclick="() => UpdateAsync(preview, PreviewAction.Reconcile)">Reconcile submission</button>
+            }
+
+            @if (preview.HasImage)
+            {
+                <div class="row g-3 my-2">
+                    <figure class="col-sm-6">
+                        <figcaption>Original photo</figcaption>
+                        <img class="img-fluid" src="@($"{url}/original")" alt="Original deck photo" loading="lazy" />
+                    </figure>
+                    <figure class="col-sm-6">
+                        <figcaption>Google design preview</figcaption>
+                        <img class="img-fluid" src="@($"{url}/result")" alt="Generated deck design preview" loading="lazy" />
+                    </figure>
+                </div>
+                @if (!outdated && preview.ReviewedAt is null)
+                {
+                    <label class="form-check mb-2">
+                        <input type="checkbox" class="form-check-input" disabled="@busy" @bind="reviewed" />
+                        I compared the stairs, railing, footprint, and board pattern against the original and saved design.
+                    </label>
+                    <button type="button" class="btn btn-outline-primary" disabled="@(busy || !reviewed)"
+                            @onclick="() => UpdateAsync(preview, PreviewAction.Review)">Approve for proposal</button>
+                }
+                @if (!outdated && preview.ReviewedAt is not null)
+                {
+                    <a class="btn btn-outline-primary" href="@($"{url}/download")">Download for proposal</a>
+                }
+            }
+        }
+    }
+    @if (message is not null)
+    {
+        <p class="mt-2" role="status">@message</p>
+    }
+</details>
+
+@code {
+    [Parameter, EditorRequired] public int QuoteId { get; set; }
+    [Parameter, EditorRequired] public int VersionId { get; set; }
+    [Parameter, EditorRequired] public string Revision { get; set; } = "";
+    [Parameter, EditorRequired] public QuoteProjectTask TaskItem { get; set; } = null!;
+    [Parameter, EditorRequired] public EstimateOption Option { get; set; } = null!;
+    [Parameter] public bool Editable { get; set; }
+
+    private bool loaded;
+    private bool busy;
+    private int photoId;
+    private Guid selectedId;
+    private bool authorized;
+    private bool reviewed;
+    private bool confirmReplay;
+    private string consentReference = "";
+    private string? message;
+    private IReadOnlyList<DeckPreviewService.Preview> items = [];
+    private DeckPreviewService.Context Key => new(QuoteId, VersionId, TaskItem.Id, Option.Id);
+    private string Signature => DeckPreviewService.Signature(DeckPreviewService.Design(TaskItem, Option));
+
+    private void ClearConsent()
+    {
+        authorized = false;
+        consentReference = "";
+    }
+
+    private void ClearReview()
+    {
+        reviewed = false;
+        confirmReplay = false;
+    }
+
+    private Task LoadAsync() => RunAsync(async user =>
+    {
+        items = await Previews.ListAsync(user, Key);
+        selectedId = items.FirstOrDefault()?.Id ?? Guid.Empty;
+        photoId = TaskItem.Photos.Where(item => item.RequirementKey == "overall" && item.FileSize <= 8 * 1024 * 1024)
+            .OrderByDescending(item => item.CapturedAt).FirstOrDefault()?.Id ?? 0;
+        loaded = true;
+    });
+
+    private Task GenerateAsync() => RunAsync(async user =>
+    {
+        var preview = await Previews.GenerateAsync(user, Key, photoId, Revision, Signature, authorized, consentReference);
+        items = new[] { preview }.Concat(items).ToArray();
+        selectedId = preview.Id;
+        ClearConsent();
+        ClearReview();
+    });
+
+    private Task UpdateAsync(DeckPreviewService.Preview preview, PreviewAction action) => RunAsync(async user =>
+    {
+        if ((action == PreviewAction.Review && !reviewed) || (action == PreviewAction.Reconcile && !confirmReplay)) return;
+        ClearReview();
+        var updated = await Previews.UpdateAsync(user, Key, preview.Id, action);
+        items = items.Select(item => item.Id == updated.Id ? updated : item).ToArray();
+    });
+
+    private async Task RunAsync(Func<ClaimsPrincipal, Task> work)
+    {
+        if (busy) return;
+        busy = true;
+        message = null;
+        try { await work((await Authentication.GetAuthenticationStateAsync()).User); }
+        catch (DeckPreviewService.PreviewException ex) { message = ex.Message; }
+        catch (Exception ex)
+        {
+            Logger.LogWarning("Deck preview operation failed for estimate {EstimateId} and task {TaskId} ({FailureType}).",
+                QuoteId, TaskItem.Id, ex.GetType().Name);
+            message = "The preview operation could not complete. Reopen the estimate to check the stored status before submitting again.";
+        }
+        finally { busy = false; }
+    }
+}

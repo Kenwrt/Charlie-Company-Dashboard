@@ -42,7 +42,10 @@ public static class ProjectPhotoGuidance
     {
         "Deck" =>
         [
-            Overall,
+            new("overall", "Primary Deck Overview", "From a front corner, frame the whole deck, house attachment, stairs and landings, and adjacent patio or yard. Leave room around the footprint."),
+            new("opposite-corner", "Opposite Corner", "Show the far corners, supports, railings and details hidden in the overview."),
+            new("deck-surface", "Deck Surface", "From a safe doorway or landing, show the board direction, border and house threshold."),
+            new("stairs-landing", "Stairs and Landings", "If present, show each stair flight, both railings, the full landing and the ground connection."),
             new("length", "Length Measurement", "Show the tape at the zero point and the full deck length with readable numbers."),
             new("length-end", "Length End Point", "Capture a close, clear photograph of the far end of the length measurement."),
             new("width", "Width Measurement", "Show the tape at the zero point and the full deck width with readable numbers."),
@@ -58,7 +61,10 @@ public static class ProjectPhotoGuidance
         ],
         "Covered Deck / Roof Structure" =>
         [
-            Overall,
+            new("overall", "Primary Deck Overview", "Show the entire deck and cover, house attachment, stairs and landings, and adjacent patio or yard."),
+            new("opposite-corner", "Opposite Corner", "Show the far corners and details hidden in the overview."),
+            new("deck-surface", "Deck Surface", "From a safe position, show the boards, border and house threshold."),
+            new("stairs-landing", "Stairs and Landings", "If present, show all stair flights, railings and landings."),
             new("length", "Footprint Length", "Capture the full outside-to-outside length measurement."),
             new("width", "Footprint Width", "Capture the full outside-to-outside width measurement."),
             new("roof-tie-in", "Roof Tie-In", "Show the wall, fascia, or roof area where the new structure will connect."),

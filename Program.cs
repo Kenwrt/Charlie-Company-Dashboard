@@ -155,6 +155,13 @@ try
         RateLimitPartition.GetFixedWindowLimiter("ccvg-test", partitionKey => new FixedWindowRateLimiterOptions
         { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true })));
     builder.Services.AddHttpClient<HousecallProDataService>();
+    builder.Services.AddHttpClient<DeckPreviewGateway>(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(45);
+        client.MaxResponseContentBufferSize = 32 * 1024 * 1024;
+    }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+        .RemoveAllLoggers();
+    builder.Services.AddScoped<DeckPreviewService>();
     builder.Services.AddSingleton<HousecallProCloseRateCache>();
     builder.Services.AddHostedService<HousecallProCloseRateWorker>();
     builder.Services.AddHttpClient<HousecallProInvoiceLookupService>()
@@ -239,6 +246,7 @@ try
     app.MapObservabilityEndpoints();
     app.MapSupplierInvoiceEndpoints();
     app.MapHomeDepotHistoryEndpoints();
+    app.MapDeckPreviewEndpoints();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
 
