@@ -35,7 +35,7 @@ public static class IdentityBootstrapService
         }
 
         await dbContext.LocalOperations
-            .Where(operation => operation.Slug == "knoxville" || operation.Slug == "chattanooga")
+            .Where(operation => operation.Slug == "chattanooga")
             .ExecuteUpdateAsync(updates => updates
                 .SetProperty(operation => operation.IsActive, false)
                 .SetProperty(operation => operation.UpdatedAt, DateTimeOffset.UtcNow));
