@@ -260,6 +260,7 @@ public sealed class DeckPreviewService(
         {
             "NeedsReview" => "Google processing stopped with an uncertain outcome. A provider charge may have occurred.",
             "Failed" when job.Error == "google_no_image_or_safety_block" => "Google returned no image or blocked the request.",
+            "Failed" when job.Error == "google_http_429" => "Google rejected generation because of a rate or quota limit (HTTP 429). This attempt counts toward the pilot limit.",
             "Failed" => "Google could not complete the preview.",
             "Cancelled" => "Cancellation is best effort. Google may already have processed and billed the request.",
             _ => null

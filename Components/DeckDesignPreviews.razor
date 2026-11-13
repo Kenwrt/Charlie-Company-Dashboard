@@ -60,6 +60,10 @@
 
         @if (items.Count > 0)
         {
+            @if (items[0] is { State: "Failed" or "Rejected" or "Cancelled" or "NeedsReview" } latest && latest.Id != selectedId)
+            {
+                <p class="text-warning">Latest attempt: @latest.State. @latest.Message</p>
+            }
             <p class="small text-muted">Use Refresh status to check Google progress. Each preview uses one photo and one pilot reservation if accepted.</p>
             <label class="form-label d-block">Preview history
                 <select class="form-select" disabled="@busy" @bind="selectedId" @bind:after="SelectionChanged">
@@ -203,7 +207,11 @@
     private Task LoadAsync() => RunAsync(async user =>
     {
         items = await Previews.ListAsync(user, Key);
-        selectedId = items.FirstOrDefault()?.Id ?? Guid.Empty;
+        selectedId = (items.FirstOrDefault(item => item.State is "Queued" or "Running" || item.CanReconcile
+                || item.State == "Succeeded" && !item.HasImage)
+            ?? items.FirstOrDefault(item => item.HasImage && item.InputSignature == Signature)
+            ?? items.FirstOrDefault(item => item.HasImage)
+            ?? items.FirstOrDefault())?.Id ?? Guid.Empty;
         photoId = TaskItem.Photos.Where(item => item.RequirementKey == "overall" && item.FileSize <= 8 * 1024 * 1024)
             .OrderByDescending(item => item.CapturedAt).FirstOrDefault()?.Id ?? 0;
         SelectionChanged();
