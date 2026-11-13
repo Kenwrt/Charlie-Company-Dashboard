@@ -1,5 +1,4 @@
 @page "/estimates/{QuoteId:int}"
-@rendermode InteractiveServer
 @attribute [Authorize(Roles = "Administrator,LocalOperator")]
 @implements IAsyncDisposable
 @using System.ComponentModel.DataAnnotations
@@ -24,7 +23,11 @@
 
 <PageTitle>Preliminary Estimate</PageTitle>
 
-@if (quote is null)
+@if (loadingEstimate)
+{
+    <p role="status">Loading estimate…</p>
+}
+else if (quote is null)
 {
     <h1>Estimate not found</h1>
     <p>This estimate is not available to your assigned locations.</p>
@@ -1209,6 +1212,7 @@ else
     private List<VendorProduct> reviewCatalogItems = [];
     private readonly Dictionary<string, string?> dictationMessages = [];
     private bool savingEstimate;
+    private bool loadingEstimate = true;
     private string? activeDictationElementId;
     private DotNetObjectReference<EstimateWorkspace>? dictationReference;
     private CancellationTokenSource? analysisMonitorCancellation;
@@ -1220,8 +1224,16 @@ else
     protected override async Task OnParametersSetAsync()
     {
         expandedTaskIds.Clear();
-        await ReloadAsync();
-        StartAnalysisMonitoringIfNeeded();
+        loadingEstimate = true;
+        try
+        {
+            await ReloadAsync();
+            StartAnalysisMonitoringIfNeeded();
+        }
+        finally
+        {
+            loadingEstimate = false;
+        }
     }
 
     private void ToggleProjectTask(int taskId)
