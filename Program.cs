@@ -65,6 +65,8 @@ try
     builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
         options.UseNpgsql(connectionString));
     builder.Services.AddDatabaseDeveloperPageExceptionFilter();
+    builder.Services.AddSingleton<DocumentObjectStore>();
+    builder.Services.AddHostedService<DocumentConversionWorker>();
 
     builder.Services.AddIdentityCore<ApplicationUser>(options =>
         {
@@ -247,6 +249,7 @@ try
     app.MapSupplierInvoiceEndpoints();
     app.MapHomeDepotHistoryEndpoints();
     app.MapDeckPreviewEndpoints();
+    app.MapDocumentControlEndpoints();
     app.MapRazorComponents<App>()
         .AddInteractiveServerRenderMode();
 

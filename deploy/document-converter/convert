@@ -1,0 +1,6 @@
+set -eu
+cat > /work/source.docx
+timeout 120 /usr/bin/soffice -env:UserInstallation=file:///work/profile --headless --nologo --nodefault --norestore \
+    --convert-to 'pdf:writer_pdf_Export:{"ExportNotes":{"type":"boolean","value":"false"}}' \
+    --outdir /work /work/source.docx >&2
+cat /work/source.pdf

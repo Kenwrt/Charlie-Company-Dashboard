@@ -1,0 +1,328 @@
+@page "/documents"
+@page "/documents/{Id:guid}"
+@attribute [Authorize]
+@attribute [ExcludeFromInteractiveRouting]
+@using CharleyCompany.Dashboard.Web.Data
+@using CharleyCompany.Dashboard.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject DocumentObjectStore Storage
+@inject IConfiguration Configuration
+
+<PageTitle>Documents</PageTitle>
+
+<h1>Documents</h1>
+
+@if (StatusMessage is { } message)
+{
+    <p class="alert @(Status is "saved" or "queued" ? "alert-success" : "alert-warning")" role="status">@message</p>
+}
+
+@if (Id is null)
+{
+    @if (isAdmin)
+    {
+        <details class="border rounded p-3 mb-4">
+            <summary>Define a document</summary>
+            <form method="post" action="/document-admin/save" class="mt-3">
+                <AntiforgeryToken />
+                <input type="hidden" name="id" value="@Guid.Empty" />
+                <input type="hidden" name="revision" value="0" />
+                <label class="form-label" for="new-title">Title</label>
+                <input class="form-control mb-2" id="new-title" name="title" maxlength="160" required />
+                <label class="form-label" for="new-category">Category</label>
+                <input class="form-control mb-2" id="new-category" name="category" maxlength="80" />
+                <label class="form-label" for="new-description">Description</label>
+                <textarea class="form-control mb-3" id="new-description" name="description" maxlength="1000" rows="3"></textarea>
+                <button class="btn btn-primary" type="submit">Create document</button>
+            </form>
+        </details>
+    }
+
+    <form method="get" action="/documents" class="d-flex gap-2 mb-3" role="search">
+        <label class="visually-hidden" for="document-search">Search documents</label>
+        <input class="form-control" id="document-search" name="q" value="@Search" maxlength="160" placeholder="Search title, category, or description" />
+        <button type="submit" class="btn btn-outline-primary">Search</button>
+    </form>
+
+    @if (documents.Count == 0)
+    {
+        <p>No documents found.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th scope="col">Title</th><th scope="col">Category</th><th scope="col">Current PDF</th></tr></thead>
+                <tbody>
+                    @foreach (var row in documents)
+                    {
+                        <tr>
+                            <td>
+                                <a href="@($"/documents/{row.Document.Id}")">@row.Document.Title</a>
+                                @if (row.Document.Archived)
+                                {
+                                    <span class="badge text-bg-secondary">Archived</span>
+                                }
+                                <div class="small text-muted">@row.Document.Description</div>
+                            </td>
+                            <td>@row.Document.Category</td>
+                            <td>
+                                @if (row.PdfId is { } pdf)
+                                {
+                                    <a href="@FileUrl(row.Document.Id, pdf, "pdf")" target="_blank" rel="noopener">View version @row.VersionNumber</a>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Awaiting publication</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <nav aria-label="Document pages" class="d-flex gap-3">
+            @if (page > 1)
+            {
+                <a href="@ListUrl(page - 1)">Previous</a>
+            }
+            @if (hasNextPage)
+            {
+                <a href="@ListUrl(page + 1)">Next</a>
+            }
+        </nav>
+    }
+}
+else
+{
+    <p><a href="/documents">Back to documents</a></p>
+    @if (document is null)
+    {
+        <p>Document unavailable.</p>
+    }
+    else
+    {
+        <h2>@document.Title</h2>
+        @if (document.Archived)
+        {
+            <p><span class="badge text-bg-secondary">Archived</span></p>
+        }
+        @if (!string.IsNullOrWhiteSpace(document.Category))
+        {
+            <p class="text-muted mb-1">@document.Category</p>
+        }
+        <p>@document.Description</p>
+
+        @if (currentPdf is not null)
+        {
+            <p><a class="btn btn-primary" href="@FileUrl(document.Id, currentPdf.Id, "pdf")" target="_blank" rel="noopener">View current PDF · Version @currentPdf.Number</a></p>
+        }
+        else
+        {
+            <p>No PDF has been published.</p>
+        }
+
+        @if (isAdmin)
+        {
+            <details class="border rounded p-3 mb-3">
+                <summary>Edit document details</summary>
+                <form method="post" action="/document-admin/save" class="mt-3">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="id" value="@document.Id" />
+                    <input type="hidden" name="revision" value="@document.Revision" />
+                    <label class="form-label" for="edit-title">Title</label>
+                    <input class="form-control mb-2" id="edit-title" name="title" value="@document.Title" maxlength="160" required />
+                    <label class="form-label" for="edit-category">Category</label>
+                    <input class="form-control mb-2" id="edit-category" name="category" value="@document.Category" maxlength="80" />
+                    <label class="form-label" for="edit-description">Description</label>
+                    <textarea class="form-control mb-2" id="edit-description" name="description" maxlength="1000" rows="3">@document.Description</textarea>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="edit-archived" name="archived" value="true" checked="@document.Archived" />
+                        <label class="form-check-label" for="edit-archived">Archive and hide from readers</label>
+                    </div>
+                    <button class="btn btn-outline-primary" type="submit">Save details</button>
+                </form>
+            </details>
+            @if (!document.Archived)
+            {
+                <details class="border rounded p-3 mb-4" open>
+                    <summary>Upload a new Word version</summary>
+                    @if (uploadAvailable)
+                    {
+                        <form method="post" action="@($"/document-admin/{document.Id}/upload")" enctype="multipart/form-data" class="mt-3">
+                            <AntiforgeryToken />
+                            <input type="hidden" name="revision" value="@document.Revision" />
+                            <label class="form-label" for="word-file">Word document (.docx, up to 20 MB)</label>
+                            <input class="form-control mb-2" id="word-file" name="file" type="file" accept=".docx" required />
+                            <label class="form-label" for="version-notes">Change notes</label>
+                            <textarea class="form-control mb-3" id="version-notes" name="notes" maxlength="600" rows="2"></textarea>
+                            <button class="btn btn-primary" type="submit">Upload and publish PDF</button>
+                        </form>
+                    }
+                    else
+                    {
+                        <p class="mt-2 mb-0">Word upload will be available when R2 and PDF conversion are configured.</p>
+                    }
+                </details>
+            }
+
+            <h3>Version history</h3>
+            @if (versions.Count == 0)
+            {
+                <p>No versions uploaded.</p>
+            }
+            else
+            {
+                <div class="table-responsive mb-4">
+                    <table class="table align-middle">
+                        <thead><tr><th scope="col">Version</th><th scope="col">Uploaded (UTC)</th><th scope="col">Status</th><th scope="col">Files</th></tr></thead>
+                        <tbody>
+                            @foreach (var version in versions)
+                            {
+                                <tr>
+                                    <td>
+                                        @version.Number · @version.FileName
+                                        <div class="small text-muted">@version.Notes</div>
+                                    </td>
+                                    <td>@version.UploadedUtc.ToString("yyyy-MM-dd HH:mm")<div class="small">@version.UploadedByName</div></td>
+                                    <td>
+                                        @VersionStatus(version)
+                                        @if (version.PublishedUtc is { } published)
+                                        {
+                                            <div class="small">@published.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (version.Status is not (DocumentVersionStatus.UploadFailed or DocumentVersionStatus.Uploading))
+                                        {
+                                            <a href="@FileUrl(document.Id, version.Id, "word")">Download Word</a>
+                                        }
+                                        @if (version.Status == DocumentVersionStatus.Published)
+                                        {
+                                            <a class="ms-2" href="@FileUrl(document.Id, version.Id, "pdf")" target="_blank" rel="noopener">View PDF</a>
+                                        }
+                                        @if (uploadAvailable && version.Status == DocumentVersionStatus.ConversionFailed)
+                                        {
+                                            <form method="post" action="@($"/document-admin/{document.Id}/{version.Id}/retry")" class="mt-1">
+                                                <AntiforgeryToken />
+                                                <button class="btn btn-sm btn-outline-primary" type="submit" name="retry" value="true">Retry conversion</button>
+                                            </form>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <h3>Recent activity</h3>
+            <ul class="list-group">
+                @foreach (var entry in activity)
+                {
+                    <li class="list-group-item">
+                        <strong>@entry.Action</strong> · @entry.UserName
+                        <span class="text-muted"> · @entry.AtUtc.ToString("yyyy-MM-dd HH:mm") UTC</span>
+                        <div class="small" style="white-space: pre-line">@entry.Detail</div>
+                    </li>
+                }
+            </ul>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "q")] public string? Search { get; set; }
+    [SupplyParameterFromQuery(Name = "p")] public int? PageNumber { get; set; }
+    [SupplyParameterFromQuery(Name = "status")] public string? Status { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> Authentication { get; set; } = default!;
+
+    private const int PageSize = 30;
+    private int page;
+    private bool isAdmin;
+    private bool uploadAvailable;
+    private bool hasNextPage;
+    private ControlledDocument? document;
+    private ControlledDocumentVersion? currentPdf;
+    private List<DocumentListRow> documents = [];
+    private List<ControlledDocumentVersion> versions = [];
+    private List<ControlledDocumentEvent> activity = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var principal = (await Authentication).User;
+        isAdmin = principal.IsInRole(ApplicationRoles.Administrator);
+        uploadAvailable = Storage.IsConfigured && !string.IsNullOrWhiteSpace(Configuration["DocumentControl:ConverterPath"]);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var published = db.ControlledDocumentVersions.AsNoTracking().Where(version => version.Status == DocumentVersionStatus.Published);
+        var visible = db.ControlledDocuments.AsNoTracking().Where(item => isAdmin ||
+            (!item.Archived && published.Any(version => version.DocumentId == item.Id)));
+
+        if (Id is not { } id)
+        {
+            page = Math.Clamp(PageNumber ?? 1, 1, int.MaxValue / PageSize);
+            var search = Search?.Trim();
+            if (!string.IsNullOrEmpty(search))
+            {
+                var term = search[..Math.Min(search.Length, 160)].ToLowerInvariant();
+                visible = visible.Where(item => item.Title.ToLower().Contains(term) ||
+                    item.Category.ToLower().Contains(term) || item.Description.ToLower().Contains(term));
+            }
+
+            documents = await visible.OrderBy(item => item.Title).ThenBy(item => item.Id)
+                .Skip((page - 1) * PageSize).Take(PageSize + 1)
+                .Select(item => new DocumentListRow(item,
+                    published.Where(version => version.DocumentId == item.Id).OrderByDescending(version => version.Number)
+                        .Select(version => (Guid?)version.Id).FirstOrDefault(),
+                    published.Where(version => version.DocumentId == item.Id).Max(version => (int?)version.Number)))
+                .ToListAsync();
+            hasNextPage = documents.Count > PageSize;
+            if (hasNextPage)
+                documents.RemoveAt(PageSize);
+            return;
+        }
+
+        document = await visible.SingleOrDefaultAsync(item => item.Id == id);
+        if (document is null)
+            return;
+
+        currentPdf = await published.Where(version => version.DocumentId == id)
+            .OrderByDescending(version => version.Number).FirstOrDefaultAsync();
+        if (isAdmin)
+        {
+            versions = await db.ControlledDocumentVersions.AsNoTracking().Where(version => version.DocumentId == id)
+                .OrderByDescending(version => version.Number).ToListAsync();
+            activity = await db.ControlledDocumentEvents.AsNoTracking().Where(entry => entry.DocumentId == id)
+                .OrderByDescending(entry => entry.Id).Take(30).ToListAsync();
+        }
+    }
+
+    private string? StatusMessage => Status switch
+    {
+        "saved" => "Document details saved.",
+        "queued" => "PDF conversion is queued. Reload this page to see the updated status.",
+        "conflict" => "The document changed or the requested action is no longer available. Review the current details and try again.",
+        "invalid-details" => "Enter a title and keep the document details within the field limits.",
+        "invalid-file" => "Upload a valid .docx up to 20 MB with no macros, embedded objects, or linked resources. Keep change notes within 600 characters.",
+        "upload-failed" => "The Word upload failed. Select the file again to start a new upload.",
+        "unavailable" => "Document storage or PDF conversion is unavailable.",
+        _ => null
+    };
+
+    private static string VersionStatus(ControlledDocumentVersion version) => version.Status switch
+    {
+        DocumentVersionStatus.Uploading => "Uploading",
+        DocumentVersionStatus.UploadFailed => "Upload failed",
+        DocumentVersionStatus.Queued => "Queued",
+        DocumentVersionStatus.Converting => "Converting",
+        DocumentVersionStatus.ConversionFailed => "Conversion failed",
+        DocumentVersionStatus.Published => "Published",
+        _ => "Unknown"
+    };
+
+    private string ListUrl(int number) => $"/documents?p={number}&q={Uri.EscapeDataString(Search ?? "")}";
+    private static string FileUrl(Guid documentId, Guid versionId, string kind) => $"/document-files/{documentId}/{versionId}/{kind}";
+    private sealed record DocumentListRow(ControlledDocument Document, Guid? PdfId, int? VersionNumber);
+}

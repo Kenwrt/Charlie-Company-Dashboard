@@ -5,6 +5,9 @@ namespace CharleyCompany.Dashboard.Web.Data;
 
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
+    public DbSet<ControlledDocument> ControlledDocuments => Set<ControlledDocument>();
+    public DbSet<ControlledDocumentVersion> ControlledDocumentVersions => Set<ControlledDocumentVersion>();
+    public DbSet<ControlledDocumentEvent> ControlledDocumentEvents => Set<ControlledDocumentEvent>();
     public DbSet<SupplierReconciliationRun> SupplierReconciliationRuns => Set<SupplierReconciliationRun>();
     public DbSet<NotificationRecipient> NotificationRecipients => Set<NotificationRecipient>();
     public DbSet<SmsConsentEvent> SmsConsentEvents => Set<SmsConsentEvent>();
@@ -72,6 +75,20 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<ControlledDocumentVersion>(entity =>
+        {
+            entity.HasIndex(version => new { version.DocumentId, version.Number }).IsUnique();
+            entity.HasIndex(version => new { version.Status, version.LeaseUntilUtc });
+            entity.HasOne<ControlledDocument>().WithMany().HasForeignKey(version => version.DocumentId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<ControlledDocumentEvent>(entity =>
+        {
+            entity.HasIndex(entry => new { entry.DocumentId, entry.Id });
+            entity.HasOne<ControlledDocument>().WithMany().HasForeignKey(entry => entry.DocumentId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
 
         builder.Entity<NotificationRecipient>(entity =>
         {
