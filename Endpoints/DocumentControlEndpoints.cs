@@ -29,12 +29,15 @@ public static class DocumentControlEndpoints
             .WithMetadata(new RequestSizeLimitAttribute(WordUpload.MaxBytes + 128 * 1024),
                 new RequestFormLimitsAttribute { MultipartBodyLengthLimit = WordUpload.MaxBytes });
         admin.MapPost("/{documentId:guid}/{versionId:guid}/retry", RetryAsync);
+        admin.MapPost("/{documentId:guid}/{versionId:guid}/approve", ApproveAsync);
+        admin.MapPost("/{documentId:guid}/working-copy", CreateWorkingCopyAsync);
+        admin.MapPost("/{documentId:guid}/submit-working-copy", SubmitWorkingCopyAsync);
     }
 
     private static async Task<IResult> SaveAsync(
         [FromForm] Guid id, [FromForm] int revision, [FromForm] string? title,
-        [FromForm] string? category, [FromForm] string? description, [FromForm] bool? archived,
-        HttpContext http, ApplicationDbContext db, CancellationToken cancellationToken)
+        [FromForm] string? category, [FromForm] string? description, [FromForm] bool? archived, [FromForm] bool? startBlank,
+        HttpContext http, ApplicationDbContext db, DocumentWorkingDrive drive, CancellationToken cancellationToken)
     {
         title = title?.Trim() ?? "";
         category = category?.Trim() ?? "";
@@ -76,7 +79,96 @@ public static class DocumentControlEndpoints
             return Redirect(id, "conflict");
         }
 
+        if (id == Guid.Empty && startBlank == true)
+            return await CreateWorkingCopyAsync(document.Id, document.Revision, http, db, drive, cancellationToken);
         return Redirect(document.Id, "saved");
+    }
+
+    internal const string WorkingCopyReserved = "Drive working copy reserved";
+    internal const string WorkingCopyReady = "Drive working copy created";
+
+    private static async Task<IResult> CreateWorkingCopyAsync(
+        Guid documentId, [FromForm] int revision, HttpContext http, ApplicationDbContext db,
+        DocumentWorkingDrive drive, CancellationToken cancellationToken)
+    {
+        if (!drive.IsConfigured)
+            return Redirect(documentId, "drive-unavailable");
+        var document = await db.ControlledDocuments.FindAsync([documentId], cancellationToken);
+        if (document is null)
+            return Results.NotFound();
+        if (document.Archived || document.Revision != revision)
+            return Redirect(documentId, "conflict");
+
+        try
+        {
+            var id = await WorkingCopyIdAsync(db, documentId, cancellationToken);
+            if (id is null)
+            {
+                id = await drive.ReserveIdAsync(cancellationToken);
+                document.Revision++;
+                AddEvent(db, http.User, documentId, WorkingCopyReserved, id);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            await drive.CreateBlankAsync(id, WorkingFileName(document.Title), cancellationToken);
+            if (!await db.ControlledDocumentEvents.AnyAsync(entry => entry.DocumentId == documentId &&
+                entry.Action == WorkingCopyReady, cancellationToken))
+            {
+                document.Revision++;
+                AddEvent(db, http.User, documentId, WorkingCopyReady, id);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            return Redirect(documentId, "drive-ready");
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Redirect(documentId, "conflict");
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Redirect(documentId, "drive-error");
+        }
+    }
+
+    private static Task<string?> WorkingCopyIdAsync(ApplicationDbContext db, Guid documentId, CancellationToken cancellationToken) =>
+        db.ControlledDocumentEvents.Where(entry => entry.DocumentId == documentId && entry.Action == WorkingCopyReserved)
+            .OrderByDescending(entry => entry.Id).Select(entry => entry.Detail).FirstOrDefaultAsync(cancellationToken);
+
+    private static string WorkingFileName(string title) =>
+        string.Concat(title.Select(character => char.IsControl(character) || "<>:\"/\\|?*".Contains(character) ? '_' : character))
+            .TrimEnd('.', ' ') + ".docx";
+
+    private static async Task<IResult> SubmitWorkingCopyAsync(
+        Guid documentId, [FromForm] int revision, [FromForm] string? notes,
+        HttpContext http, ApplicationDbContext db, DocumentWorkingDrive drive, DocumentObjectStore storage,
+        IConfiguration configuration, ILogger<DocumentObjectStore> logger, CancellationToken cancellationToken)
+    {
+        if (!drive.IsConfigured)
+            return Redirect(documentId, "drive-unavailable");
+        var document = await db.ControlledDocuments.FindAsync([documentId], cancellationToken);
+        if (document is null)
+            return Results.NotFound();
+        if (document.Archived || document.Revision != revision)
+            return Redirect(documentId, "conflict");
+        var id = await db.ControlledDocumentEvents.Where(entry => entry.DocumentId == documentId &&
+                entry.Action == WorkingCopyReady)
+            .OrderByDescending(entry => entry.Id).Select(entry => entry.Detail).FirstOrDefaultAsync(cancellationToken);
+        if (id is null)
+            return Redirect(documentId, "drive-error");
+
+        byte[] bytes;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(45));
+            bytes = await drive.ReadWordAsync(id, timeout.Token);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Redirect(documentId, "drive-error");
+        }
+        using var stream = new MemoryStream(bytes, writable: false);
+        return await UploadAsync(documentId, new FormFile(stream, 0, stream.Length, "file", WorkingFileName(document.Title)),
+            notes, revision, http, db, storage, configuration, logger, cancellationToken);
     }
 
     private static async Task<IResult> UploadAsync(
@@ -145,8 +237,8 @@ public static class DocumentControlEndpoints
             try
             {
                 await storage.PutAsync(version.WordKey, source, DocumentObjectStore.WordContentType, CancellationToken.None);
-                version.Status = DocumentVersionStatus.Queued;
-                AddEvent(db, http.User, documentId, "Word uploaded", $"Version {version.Number} queued for PDF conversion");
+                version.Status = DocumentVersionStatus.PendingApproval;
+                AddEvent(db, http.User, documentId, "Word submitted for approval", $"Version {version.Number}");
             }
             catch (Exception exception)
             {
@@ -156,29 +248,46 @@ public static class DocumentControlEndpoints
             }
 
             await db.SaveChangesAsync(CancellationToken.None);
-            return Redirect(documentId, version.Status == DocumentVersionStatus.Queued ? "queued" : "upload-failed");
+            return Redirect(documentId, version.Status == DocumentVersionStatus.PendingApproval ? "pending" : "upload-failed");
         }
     }
 
-    private static async Task<IResult> RetryAsync(
+    private static Task<IResult> ApproveAsync(
+        Guid documentId, Guid versionId, [FromForm] string? approve,
+        HttpContext http, ApplicationDbContext db, DocumentObjectStore storage, IConfiguration configuration,
+        CancellationToken cancellationToken) =>
+        approve == "true"
+            ? QueueConversionAsync(documentId, versionId, DocumentVersionStatus.PendingApproval, "Version approved", http, db, storage, configuration, cancellationToken)
+            : Task.FromResult(Results.BadRequest());
+
+    private static Task<IResult> RetryAsync(
         Guid documentId, Guid versionId, [FromForm] string? retry,
+        HttpContext http, ApplicationDbContext db, DocumentObjectStore storage, IConfiguration configuration,
+        CancellationToken cancellationToken) =>
+        retry == "true"
+            ? QueueConversionAsync(documentId, versionId, DocumentVersionStatus.ConversionFailed, "PDF conversion retried", http, db, storage, configuration, cancellationToken)
+            : Task.FromResult(Results.BadRequest());
+
+    private static async Task<IResult> QueueConversionAsync(
+        Guid documentId, Guid versionId, DocumentVersionStatus expectedStatus, string action,
         HttpContext http, ApplicationDbContext db, DocumentObjectStore storage, IConfiguration configuration,
         CancellationToken cancellationToken)
     {
-        if (retry != "true")
-            return Results.BadRequest();
         if (!storage.IsConfigured || string.IsNullOrWhiteSpace(configuration["DocumentControl:ConverterPath"]))
             return Redirect(documentId, "unavailable");
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var updated = await db.ControlledDocumentVersions.Where(version =>
             version.DocumentId == documentId && version.Id == versionId &&
-            version.Status == DocumentVersionStatus.ConversionFailed)
+            version.Status == expectedStatus &&
+            db.ControlledDocuments.Any(document => document.Id == documentId && !document.Archived) &&
+            !db.ControlledDocumentVersions.Any(newer => newer.DocumentId == documentId &&
+                newer.Number > version.Number && newer.Status == DocumentVersionStatus.Published))
             .ExecuteUpdateAsync(update => update.SetProperty(version => version.Status, DocumentVersionStatus.Queued), cancellationToken);
         if (updated == 0)
             return Redirect(documentId, "conflict");
 
-        AddEvent(db, http.User, documentId, "PDF conversion retried", $"Version ID {versionId}");
+        AddEvent(db, http.User, documentId, action, $"Version ID {versionId}");
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return Redirect(documentId, "queued");

@@ -2,7 +2,7 @@
 
 Authenticated dashboard users can search the document library and open the latest successfully published PDF for each active document. Administrators can define documents, edit metadata, upload new Word versions, download prior Word versions, view prior PDFs, retry conversion and archive or restore documents. Archiving hides the document and its PDFs from readers. It preserves the version history and audit trail.
 
-Uploads accept macro-free .docx files up to 20 MB. Embedded objects and linked resources are rejected. HTTP, HTTPS and email hyperlinks are supported. Each accepted upload is stored privately in R2 and queued for conversion. A failed conversion leaves the previous published PDF available. Version history shows the uploader, timestamps, change notes and conversion status.
+Uploads accept macro-free .docx files up to 20 MB. Embedded objects and linked resources are rejected. HTTP, HTTPS and email hyperlinks are supported. Each accepted upload is stored privately in R2 and waits for administrator approval. An administrator can download the exact submitted Word version for review and select **Approve and publish PDF** from its history. Approval records the approver and time in the audit trail and queues that version for conversion. The current PDF remains available until a newer PDF is successfully published.
 
 ## Configuration
 
@@ -23,3 +23,9 @@ Stage the files in `deploy/document-converter` on API01. Build the image with `d
 The `AddDocumentControl` migration adds metadata, version and audit tables. PostgreSQL stores metadata only. Production installation, migration and application restart follow the dashboard's existing release procedures.
 
 Retain the bucket and database backups together. Published versions and archived documents have no automatic expiration. Keep the object prefixes private and avoid blanket lifecycle expiration of repository objects. If a conversion is interrupted after writing a PDF but before publication, an unreferenced attempt PDF can remain in R2. Reconcile attempt objects against version metadata before applying any cleanup.
+
+## Google Drive working copies
+
+Enable Drive, Security Token Service, and IAM Service Account Credentials APIs. Grant the service account access to Working Documents, and grant Workload Identity User on that account only to the API01 workload subject. Register the workload public JWKS in the dedicated OIDC provider. Set DocumentControl__Drive__FolderId, DocumentControl__Drive__WorkloadKeyPath, DocumentControl__Drive__WorkloadIssuer, DocumentControl__Drive__WorkloadAudience, and DocumentControl__Drive__ServiceAccountEmail on API01. Keep the workload signing key on API01 with mode 0600 and rotate the registered JWKS and key together.
+
+In Documents, enter a title and choose **Create and start blank**. Open the working copy in Google Docs or open the same DOCX in Word through Google Drive for desktop. Wait for edits to sync to Drive, then use **Submit working copy for approval**. Document Control captures the current file into R2 as a numbered version. The administrator approves that snapshot before PDF conversion.

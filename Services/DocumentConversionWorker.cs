@@ -114,7 +114,7 @@ public sealed class DocumentConversionWorker(
         if (interrupted is null)
             return;
 
-        var status = DocumentVersionStatus.Queued;
+        var status = DocumentVersionStatus.PendingApproval;
         try
         {
             using var source = await storage.GetAsync(interrupted.WordKey, cancellationToken);

@@ -40,7 +40,8 @@ public enum DocumentVersionStatus
     Queued,
     Converting,
     ConversionFailed,
-    Published
+    Published,
+    PendingApproval
 }
 
 public sealed class ControlledDocumentEvent

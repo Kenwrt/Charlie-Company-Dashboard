@@ -4,10 +4,12 @@
 @attribute [ExcludeFromInteractiveRouting]
 @using CharleyCompany.Dashboard.Web.Data
 @using CharleyCompany.Dashboard.Web.Services
+@using CharleyCompany.Dashboard.Web.Endpoints
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
 @inject DocumentObjectStore Storage
 @inject IConfiguration Configuration
+@inject DocumentWorkingDrive Drive
 
 <PageTitle>Documents</PageTitle>
 
@@ -35,6 +37,10 @@
                 <label class="form-label" for="new-description">Description</label>
                 <textarea class="form-control mb-3" id="new-description" name="description" maxlength="1000" rows="3"></textarea>
                 <button class="btn btn-primary" type="submit">Create document</button>
+                @if (Drive.IsConfigured)
+                {
+                    <button class="btn btn-outline-primary ms-2" type="submit" name="startBlank" value="true">Create and start blank</button>
+                }
             </form>
         </details>
     }
@@ -146,6 +152,35 @@ else
             </details>
             @if (!document.Archived)
             {
+                @if (Drive.IsConfigured)
+                {
+                    <section class="border rounded p-3 mb-3">
+                        <h3 class="h5">Working document</h3>
+                        @if (workingCopyId is { } driveId)
+                        {
+                            <a class="btn btn-outline-primary" href="@($"https://docs.google.com/document/d/{Uri.EscapeDataString(driveId)}/edit")" target="_blank" rel="noopener">Edit in Google Docs</a>
+                            <p class="mt-2">For desktop Word, open the same file from Working Documents in Google Drive for desktop. Wait for Drive to finish syncing your edits before submitting.</p>
+                            @if (uploadAvailable)
+                            {
+                                <form method="post" action="@($"/document-admin/{document.Id}/submit-working-copy")">
+                                    <AntiforgeryToken />
+                                    <input type="hidden" name="revision" value="@document.Revision" />
+                                    <label class="form-label" for="drive-notes">Change notes</label>
+                                    <textarea class="form-control mb-2" id="drive-notes" name="notes" maxlength="600" rows="2"></textarea>
+                                    <button class="btn btn-primary" type="submit">Submit working copy for approval</button>
+                                </form>
+                            }
+                        }
+                        else
+                        {
+                            <form method="post" action="@($"/document-admin/{document.Id}/working-copy")">
+                                <AntiforgeryToken />
+                                <input type="hidden" name="revision" value="@document.Revision" />
+                                <button class="btn btn-outline-primary" type="submit">Create blank working copy</button>
+                            </form>
+                        }
+                    </section>
+                }
                 <details class="border rounded p-3 mb-4" open>
                     <summary>Upload a new Word version</summary>
                     @if (uploadAvailable)
@@ -157,7 +192,7 @@ else
                             <input class="form-control mb-2" id="word-file" name="file" type="file" accept=".docx" required />
                             <label class="form-label" for="version-notes">Change notes</label>
                             <textarea class="form-control mb-3" id="version-notes" name="notes" maxlength="600" rows="2"></textarea>
-                            <button class="btn btn-primary" type="submit">Upload and publish PDF</button>
+                            <button class="btn btn-primary" type="submit">Submit for approval</button>
                         </form>
                     }
                     else
@@ -202,7 +237,16 @@ else
                                         {
                                             <a class="ms-2" href="@FileUrl(document.Id, version.Id, "pdf")" target="_blank" rel="noopener">View PDF</a>
                                         }
-                                        @if (uploadAvailable && version.Status == DocumentVersionStatus.ConversionFailed)
+                                        @if (uploadAvailable && !document.Archived && version.Number > (currentPdf?.Number ?? 0) &&
+                                            version.Status == DocumentVersionStatus.PendingApproval)
+                                        {
+                                            <form method="post" action="@($"/document-admin/{document.Id}/{version.Id}/approve")" class="mt-1">
+                                                <AntiforgeryToken />
+                                                <button class="btn btn-sm btn-primary" type="submit" name="approve" value="true">Approve and publish PDF</button>
+                                            </form>
+                                        }
+                                        @if (uploadAvailable && !document.Archived && version.Number > (currentPdf?.Number ?? 0) &&
+                                            version.Status == DocumentVersionStatus.ConversionFailed)
                                         {
                                             <form method="post" action="@($"/document-admin/{document.Id}/{version.Id}/retry")" class="mt-1">
                                                 <AntiforgeryToken />
@@ -245,6 +289,7 @@ else
     private bool hasNextPage;
     private ControlledDocument? document;
     private ControlledDocumentVersion? currentPdf;
+    private string? workingCopyId;
     private List<DocumentListRow> documents = [];
     private List<ControlledDocumentVersion> versions = [];
     private List<ControlledDocumentEvent> activity = [];
@@ -292,6 +337,9 @@ else
             .OrderByDescending(version => version.Number).FirstOrDefaultAsync();
         if (isAdmin)
         {
+            workingCopyId = await db.ControlledDocumentEvents.AsNoTracking().Where(entry =>
+                    entry.DocumentId == id && entry.Action == DocumentControlEndpoints.WorkingCopyReady)
+                .OrderByDescending(entry => entry.Id).Select(entry => entry.Detail).FirstOrDefaultAsync();
             versions = await db.ControlledDocumentVersions.AsNoTracking().Where(version => version.DocumentId == id)
                 .OrderByDescending(version => version.Number).ToListAsync();
             activity = await db.ControlledDocumentEvents.AsNoTracking().Where(entry => entry.DocumentId == id)
@@ -302,6 +350,10 @@ else
     private string? StatusMessage => Status switch
     {
         "saved" => "Document details saved.",
+        "pending" => "Word version saved. It is awaiting administrator approval.",
+        "drive-ready" => "Working copy is ready to edit.",
+        "drive-unavailable" => "Google Drive is not configured.",
+        "drive-error" => "The Drive operation could not finish. Check the working file and try again after Drive finishes syncing.",
         "queued" => "PDF conversion is queued. Reload this page to see the updated status.",
         "conflict" => "The document changed or the requested action is no longer available. Review the current details and try again.",
         "invalid-details" => "Enter a title and keep the document details within the field limits.",
@@ -316,6 +368,7 @@ else
         DocumentVersionStatus.Uploading => "Uploading",
         DocumentVersionStatus.UploadFailed => "Upload failed",
         DocumentVersionStatus.Queued => "Queued",
+        DocumentVersionStatus.PendingApproval => "Awaiting approval",
         DocumentVersionStatus.Converting => "Converting",
         DocumentVersionStatus.ConversionFailed => "Conversion failed",
         DocumentVersionStatus.Published => "Published",

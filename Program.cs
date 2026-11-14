@@ -66,6 +66,8 @@ try
         options.UseNpgsql(connectionString));
     builder.Services.AddDatabaseDeveloperPageExceptionFilter();
     builder.Services.AddSingleton<DocumentObjectStore>();
+    builder.Services.AddHttpClient<DocumentWorkingDrive>(client => client.Timeout = TimeSpan.FromSeconds(30))
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
     builder.Services.AddHostedService<DocumentConversionWorker>();
 
     builder.Services.AddIdentityCore<ApplicationUser>(options =>
