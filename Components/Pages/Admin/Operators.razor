@@ -172,7 +172,50 @@
      }
  }
  private async Task SendPasswordLinkAsync(ApplicationUser user, string success) { try { var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(await UserManager.GeneratePasswordResetTokenAsync(user))); var callback = NavigationManager.GetUriWithQueryParameters(NavigationManager.ToAbsoluteUri("Account/ResetPassword").AbsoluteUri, new Dictionary<string, object?> { ["code"] = code }); await EmailSender.SendPasswordResetLinkAsync(user, user.Email!, HtmlEncoder.Default.Encode(callback)); message = success; messageClass = "alert-success"; } catch (Exception ex) { message = $"The account was saved, but email could not be sent: {ex.Message}"; messageClass = "alert-warning"; } }
- private async Task ToggleDisabledAsync() { if (selectedUser is null) return; var wasDisabled = IsDisabled(selectedUser); await UserManager.SetLockoutEnabledAsync(selectedUser, true); var result = await UserManager.SetLockoutEndDateAsync(selectedUser, wasDisabled ? null : DateTimeOffset.MaxValue); if (!result.Succeeded) { ShowErrors(result); return; } message = wasDisabled ? "Login enabled." : "Login disabled."; messageClass = "alert-success"; await ReloadAsync(); selectedUser = await UserManager.FindByIdAsync(selectedUser.Id); }
+ private async Task ToggleDisabledAsync()
+ {
+     if (selectedUser is null || isSaving) return;
+
+     var userId = selectedUser.Id;
+     isSaving = true;
+     try
+     {
+         await using var scope = ScopeFactory.CreateAsyncScope();
+         var manager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+         var user = await manager.FindByIdAsync(userId);
+         if (user is null)
+         {
+             message = "This account no longer exists.";
+             messageClass = "alert-danger";
+             return;
+         }
+
+         var wasDisabled = IsDisabled(user);
+         await using var transaction = await db.Database.BeginTransactionAsync();
+         var result = await manager.SetLockoutEnabledAsync(user, true);
+         if (result.Succeeded)
+             result = await manager.SetLockoutEndDateAsync(user, wasDisabled ? null : DateTimeOffset.MaxValue);
+         if (result.Succeeded && !wasDisabled)
+             result = await manager.UpdateSecurityStampAsync(user);
+         if (!result.Succeeded)
+         {
+             ShowErrors(result);
+             return;
+         }
+
+         await transaction.CommitAsync();
+         message = wasDisabled ? "Login enabled." : "Login disabled.";
+         messageClass = "alert-success";
+         await ReloadAsync();
+         selectedUser = users.SingleOrDefault(item => item.Id == userId);
+         Logger.LogInformation("Login disabled status changed to {Disabled} for user {UserId}.", !wasDisabled, userId);
+     }
+     finally
+     {
+         isSaving = false;
+     }
+ }
  private async Task DeleteAsync() { if (selectedUser is null) return; if (await UserManager.IsInRoleAsync(selectedUser, ApplicationRoles.Administrator) && (await UserManager.GetUsersInRoleAsync(ApplicationRoles.Administrator)).Count <= 1) { message = "The last administrator cannot be deleted."; messageClass = "alert-warning"; return; } await using (var db = await DbContextFactory.CreateDbContextAsync()) { var memberships = await db.UserLocalOperations.Where(x => x.UserId == selectedUser.Id).ToListAsync(); db.UserLocalOperations.RemoveRange(memberships); await db.SaveChangesAsync(); } var result = await UserManager.DeleteAsync(selectedUser); if (!result.Succeeded) { ShowErrors(result); return; } selectedUser = null; message = "User deleted."; messageClass = "alert-success"; await ReloadAsync(); }
  private void SetSelected(int id, bool selected) { if (selected) selectedOperationIds.Add(id); else selectedOperationIds.Remove(id); }
  private void GenerateCreatePassword() { createInput.TemporaryPassword = GenerateCompliantPassword(); showCreatePassword = true; }

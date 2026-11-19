@@ -55,8 +55,9 @@ public sealed class EstimateAdminAuditEmailService(
             return new EstimateAdminAuditEmailResult(0, false, []);
 
         var administrators = await userManager.GetUsersInRoleAsync(ApplicationRoles.Administrator);
+        var now = DateTimeOffset.UtcNow;
         var recipients = administrators
-            .Where(item => item.AdminAuditEmail)
+            .Where(item => item.AdminAuditEmail && !(item.LockoutEnabled && item.LockoutEnd > now))
             .Select(item => item.Email)
             .Where(item => !string.IsNullOrWhiteSpace(item))
             .Select(item => item!)

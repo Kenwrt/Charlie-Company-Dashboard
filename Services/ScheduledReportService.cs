@@ -170,7 +170,10 @@ public sealed class ScheduledReportService(
             return new(false, $"Text was skipped for {recipientLabel} because the messaging provider is not configured.", null);
         }
 
-        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.PhoneNumber == phoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x =>
+            x.PhoneNumber == phoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted &&
+            !(x.LockoutEnabled && x.LockoutEnd > now), cancellationToken);
         if (user is null)
         {
             return new(false, $"Text was skipped for {recipientLabel} because the number does not match a verified Charlie Company user with current transactional consent.", null);
@@ -263,8 +266,10 @@ public sealed class ScheduledReportService(
 
                 if (assignment.SendSms && recipient.EnableSms && textMessaging.IsConfigured)
                 {
+                    var now = DateTimeOffset.UtcNow;
                     var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x =>
-                        x.PhoneNumber == recipient.CellPhoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted,
+                        x.PhoneNumber == recipient.CellPhoneNumber && x.PhoneNumberConfirmed && x.SmsConsentGranted &&
+                        !(x.LockoutEnabled && x.LockoutEnd > now),
                         cancellationToken);
                     if (user is null)
                     {

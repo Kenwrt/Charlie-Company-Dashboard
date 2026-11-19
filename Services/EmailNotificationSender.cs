@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Mail;
 using CharleyCompany.Dashboard.Web.Data;
 using CharleyCompany.Dashboard.Web.Options;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace CharleyCompany.Dashboard.Web.Services;
@@ -10,6 +11,7 @@ public sealed class EmailNotificationSender(
     IOptions<NotificationOptions> options,
     IOptions<EmailOptions> identityEmailOptions,
     ResendEmailClient resend,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ILogger<EmailNotificationSender> logger) : IOutboundNotificationSender
 {
     private readonly EmailNotificationOptions emailOptions = options.Value.Email;
@@ -17,13 +19,26 @@ public sealed class EmailNotificationSender(
 
     public async Task SendAsync(NotificationRecipient recipient, NotificationMessage message, CancellationToken cancellationToken)
     {
-        if (!recipient.EnableEmail || string.IsNullOrWhiteSpace(recipient.EmailAddress) || !emailOptions.Enabled)
+        if (!recipient.IsActive || !recipient.EnableEmail || string.IsNullOrWhiteSpace(recipient.EmailAddress) || !emailOptions.Enabled)
         {
             return;
         }
 
         try
         {
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var now = DateTimeOffset.UtcNow;
+            var normalizedEmail = recipient.EmailAddress.Trim().ToUpperInvariant();
+            var phoneNumber = recipient.CellPhoneNumber;
+            if (await db.Users.AsNoTracking().AnyAsync(user =>
+                user.LockoutEnabled && user.LockoutEnd > now &&
+                (user.NormalizedEmail == normalizedEmail ||
+                 (phoneNumber != null && phoneNumber != "" && user.PhoneNumberConfirmed && user.PhoneNumber == phoneNumber)),
+                cancellationToken))
+            {
+                return;
+            }
+
             if (sharedEmailOptions.Provider.Equals("Resend", StringComparison.OrdinalIgnoreCase))
             {
                 await resend.SendAsync(

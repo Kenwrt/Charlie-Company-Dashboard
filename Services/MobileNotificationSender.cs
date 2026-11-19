@@ -12,15 +12,17 @@ public sealed class MobileNotificationSender(
     {
         try
         {
-            if (recipient.EnableSms && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber))
+            if (recipient.IsActive && recipient.EnableSms && !string.IsNullOrWhiteSpace(recipient.CellPhoneNumber))
             {
                 if (messaging.IsConfigured)
                 {
                     await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+                    var now = DateTimeOffset.UtcNow;
                     var eligibleUser = await db.Users.AsNoTracking().FirstOrDefaultAsync(user =>
                         user.PhoneNumber == recipient.CellPhoneNumber &&
                         user.PhoneNumberConfirmed &&
-                        user.SmsConsentGranted,
+                        user.SmsConsentGranted &&
+                        !(user.LockoutEnabled && user.LockoutEnd > now),
                         cancellationToken);
                     if (eligibleUser is null)
                     {
